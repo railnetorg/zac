@@ -12,4 +12,6 @@ jobs:
 
       - uses: foundry-rs/foundry-toolchain@v1
 
-      - run: forge fmt --check
+      - uses: extractions/setup-just@v4
+
+      - run: just contracts-format-check

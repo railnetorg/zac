@@ -12,6 +12,6 @@ jobs:
 
       - uses: foundry-rs/foundry-toolchain@v1
 
-      - run: forge test -vvv
-        env:
-          FOUNDRY_PROFILE: ci
+      - uses: extractions/setup-just@v4
+
+      - run: just contracts-test

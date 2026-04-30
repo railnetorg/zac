@@ -10,5 +10,6 @@ jobs:
 
       - uses: astral-sh/setup-uv@v5
 
-      - run: uv run --group dev ruff format --check .
-        working-directory: action
+      - uses: extractions/setup-just@v4
+
+      - run: just action-format-check
