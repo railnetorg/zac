@@ -1,0 +1,15 @@
+name: contracts-format
+
+on: [push, pull_request]
+
+jobs:
+  contracts-format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - uses: foundry-rs/foundry-toolchain@v1
+
+      - run: forge fmt --check

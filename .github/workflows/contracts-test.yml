@@ -1,0 +1,17 @@
+name: contracts-test
+
+on: [push, pull_request]
+
+jobs:
+  contracts-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - uses: foundry-rs/foundry-toolchain@v1
+
+      - run: forge test -vvv
+        env:
+          FOUNDRY_PROFILE: ci
