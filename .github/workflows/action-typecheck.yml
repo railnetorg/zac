@@ -10,5 +10,5 @@ jobs:
 
       - uses: astral-sh/setup-uv@v5
 
-      - run: uv run ty check src/
+      - run: uv run --group dev ty check src/
         working-directory: action

@@ -10,5 +10,5 @@ jobs:
 
       - uses: astral-sh/setup-uv@v5
 
-      - run: uv run pip-audit
+      - run: uv run --group dev pip-audit
         working-directory: action

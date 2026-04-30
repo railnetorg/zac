@@ -10,5 +10,5 @@ jobs:
 
       - uses: astral-sh/setup-uv@v5
 
-      - run: uv run pytest -v
+      - run: uv run --group test pytest -v
         working-directory: action

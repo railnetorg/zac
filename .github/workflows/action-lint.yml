@@ -10,5 +10,5 @@ jobs:
 
       - uses: astral-sh/setup-uv@v5
 
-      - run: uv run ruff check .
+      - run: uv run --group dev ruff check .
         working-directory: action
