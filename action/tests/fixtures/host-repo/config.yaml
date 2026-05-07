@@ -1,0 +1,8 @@
+aliases:
+  global:
+    signers: ./aliases/signers.yaml
+  mainnet:
+    tokens: ./aliases/mainnet/tokens.yaml
+    aave: ./aliases/mainnet/aave.yaml
+    safes: ./aliases/mainnet/safes.yaml
+    modifiers: ./aliases/mainnet/modifiers.yaml
