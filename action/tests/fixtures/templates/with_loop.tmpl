@@ -1,0 +1,5 @@
+roles:
+{%- for asset in deposit_assets %}
+  - address: "{{ asset.address }}"
+    symbol: "{{ asset.symbol }}"
+{%- endfor %}
