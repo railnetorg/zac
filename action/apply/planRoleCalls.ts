@@ -1,4 +1,5 @@
 import type { Generated } from './parseGenerated';
+import { toSdkTargets } from './toSdkTargets';
 
 /**
  * Single planned call returned by `planApplyRole`. Mirrors the SDK shape
@@ -17,6 +18,18 @@ export type PlanApplyRoleFn = (
   meta: { chainId: number; address: `0x${string}` },
 ) => Promise<SdkPlannedCall[]>;
 
+interface SdkBuilders {
+  c: {
+    eq: (v: unknown) => unknown;
+    gt: (v: unknown) => unknown;
+    lt: (v: unknown) => unknown;
+    or: (...args: unknown[]) => unknown;
+    calldataMatches: (scoping: unknown, abiTypes: readonly string[]) => unknown;
+    avatar: unknown;
+  };
+  processPermissions: (perms: unknown[]) => { targets: unknown[] };
+}
+
 export interface PlanRoleCallsOpts {
   generated: Generated;
   /**
@@ -26,20 +39,22 @@ export interface PlanRoleCallsOpts {
   planApplyRole?: PlanApplyRoleFn;
   /** Inject `encodeKey` for testability (default: SDK's encodeKey). */
   encodeKey?: (key: string) => `0x${string}`;
+  /** Inject the c-builder + processPermissions pair for testability. */
+  sdkBuilders?: SdkBuilders;
 }
 
 export async function planRoleCalls(opts: PlanRoleCallsOpts): Promise<Call[]> {
-  const sdk =
-    opts.planApplyRole !== undefined && opts.encodeKey !== undefined
-      ? { planApplyRole: opts.planApplyRole, encodeKey: opts.encodeKey }
-      : await loadSdk(opts);
+  const sdk = await loadSdk(opts);
 
   const allCalls: Call[] = [];
   for (const [keyStr, role] of Object.entries(opts.generated.roles)) {
+    const targets = sdk.builders
+      ? toSdkTargets(opts.generated, keyStr, sdk.builders)
+      : role.targets;
     const desired = {
       key: sdk.encodeKey(keyStr),
       members: role.members as `0x${string}`[],
-      targets: role.targets,
+      targets,
     };
     const meta = {
       chainId: opts.generated.deployment.chain_id,
@@ -56,13 +71,24 @@ export async function planRoleCalls(opts: PlanRoleCallsOpts): Promise<Call[]> {
 async function loadSdk(opts: PlanRoleCallsOpts): Promise<{
   planApplyRole: PlanApplyRoleFn;
   encodeKey: (key: string) => `0x${string}`;
+  builders: SdkBuilders | null;
 }> {
+  if (opts.planApplyRole !== undefined && opts.encodeKey !== undefined) {
+    return {
+      planApplyRole: opts.planApplyRole,
+      encodeKey: opts.encodeKey,
+      builders: opts.sdkBuilders ?? null,
+    };
+  }
   const mod = (await import('zodiac-roles-sdk')) as unknown as {
     planApplyRole: PlanApplyRoleFn;
     encodeKey: (key: string) => `0x${string}`;
+    c: SdkBuilders['c'];
+    processPermissions: SdkBuilders['processPermissions'];
   };
   return {
     planApplyRole: opts.planApplyRole ?? mod.planApplyRole,
     encodeKey: opts.encodeKey ?? mod.encodeKey,
+    builders: opts.sdkBuilders ?? { c: mod.c, processPermissions: mod.processPermissions },
   };
 }

@@ -13,5 +13,3 @@ configs:
       deposit_assets:
         - address: "{{ aliases.tokens.USDC }}"
           symbol: "USDC"
-        - address: "{{ aliases.tokens.DAI }}"
-          symbol: "DAI"
