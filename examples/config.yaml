@@ -4,5 +4,6 @@ aliases:
   mainnet:
     aave: ../aliases/mainnet/aave.yaml
     tokens: ../aliases/mainnet/tokens.yaml
+    metamorpho: ../aliases/mainnet/metamorpho.yaml
     safes: ./aliases/mainnet/safes.yaml
     modifiers: ./aliases/mainnet/modifiers.yaml
