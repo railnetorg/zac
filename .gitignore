@@ -13,4 +13,8 @@ docs/
 # Dotenv file
 .env
 
-
+# bun / typescript
+action/node_modules/
+action/.bun-cache/
+action/dist/
+action/coverage/
