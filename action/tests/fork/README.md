@@ -23,9 +23,10 @@ stays hermetic and fast.
 
 ## Behaviour without an RPC
 
-If `MAINNET_RPC_URL` is unset _and_ the public fallback (`https://eth.merkle.io`)
-is unreachable, the suite skips gracefully with a logged reason. Skipped
-tests count as passing under vitest, so this never breaks the build.
+If `MAINNET_RPC_URL` is unset _and_ both public fallbacks (`https://eth.drpc.org`,
+`https://eth.llamarpc.com`) are unreachable, the suite skips gracefully with a
+logged reason. Skipped tests count as passing under vitest, so this never breaks
+the build.
 
 ## Anvil
 
