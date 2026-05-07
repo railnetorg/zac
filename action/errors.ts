@@ -1,4 +1,4 @@
-export type ZacPhase = 'load' | 'render' | 'parse' | 'validate' | 'emit';
+export type ZacPhase = 'load' | 'render' | 'parse' | 'validate' | 'emit' | 'apply';
 
 export interface SourceLocation {
   file: string;

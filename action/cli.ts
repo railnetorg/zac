@@ -27,6 +27,17 @@ export function buildProgram(): Command {
       await runGenerate(opts);
     });
 
+  program
+    .command('apply <generated_path>')
+    .description(
+      'propose role state updates as a Safe transaction (signed by ZAC_PROPOSER_PRIVATE_KEY env var; optional SAFE_API_KEY, RPC_URL)',
+    )
+    .action(async (generatedPath: string) => {
+      const { runApply } = await import('./apply/runApply');
+      const result = await runApply({ generatedPath });
+      process.stdout.write(`safeTxHash: ${result.safeTxHash}\n`);
+    });
+
   return program;
 }
 

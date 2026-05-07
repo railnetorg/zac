@@ -36,6 +36,17 @@ bun run zac generate <path/to/deployment.yaml> [--out <output>]
 bun ./action/cli.ts generate examples/mainnet/aave_safe.yaml
 ```
 
+## Apply
+
+After generating the YAML, propose the role updates to the Safe Transaction Service for signing by the Safe's owners:
+
+```
+export ZAC_PROPOSER_PRIVATE_KEY=0x...   # a Safe owner's private key (never logged)
+bun run zac apply <generated.yaml>
+```
+
+The proposer signs and submits the transaction proposal; other Safe owners then sign in the Safe UI. Optional env vars: `SAFE_API_KEY` (forwarded to api-kit if rate-limited) and `RPC_URL` (overrides the default per-chain public RPC used by Safe Protocol Kit for read-only queries).
+
 ## Commands
 
 ```

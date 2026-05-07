@@ -16,6 +16,8 @@
     "audit": "bun audit"
   },
   "dependencies": {
+    "@safe-global/api-kit": "4.1.0",
+    "@safe-global/protocol-kit": "7.1.0",
     "commander": "14.0.3",
     "nunjucks": "3.2.4",
     "viem": "2.48.8",

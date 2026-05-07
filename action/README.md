@@ -14,6 +14,10 @@ The `generate` command runs five phases, fail-fast:
 
 `sourceMap/` ships the §9.43 best-effort template-line guess used by `formatError`.
 
+## Apply pipeline (`apply/`)
+
+The `apply <generated_yaml>` command parses the generated YAML, calls `planApplyRole` from `zodiac-roles-sdk` for each role key (which diffs the desired state against the on-chain state via the Gnosis Guild subgraph), batches the resulting calls into a single Safe MultiSend via `@safe-global/protocol-kit`, signs the Safe transaction hash with `ZAC_PROPOSER_PRIVATE_KEY`, and proposes it to the Safe Transaction Service via `@safe-global/api-kit`. The Service URL defaults from a per-chain map; `SAFE_API_KEY` is honored if set; `RPC_URL` overrides the public RPC used by Protocol Kit's read-only queries.
+
 ## Adding a new operator
 
 1. Add a zod variant to `validate/operatorSchemas.ts` discriminated union.
@@ -25,3 +29,4 @@ The `generate` command runs five phases, fail-fast:
 1. Extend the `NETWORKS` const in `load/networkTable.ts` (§9.57 extension is a code change).
 2. The chain must already exist in `viem/chains`.
 3. Add a unit test under `tests/test-aliases/networkTable.test.ts`.
+4. Add the per-chain Safe Transaction Service URL to `apply/safeServiceUrl.ts` if the chain has a hosted Safe service.

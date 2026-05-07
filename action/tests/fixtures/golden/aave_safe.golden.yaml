@@ -1,3 +1,7 @@
+deployment:
+  chain_id: 1
+  safe_address: "0x3333333333333333333333333333333333333333"
+  roles_modifier_address: "0x4444444444444444444444444444444444444444"
 roles:
   AAVE_V3:
     members:

@@ -114,6 +114,10 @@ export async function runGenerate(opts: RunGenerateOpts): Promise<void> {
 
   // Phase 8 — merge + serialize + write
   const merged = mergeRoleStates(entries);
-  const yaml = serializeRoleStates(merged);
+  const yaml = serializeRoleStates(merged, {
+    chain_id: validatedDeployment.chain_id,
+    safe_address: validatedDeployment.safe_address,
+    roles_modifier_address: validatedDeployment.roles_modifier_address,
+  });
   writeOutput(yaml, opts.outPath);
 }
