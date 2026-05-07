@@ -1,0 +1,57 @@
+roles:
+{%- for asset in deposit_assets %}
+  - address: "{{ asset.address }}" # approval for {{ asset.symbol }}
+    functions:
+      - signature: "function approve(address spender, uint256 amount)"
+        execution_options: "none"
+        params:
+          - name: spender
+            param_type: "static"
+            operator: "equal_to"
+            value: "{{ pool_address }}"
+            value_type: "address"
+          - name: amount
+            param_type: "static"
+            operator: "pass"
+{%- endfor %}
+
+  - address: "{{ pool_address }}"
+    functions:
+      - signature: "function supply(address asset, uint256 amount, address onBehalfOf, uint16 referralCode)"
+        execution_options: "none"
+        params:
+          - name: asset
+            param_type: "static"
+            operator: "oneOf"
+            values:
+              {%- for asset in deposit_assets %}
+              - "{{ asset.address }}"
+              {%- endfor %}
+            value_type: "address"
+          - name: amount
+            param_type: "static"
+            operator: "pass"
+          - name: onBehalfOf
+            param_type: "static"
+            operator: "equal_to_avatar"
+          - name: referralCode
+            param_type: "static"
+            operator: "pass"
+
+      - signature: "function withdraw(address asset, uint256 amount, address onBehalfOf)"
+        execution_options: "none"
+        params:
+          - name: asset
+            param_type: "static"
+            operator: "oneOf"
+            values:
+              {%- for asset in deposit_assets %}
+              - "{{ asset.address }}"
+              {%- endfor %}
+            value_type: "address"
+          - name: amount
+            param_type: "static"
+            operator: "pass"
+          - name: onBehalfOf
+            param_type: "static"
+            operator: "equal_to_avatar"

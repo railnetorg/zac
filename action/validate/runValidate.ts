@@ -35,11 +35,14 @@ export function validateRenderedTemplate(t: RenderedTemplate): void {
       const params = fn.params ?? [];
 
       for (const p of params) {
-        // Strip the `name` field before schema-checking the operator object —
-        // the strict operator schemas reject extra keys, and `name` is a
-        // param-level concern handled by `checkParamCoverage`.
-        const { name: _name, ...opObj } = p;
+        // Strip the `name` and `param_type` fields before schema-checking the
+        // operator object — the strict operator schemas reject extra keys.
+        // `name` is a param-level concern handled by `checkParamCoverage`.
+        // `param_type` is a spec-§2 hint (e.g. "static", "dynamic") that is
+        // documented in templates but not enforced by ZAC's operator schemas.
+        const { name: _name, param_type: _paramType, ...opObj } = p;
         void _name;
+        void _paramType;
         OperatorSchema.parse(opObj);
         checkParamSanity(p, p.name);
       }
