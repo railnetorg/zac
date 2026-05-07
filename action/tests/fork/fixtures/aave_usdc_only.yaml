@@ -1,0 +1,29 @@
+# Narrow scenario: a single role that may only call USDC.approve(spender, amount)
+# with spender pinned to AAVE V3's mainnet pool. This is the smallest fixture
+# that exercises one happy path (correct spender) and three failure modes
+# (wrong spender / wrong target / wrong function).
+#
+# safe_address and roles_modifier_address are placeholders; the fork harness
+# substitutes them at test time with the addresses it just deployed.
+deployment:
+  chain_id: 1
+  safe_address: '0x0000000000000000000000000000000000000001'
+  roles_modifier_address: '0x0000000000000000000000000000000000000002'
+roles:
+  AAVE_USDC:
+    members:
+      - '0x0000000000000000000000000000000000000003'
+    targets:
+      - address: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
+        functions:
+          - signature: function approve(address spender, uint256 amount)
+            execution_options: none
+            params:
+              - name: spender
+                param_type: static
+                operator: equal_to
+                value: '0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2'
+                value_type: address
+              - name: amount
+                param_type: static
+                operator: pass

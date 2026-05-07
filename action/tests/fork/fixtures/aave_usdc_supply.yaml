@@ -1,0 +1,45 @@
+# Full AAVE USDC supply scenario: scope USDC.approve(pool, *) plus
+# pool.supply(asset=USDC, amount=*, onBehalfOf=avatar, referral=*) so the role
+# can supply USDC into AAVE V3 on the avatar's behalf, but cannot supply on
+# behalf of an arbitrary address.
+deployment:
+  chain_id: 1
+  safe_address: '0x0000000000000000000000000000000000000001'
+  roles_modifier_address: '0x0000000000000000000000000000000000000002'
+roles:
+  AAVE_USDC_SUPPLY:
+    members:
+      - '0x0000000000000000000000000000000000000003'
+    targets:
+      - address: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
+        functions:
+          - signature: function approve(address spender, uint256 amount)
+            execution_options: none
+            params:
+              - name: spender
+                param_type: static
+                operator: equal_to
+                value: '0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2'
+                value_type: address
+              - name: amount
+                param_type: static
+                operator: pass
+      - address: '0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2'
+        functions:
+          - signature: function supply(address asset, uint256 amount, address onBehalfOf, uint16 referralCode)
+            execution_options: none
+            params:
+              - name: asset
+                param_type: static
+                operator: equal_to
+                value: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
+                value_type: address
+              - name: amount
+                param_type: static
+                operator: pass
+              - name: onBehalfOf
+                param_type: static
+                operator: equal_to_avatar
+              - name: referralCode
+                param_type: static
+                operator: pass

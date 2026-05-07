@@ -33,4 +33,13 @@ export default [
       'no-control-regex': 'off',
     },
   },
+  {
+    // Fork integration tests are intentionally verbose: every step prints
+    // what it's doing so a developer can read the flow top-to-bottom in CI
+    // logs. Allow console.* only in this scope.
+    files: ['tests/fork/**/*.ts'],
+    rules: {
+      'no-console': 'off',
+    },
+  },
 ];
