@@ -1,0 +1,25 @@
+name: zac
+description: Generate Zodiac Roles V2 configs from a deployment YAML
+inputs:
+  config-path:
+    description: Path to the deployment config YAML
+    required: true
+  out-path:
+    description: Path to write the rendered output (default stdout)
+    required: false
+runs:
+  using: composite
+  steps:
+    - uses: oven-sh/setup-bun@v2
+    - shell: bash
+      env:
+        ZAC_CONFIG_PATH: ${{ inputs.config-path }}
+        ZAC_OUT_PATH: ${{ inputs.out-path }}
+      run: |
+        cd "${{ github.action_path }}/.."
+        bun install --cwd action
+        if [ -n "$ZAC_OUT_PATH" ]; then
+          bun ./action/cli.ts generate "$ZAC_CONFIG_PATH" --out "$ZAC_OUT_PATH"
+        else
+          bun ./action/cli.ts generate "$ZAC_CONFIG_PATH"
+        fi

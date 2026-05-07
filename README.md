@@ -2,29 +2,21 @@
 
 Zodiac Roles V2 config generator (CLI) plus the Foundry contracts that back it.
 
-The repo is being rewritten for ZAC v2: a Bun + TypeScript CLI named `zac` whose
-sole command is `generate` (load -> render -> parse -> validate -> emit). See
-the spec for full context: <https://www.notion.so/357c1910fb6e80a7b2b8f391ae421040>.
+ZAC v2 is a Bun + TypeScript CLI named `zac`. Sole command: `generate`. The pipeline is load → render → parse → validate → emit, fail-fast.
+
+Spec: <https://www.notion.so/357c1910fb6e80a7b2b8f391ae421040>.
 
 ## Layout
 
-- `foundry/` - Solidity contracts (Foundry project: `src/`, `test/`, `script/`, `lib/`).
-- `action/` - ZAC CLI (Bun + TypeScript). Coming in Phase 1.
-
-## Commands
-
-```
-Available recipes:
-    contracts-build        # build solidity contracts
-    contracts-format       # apply solidity formatting
-    contracts-format-check # check solidity formatting
-    contracts-test         # run solidity tests
-    install                # install foundry submodules and action dependencies
-```
+- `foundry/` — Solidity contracts (Foundry project: `src/`, `test/`, `script/`, `lib/`).
+- `action/` — ZAC CLI (Bun + TypeScript): `cli.ts`, `load/`, `render/`, `parse/`, `validate/`, `emit/`, `sourceMap/`, plus `tests/`.
+- `templates/` — Curated role templates shipped with ZAC (`aave_v3.tmpl`, `_macros/`).
+- `aliases/` — Curated per-chain alias library (`mainnet/aave.yaml`, `mainnet/tokens.yaml`).
+- `examples/` — End-to-end deployment example (`config.yaml`, `mainnet/aave_safe.yaml`).
 
 ## Usage (host repos)
 
-Add ZAC as a git submodule, then add a script to your host repo's `package.json`:
+Add ZAC as a submodule, then in your `package.json`:
 
 ```
 "scripts": {
@@ -32,13 +24,28 @@ Add ZAC as a git submodule, then add a script to your host repo's `package.json`
 }
 ```
 
-Then run:
+Run:
 
 ```
-bun run zac generate <path/to/deployment.yaml> [--out <output>] [--config <path>]
+bun run zac generate <path/to/deployment.yaml> [--out <output>]
 ```
 
-The `generate` command loads, renders, parses, validates and emits a Zodiac
-Roles V2 config from a deployment YAML. Errors are reported fail-fast with a
-`phase=<load|render|parse|validate|emit>` prefix and (when available) a source
-location.
+## Try the example
+
+```
+bun ./action/cli.ts generate examples/mainnet/aave_safe.yaml
+```
+
+## Commands
+
+```
+just install               # install foundry submodules + bun deps
+just contracts-build       # forge build
+just contracts-test        # forge test
+just action-test           # vitest
+just action-lint           # eslint
+just action-format         # prettier write
+just action-format-check   # prettier check
+just action-typecheck      # tsc --noEmit
+just action-audit          # bun audit
+```
