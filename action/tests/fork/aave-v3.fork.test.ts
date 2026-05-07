@@ -1,11 +1,27 @@
 /**
- * Forked-mainnet integration test: deploy a fresh Safe + Roles V2 modifier,
- * apply a narrow USDC.approve(AAVE_pool, *) role, then assert:
+ * Forked-mainnet integration tests: deploy a fresh Safe + Roles V2 modifier,
+ * apply a role generated from a YAML fixture, and assert per-function happy
+ * + fail behaviour for each scoped function.
  *
- *   1. Member can approve the AAVE pool       (happy path).
- *   2. Approving a non-AAVE spender reverts   (ParameterNotAllowed).
- *   3. Calling on DAI (not in the role)       (TargetAddressNotAllowed).
- *   4. Calling transfer() instead of approve  (FunctionNotAllowed).
+ * Two describe blocks share one anvil instance (top-level beforeAll/afterAll):
+ *
+ *   1. "USDC approve-only" (fixtures/aave_usdc_only.yaml) — covers the
+ *      role-modifier's coarse rejections:
+ *        - happy: USDC.approve(AAVE_pool, X) succeeds.
+ *        - fails: wrong spender              -> ParameterNotAllowed.
+ *        - fails: wrong target (DAI)         -> TargetAddressNotAllowed.
+ *        - fails: wrong function (transfer)  -> FunctionNotAllowed.
+ *
+ *   2. "USDC supply+withdraw" (fixtures/aave_usdc_supply.yaml) — covers
+ *      per-scoped-function happy + fail:
+ *        - happy: pool.supply(USDC, X, avatar, 0)    -> modifier passes.
+ *        - fails: pool.supply with onBehalfOf!=avatar -> ParameterNotAllowed.
+ *        - happy: pool.withdraw(USDC, X, avatar)     -> modifier passes.
+ *        - fails: pool.withdraw with onBehalfOf!=avatar -> ParameterNotAllowed.
+ *      The happy paths use simulateContract with shouldRevert:true and pass
+ *      iff decodeRolesRevert returns null (modifier accepted; an inner AAVE
+ *      revert from missing balance / position is acceptable — we only care
+ *      about the modifier's permission decision).
  *
  * Verbose by design — every step prints what it's doing.
  *
@@ -14,7 +30,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { encodeFunctionData, toFunctionSelector, type Address, type Hex } from 'viem';
+import { encodeFunctionData, parseAbi, toFunctionSelector, type Address, type Hex } from 'viem';
 import { mainnet } from 'viem/chains';
 import { parseGenerated, type Generated } from '../../apply/parseGenerated';
 import { rolesExecAbi } from './rolesAbi';
@@ -46,8 +62,19 @@ const MEMBER_PRIVATE_KEY: Hex =
 // Public address derived from MEMBER_PRIVATE_KEY (anvil account #1).
 const MEMBER_ADDRESS: Address = '0x70997970C51812dc3A010C7d01b50e0d17dc79C8';
 
-const FIXTURE_PATH = join(__dirname, 'fixtures', 'aave_usdc_only.yaml');
+const APPROVE_ONLY_FIXTURE = join(__dirname, 'fixtures', 'aave_usdc_only.yaml');
+const SUPPLY_FIXTURE = join(__dirname, 'fixtures', 'aave_usdc_supply.yaml');
 
+// Minimal AAVE V3 Pool surface used by the supply+withdraw scenarios.
+// Defined inline to match the file-local ABI style (cf. ERC20_ABI in setup.ts).
+const AAVE_POOL_ABI = parseAbi([
+  'function supply(address asset, uint256 amount, address onBehalfOf, uint16 referralCode)',
+  'function withdraw(address asset, uint256 amount, address to) returns (uint256)',
+]);
+
+// `ctx` is shared by both describe blocks via the top-level beforeAll/afterAll
+// below. `deployed`, `appliedGenerated` and `roleKey` are reset per-test by
+// each describe's beforeEach (which redeploys + reapplies the fixture).
 let ctx: ForkContext | null = null;
 let deployed: SafeAndRoles | null = null;
 let appliedGenerated: Generated | null = null;
@@ -55,51 +82,64 @@ let roleKey: Hex = '0x';
 
 const skipReason = 'MAINNET_RPC_URL not set and public fallback unreachable; skipping fork suite';
 
+// Anvil is spawned once for the file, snapshotted, and restored before each
+// test. Both describe blocks share it.
+beforeAll(async () => {
+  const upstream = await pickUpstreamRpc();
+  if (upstream === null) {
+    console.warn(`[fork] ${skipReason}`);
+    return;
+  }
+  ctx = await spawnAnvil(upstream);
+  await takeInitialSnapshot(ctx);
+});
+
+afterAll(async () => {
+  await killAnvil();
+});
+
+/**
+ * Per-test setup: revert anvil to the clean snapshot, redeploy Safe + Roles
+ * modifier, parse the given fixture, rebind it to the freshly-deployed
+ * addresses, and apply the role on-fork. Updates the module-level `deployed`,
+ * `appliedGenerated`, `roleKey` so tests can read them.
+ */
+async function setupRoleFromFixture(fixturePath: string): Promise<void> {
+  if (!ctx) return;
+  // Roll the chain back to the initial fork state so each test starts clean.
+  await revertToInitialSnapshot(ctx);
+  // Re-deploy Safe + modifier and re-apply the role on the fresh state.
+  deployed = await deployAndConfigureSafeWithRoles(ctx);
+  const fixtureRaw = readFileSync(fixturePath, 'utf8');
+  console.log(`[fork] fixture YAML:\n${fixtureRaw.replace(/^/gm, '    ')}`);
+  const baseGenerated = parseGenerated(fixturePath);
+  appliedGenerated = rebindAddresses(baseGenerated, deployed.safeAddress, deployed.rolesAddress);
+  // Patch the member to the actual on-fork member key (the YAML is a
+  // placeholder address; a real apply scenario would have the correct
+  // address baked in already).
+  const roleName = Object.keys(appliedGenerated.roles)[0];
+  if (typeof roleName !== 'string') throw new Error('fixture must have at least one role');
+  const role = appliedGenerated.roles[roleName];
+  if (!role) throw new Error(`role ${roleName} missing after rebind`);
+  role.members = [MEMBER_ADDRESS];
+  const sdk = await import('zodiac-roles-sdk');
+  roleKey = sdk.encodeKey(roleName);
+  console.log(`[fork] roleKey for "${roleName}" = ${roleKey}`);
+  await applyGeneratedOnFork(ctx, appliedGenerated);
+  // Fund the member with ETH so they can submit transactions.
+  await fundMember(ctx);
+  // Give the avatar a USDC balance — done via anvil_setStorageAt on USDC's
+  // balance slot. Tests that don't need a balance still benefit from a
+  // realistic chain state.
+  await impersonateUsdcBalance(ctx, deployed.safeAddress, 1_000_000_000n);
+  console.log(
+    `[fork] beforeEach done; safe=${deployed.safeAddress} modifier=${deployed.rolesAddress}`,
+  );
+}
+
 describe('fork: AAVE V3 USDC role on mainnet fork', () => {
-  beforeAll(async () => {
-    const upstream = await pickUpstreamRpc();
-    if (upstream === null) {
-      console.warn(`[fork] ${skipReason}`);
-      return;
-    }
-    ctx = await spawnAnvil(upstream);
-    await takeInitialSnapshot(ctx);
-  });
-
-  afterAll(async () => {
-    await killAnvil();
-  });
-
   beforeEach(async () => {
-    if (!ctx) return;
-    // Roll the chain back to the initial fork state so each test starts clean.
-    await revertToInitialSnapshot(ctx);
-    // Re-deploy Safe + modifier and re-apply the role on the fresh state.
-    deployed = await deployAndConfigureSafeWithRoles(ctx);
-    const fixtureRaw = readFileSync(FIXTURE_PATH, 'utf8');
-    console.log(`[fork] fixture YAML:\n${fixtureRaw.replace(/^/gm, '    ')}`);
-    const baseGenerated = parseGenerated(FIXTURE_PATH);
-    appliedGenerated = rebindAddresses(baseGenerated, deployed.safeAddress, deployed.rolesAddress);
-    // Patch the member to the actual on-fork member key (the YAML is a
-    // placeholder address; a real apply scenario would have the correct
-    // address baked in already).
-    const roleName = Object.keys(appliedGenerated.roles)[0];
-    if (typeof roleName !== 'string') throw new Error('fixture must have at least one role');
-    const role = appliedGenerated.roles[roleName];
-    if (!role) throw new Error(`role ${roleName} missing after rebind`);
-    role.members = [MEMBER_ADDRESS];
-    const sdk = await import('zodiac-roles-sdk');
-    roleKey = sdk.encodeKey(roleName);
-    console.log(`[fork] roleKey for "${roleName}" = ${roleKey}`);
-    await applyGeneratedOnFork(ctx, appliedGenerated);
-    // Fund the member with ETH so they can submit transactions.
-    await fundMember(ctx);
-    // Give the avatar a USDC balance + ourselves USDC for verifying allowance
-    // changes — done via anvil_setStorageAt on USDC's balance slot.
-    await impersonateUsdcBalance(ctx, deployed.safeAddress, 1_000_000_000n);
-    console.log(
-      `[fork] beforeEach done; safe=${deployed.safeAddress} modifier=${deployed.rolesAddress}`,
-    );
+    await setupRoleFromFixture(APPROVE_ONLY_FIXTURE);
   });
 
   it('happy: USDC.approve(AAVE_pool, X) succeeds and updates allowance', async () => {
@@ -191,6 +231,147 @@ describe('fork: AAVE V3 USDC role on mainnet fork', () => {
     expect(decoded.kind).toBe('ConditionViolation');
     if (decoded.kind === 'ConditionViolation') {
       expect(decoded.statusName).toBe('FunctionNotAllowed');
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Per-scoped-function happy + fail coverage using the supply+withdraw fixture.
+//
+// The AAVE pool's supply/withdraw require real on-chain state (allowance,
+// supplied position) that we don't bother mocking — the assertion target is
+// the role-modifier's permission decision, not AAVE's success.
+//
+// For happy paths: simulateContract with shouldRevert:true. If the modifier
+// accepts the call, the inner AAVE call still reverts (no allowance / no
+// position) and the modifier surfaces that as ModuleTransactionFailed — NOT
+// ConditionViolation. So `decodeRolesRevert(err).kind !== 'ConditionViolation'`
+// is the pass condition for happy.
+//
+// For failing paths: same simulate, but expect ConditionViolation with the
+// configured Status (ParameterNotAllowed for onBehalfOf != avatar).
+// ---------------------------------------------------------------------------
+describe('fork: AAVE V3 supply+withdraw role on mainnet fork', () => {
+  beforeEach(async () => {
+    await setupRoleFromFixture(SUPPLY_FIXTURE);
+  });
+
+  it('happy: pool.supply(USDC, X, avatar, 0) — modifier passes (AAVE inner-revert ignored)', async () => {
+    if (!ctx || !deployed) {
+      console.warn(`[fork] ${skipReason}`);
+      return;
+    }
+    const amount = 1_000_000n; // 1 USDC (6 decimals)
+    const data = encodeFunctionData({
+      abi: AAVE_POOL_ABI,
+      functionName: 'supply',
+      args: [USDC, amount, deployed.safeAddress, 0],
+    });
+    console.log(
+      `[scenario:supply-happy] member calls supply(asset=${USDC}, amount=${amount.toString()}, onBehalfOf=${deployed.safeAddress}, referral=0) on AAVE pool ${AAVE_V3_POOL}`,
+    );
+    console.log(`[scenario:supply-happy] calldata: ${data}`);
+    console.log(
+      `[scenario:supply-happy] expected outcome: modifier passes (AAVE may revert internally)`,
+    );
+    const decoded = await callViaRoleExpectingRevert(
+      ctx,
+      deployed.rolesAddress,
+      AAVE_V3_POOL,
+      data,
+    );
+    console.log(
+      `[scenario:supply-happy] actual outcome: ${decoded.kind === 'ConditionViolation' ? `MODIFIER REJECTED (${describeRevert(decoded)})` : `modifier passed (${describeRevert(decoded)})`}`,
+    );
+    // Modifier MUST NOT have rejected with ConditionViolation. Anything else
+    // (ModuleTransactionFailed from AAVE's internal revert, OtherError,
+    // Unknown) means the modifier let the call through — that's the goal.
+    expect(decoded.kind).not.toBe('ConditionViolation');
+  });
+
+  it('fails: pool.supply with onBehalfOf != avatar reverts with ParameterNotAllowed', async () => {
+    if (!ctx || !deployed) {
+      console.warn(`[fork] ${skipReason}`);
+      return;
+    }
+    const amount = 1_000_000n;
+    const data = encodeFunctionData({
+      abi: AAVE_POOL_ABI,
+      functionName: 'supply',
+      args: [USDC, amount, ATTACKER, 0],
+    });
+    console.log(
+      `[scenario:supply-fail] member calls supply(asset=${USDC}, amount=${amount.toString()}, onBehalfOf=${ATTACKER}, referral=0) on AAVE pool; expected ParameterNotAllowed`,
+    );
+    console.log(`[scenario:supply-fail] calldata: ${data}`);
+    const decoded = await callViaRoleExpectingRevert(
+      ctx,
+      deployed.rolesAddress,
+      AAVE_V3_POOL,
+      data,
+    );
+    console.log(`[scenario:supply-fail] actual outcome: revert ${describeRevert(decoded)}`);
+    expect(decoded.kind).toBe('ConditionViolation');
+    if (decoded.kind === 'ConditionViolation') {
+      expect(decoded.statusName).toBe('ParameterNotAllowed');
+    }
+  });
+
+  it('happy: pool.withdraw(USDC, X, avatar) — modifier passes (AAVE inner-revert ignored)', async () => {
+    if (!ctx || !deployed) {
+      console.warn(`[fork] ${skipReason}`);
+      return;
+    }
+    const amount = 1_000_000n;
+    const data = encodeFunctionData({
+      abi: AAVE_POOL_ABI,
+      functionName: 'withdraw',
+      args: [USDC, amount, deployed.safeAddress],
+    });
+    console.log(
+      `[scenario:withdraw-happy] member calls withdraw(asset=${USDC}, amount=${amount.toString()}, onBehalfOf=${deployed.safeAddress}) on AAVE pool ${AAVE_V3_POOL}`,
+    );
+    console.log(`[scenario:withdraw-happy] calldata: ${data}`);
+    console.log(
+      `[scenario:withdraw-happy] expected outcome: modifier passes (AAVE may revert internally — no aToken position)`,
+    );
+    const decoded = await callViaRoleExpectingRevert(
+      ctx,
+      deployed.rolesAddress,
+      AAVE_V3_POOL,
+      data,
+    );
+    console.log(
+      `[scenario:withdraw-happy] actual outcome: ${decoded.kind === 'ConditionViolation' ? `MODIFIER REJECTED (${describeRevert(decoded)})` : `modifier passed (${describeRevert(decoded)})`}`,
+    );
+    expect(decoded.kind).not.toBe('ConditionViolation');
+  });
+
+  it('fails: pool.withdraw with onBehalfOf != avatar reverts with ParameterNotAllowed', async () => {
+    if (!ctx || !deployed) {
+      console.warn(`[fork] ${skipReason}`);
+      return;
+    }
+    const amount = 1_000_000n;
+    const data = encodeFunctionData({
+      abi: AAVE_POOL_ABI,
+      functionName: 'withdraw',
+      args: [USDC, amount, ATTACKER],
+    });
+    console.log(
+      `[scenario:withdraw-fail] member calls withdraw(asset=${USDC}, amount=${amount.toString()}, onBehalfOf=${ATTACKER}) on AAVE pool; expected ParameterNotAllowed`,
+    );
+    console.log(`[scenario:withdraw-fail] calldata: ${data}`);
+    const decoded = await callViaRoleExpectingRevert(
+      ctx,
+      deployed.rolesAddress,
+      AAVE_V3_POOL,
+      data,
+    );
+    console.log(`[scenario:withdraw-fail] actual outcome: revert ${describeRevert(decoded)}`);
+    expect(decoded.kind).toBe('ConditionViolation');
+    if (decoded.kind === 'ConditionViolation') {
+      expect(decoded.statusName).toBe('ParameterNotAllowed');
     }
   });
 });

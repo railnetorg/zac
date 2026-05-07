@@ -1,7 +1,12 @@
 # Full AAVE USDC supply scenario: scope USDC.approve(pool, *) plus
-# pool.supply(asset=USDC, amount=*, onBehalfOf=avatar, referral=*) so the role
-# can supply USDC into AAVE V3 on the avatar's behalf, but cannot supply on
-# behalf of an arbitrary address.
+# pool.supply(asset=USDC, amount=*, onBehalfOf=avatar, referral=*) and
+# pool.withdraw(asset=USDC, amount=*, onBehalfOf=avatar) so the role can
+# supply/withdraw USDC into AAVE V3 on the avatar's behalf, but cannot act
+# on behalf of an arbitrary address.
+#
+# Asset uses `oneOf` (single-element list) to mirror the production
+# templates/aave_v3.tmpl shape, where `deposit_assets` is a loop emitting
+# one or more entries.
 deployment:
   chain_id: 1
   safe_address: '0x0000000000000000000000000000000000000001'
@@ -31,8 +36,9 @@ roles:
             params:
               - name: asset
                 param_type: static
-                operator: equal_to
-                value: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
+                operator: oneOf
+                values:
+                  - '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
                 value_type: address
               - name: amount
                 param_type: static
@@ -43,3 +49,19 @@ roles:
               - name: referralCode
                 param_type: static
                 operator: pass
+
+          - signature: function withdraw(address asset, uint256 amount, address onBehalfOf)
+            execution_options: none
+            params:
+              - name: asset
+                param_type: static
+                operator: oneOf
+                values:
+                  - '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
+                value_type: address
+              - name: amount
+                param_type: static
+                operator: pass
+              - name: onBehalfOf
+                param_type: static
+                operator: equal_to_avatar
