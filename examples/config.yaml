@@ -7,3 +7,8 @@ aliases:
     metamorpho: ../aliases/mainnet/metamorpho.yaml
     safes: ./aliases/mainnet/safes.yaml
     modifiers: ./aliases/mainnet/modifiers.yaml
+  sepolia:
+    aave: ../aliases/sepolia/aave.yaml
+    tokens: ../aliases/sepolia/tokens.yaml
+    safes: ./aliases/sepolia/safes.yaml
+    modifiers: ./aliases/sepolia/modifiers.yaml
