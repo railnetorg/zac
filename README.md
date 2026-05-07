@@ -21,3 +21,24 @@ Available recipes:
     contracts-test         # run solidity tests
     install                # install foundry submodules and action dependencies
 ```
+
+## Usage (host repos)
+
+Add ZAC as a git submodule, then add a script to your host repo's `package.json`:
+
+```
+"scripts": {
+  "zac": "bun ./submodules/zac/action/cli.ts"
+}
+```
+
+Then run:
+
+```
+bun run zac generate <path/to/deployment.yaml> [--out <output>] [--config <path>]
+```
+
+The `generate` command loads, renders, parses, validates and emits a Zodiac
+Roles V2 config from a deployment YAML. Errors are reported fail-fast with a
+`phase=<load|render|parse|validate|emit>` prefix and (when available) a source
+location.
