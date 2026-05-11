@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { Command } from 'commander';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { ZacError, formatError } from './errors';
 import { runGenerate } from './runGenerate';
 
@@ -25,6 +26,52 @@ export function buildProgram(): Command {
       if (options.out !== undefined) opts.outPath = options.out;
       if (options.config !== undefined) opts.configOverride = options.config;
       await runGenerate(opts);
+    });
+
+  program
+    .command('plan <generated_path>')
+    .description(
+      'compute role-state-update calls + Safe TX hash; output as JSON (no signing, no posting)',
+    )
+    .option('--out <path>', 'write plan JSON to a file (default: stdout)')
+    .action(async (generatedPath: string, options: { out?: string }) => {
+      const { runPlan } = await import('./apply/runPlan');
+      const { serializePlan } = await import('./apply/planSchema');
+      const plan = await runPlan({ generatedPath });
+      const json = serializePlan(plan);
+      if (options.out !== undefined) {
+        writeFileSync(options.out, json);
+      } else {
+        process.stdout.write(json + '\n');
+      }
+    });
+
+  program
+    .command('submit <plan_path>')
+    .description(
+      'sign + post a plan JSON to Safe Transaction Service (signed by ZAC_PROPOSER_PRIVATE_KEY env var; optional SAFE_API_KEY, RPC_URL)',
+    )
+    .action(async (planPath: string) => {
+      const { runSubmit } = await import('./apply/runSubmit');
+      const { parsePlan } = await import('./apply/planSchema');
+      const proposerKey = process.env['ZAC_PROPOSER_PRIVATE_KEY'] as `0x${string}` | undefined;
+      if (proposerKey === undefined) {
+        throw new ZacError({
+          phase: 'apply',
+          message: 'ZAC_PROPOSER_PRIVATE_KEY env var is required for submit',
+        });
+      }
+      const plan = parsePlan(readFileSync(planPath, 'utf8'));
+      const submitArgs: Parameters<typeof runSubmit>[0] = {
+        plan,
+        proposerPrivateKey: proposerKey,
+      };
+      const apiKey = process.env['SAFE_API_KEY'];
+      if (apiKey !== undefined) submitArgs.apiKey = apiKey;
+      const rpcUrl = process.env['RPC_URL'];
+      if (rpcUrl !== undefined) submitArgs.rpcUrl = rpcUrl;
+      const result = await runSubmit(submitArgs);
+      process.stdout.write(`safeTxHash: ${result.safeTxHash}\n`);
     });
 
   program

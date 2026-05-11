@@ -46,7 +46,7 @@ const TEST_KEY: `0x${string}` =
 const fakeEncodeKey = (_key: string): `0x${string}` => `0x${'a'.repeat(64)}` as `0x${string}`;
 
 function safeInitStub() {
-  return async (_cfg: { provider: string; signer: string; safeAddress: string }) => ({
+  return async (_cfg: { provider: string; signer?: string; safeAddress: string }) => ({
     createTransaction: async (args: { transactions: Call[] }) => ({
       data: { transactions: args.transactions },
     }),

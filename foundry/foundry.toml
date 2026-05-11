@@ -2,5 +2,23 @@
 src = "src"
 out = "out"
 libs = ["lib"]
+# fork tests live under test/zac/ and require ffi + RPC_URL — excluded from
+# the default profile so `forge test` (no profile) skips them.
+no_match_path = "test/zac/**"
+
+[profile.fork]
+src = "src"
+out = "out"
+libs = ["lib"]
+ffi = true
+# only run fork tests under this profile.
+match_path = "test/zac/**"
+fs_permissions = [
+  { access = "read-write", path = "../examples" },
+  { access = "read", path = "../action" },
+  { access = "read", path = "../templates" },
+  { access = "read", path = "../aliases" },
+  { access = "read-write", path = "/tmp" },
+]
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options

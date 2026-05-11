@@ -1,7 +1,8 @@
 import { ZacError } from '../errors';
-import { parseGenerated } from './parseGenerated';
-import { planRoleCalls, type PlanApplyRoleFn } from './planRoleCalls';
-import { proposeToSafe, type SafeInitFn, type SafeApiKitCtor } from './safeApi';
+import { runPlan } from './runPlan';
+import { runSubmit } from './runSubmit';
+import type { PlanApplyRoleFn } from './planRoleCalls';
+import type { SafeInitFn, SafeApiKitCtor } from './safeApi';
 
 export interface RunApplyOpts {
   generatedPath: string;
@@ -11,13 +12,9 @@ export interface RunApplyOpts {
   apiKey?: string;
   /** Defaults to `process.env.RPC_URL` (forwarded only if set). */
   rpcUrl?: string;
-  /** Injected SDK fn — forwarded to planRoleCalls. */
   planApplyRole?: PlanApplyRoleFn;
-  /** Injected SDK fn — forwarded to planRoleCalls. */
   encodeKey?: (key: string) => `0x${string}`;
-  /** Injected — forwarded to proposeToSafe. */
   safeInit?: SafeInitFn;
-  /** Injected — forwarded to proposeToSafe. */
   apiKitCtor?: SafeApiKitCtor;
 }
 
@@ -34,30 +31,20 @@ export async function runApply(opts: RunApplyOpts): Promise<{ safeTxHash: string
   const apiKey = opts.apiKey ?? process.env['SAFE_API_KEY'];
   const rpcUrl = opts.rpcUrl ?? process.env['RPC_URL'];
 
-  const generated = parseGenerated(opts.generatedPath);
-
-  const planArgs: Parameters<typeof planRoleCalls>[0] = { generated };
+  const planArgs: Parameters<typeof runPlan>[0] = { generatedPath: opts.generatedPath };
+  if (rpcUrl !== undefined) planArgs.rpcUrl = rpcUrl;
   if (opts.planApplyRole !== undefined) planArgs.planApplyRole = opts.planApplyRole;
   if (opts.encodeKey !== undefined) planArgs.encodeKey = opts.encodeKey;
-  const calls = await planRoleCalls(planArgs);
+  if (opts.safeInit !== undefined) planArgs.safeInit = opts.safeInit;
+  const plan = await runPlan(planArgs);
 
-  if (calls.length === 0) {
-    throw new ZacError({
-      phase: 'apply',
-      message: 'planApplyRole returned 0 calls — role state is already in sync, nothing to propose',
-    });
-  }
-
-  const proposeArgs: Parameters<typeof proposeToSafe>[0] = {
-    chainId: generated.deployment.chain_id,
-    safeAddress: generated.deployment.safe_address,
-    calls,
+  const submitArgs: Parameters<typeof runSubmit>[0] = {
+    plan,
     proposerPrivateKey: proposerKey,
   };
-  if (apiKey !== undefined) proposeArgs.apiKey = apiKey;
-  if (rpcUrl !== undefined) proposeArgs.rpcUrl = rpcUrl;
-  if (opts.safeInit !== undefined) proposeArgs.safeInit = opts.safeInit;
-  if (opts.apiKitCtor !== undefined) proposeArgs.apiKitCtor = opts.apiKitCtor;
-
-  return proposeToSafe(proposeArgs);
+  if (apiKey !== undefined) submitArgs.apiKey = apiKey;
+  if (rpcUrl !== undefined) submitArgs.rpcUrl = rpcUrl;
+  if (opts.safeInit !== undefined) submitArgs.safeInit = opts.safeInit;
+  if (opts.apiKitCtor !== undefined) submitArgs.apiKitCtor = opts.apiKitCtor;
+  return runSubmit(submitArgs);
 }

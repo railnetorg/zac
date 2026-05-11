@@ -28,7 +28,7 @@ interface ProposeRecord {
 }
 
 function buildStubs(propose: { record: ProposeRecord[]; throwOnPropose?: Error }) {
-  const safeInitStub = async (cfg: { provider: string; signer: string; safeAddress: string }) => {
+  const safeInitStub = async (cfg: { provider: string; signer?: string; safeAddress: string }) => {
     void cfg;
     return {
       createTransaction: async (args: { transactions: Call[] }) => ({

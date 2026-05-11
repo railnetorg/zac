@@ -19,6 +19,22 @@ contracts-format-check:
 contracts-test:
     cd foundry && forge test -vvv
 
+# spawn anvil forking <upstream>, run forge tests against it under the fork profile, clean up
+# usage: just forge-test-fork https://sepolia-rpc.example
+forge-test-fork upstream:
+    @bash -c '\
+      anvil --fork-url {{upstream}} --port 8546 --quiet & \
+      ANVIL_PID=$$!; \
+      trap "kill $$ANVIL_PID 2>/dev/null" EXIT; \
+      for i in 1 2 3 4 5 6 7 8 9 10; do \
+        if curl -s -o /dev/null -X POST -H "Content-Type: application/json" \
+          --data "{\"jsonrpc\":\"2.0\",\"method\":\"eth_blockNumber\",\"params\":[],\"id\":1}" \
+          http://127.0.0.1:8546; then break; fi; \
+        sleep 1; \
+      done; \
+      cd foundry && FOUNDRY_PROFILE=fork RPC_URL=http://127.0.0.1:8546 forge test -vvv \
+    '
+
 # run action ts tests
 action-test:
     cd action && bun run test
