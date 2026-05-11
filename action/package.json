@@ -9,7 +9,6 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:fork": "vitest run -c vitest.fork.config.ts",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format-check": "prettier --check .",

@@ -23,10 +23,6 @@ contracts-test:
 action-test:
     cd action && bun run test
 
-# run action ts forked-chain integration tests (opt-in, requires RPC; spawns anvil)
-action-test-fork:
-    cd action && bun run test:fork
-
 # lint action ts code
 action-lint:
     cd action && bun run lint
