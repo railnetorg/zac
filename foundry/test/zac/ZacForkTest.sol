@@ -68,8 +68,12 @@ abstract contract ZacForkTest is Test {
         address safeAddress = vm.parseJsonAddress(planJson, ".safeAddress");
         string memory safeStr = vm.toString(safeAddress);
 
-        // 4. Fund + impersonate the Safe.
+        // 4. Fund + impersonate the Safe. Disable anvil auto-mining first so
+        //    every queued tx lands in a single block we mine explicitly at
+        //    the end — anvil's default auto-mining is asynchronous and the
+        //    last submitted tx can linger in the mempool past our probe.
         // 10 ETH = 0x8ac7230489e80000
+        vm.rpc("evm_setAutomine", "[false]");
         vm.rpc(
             "anvil_setBalance",
             string.concat("[\"", safeStr, "\",\"0x8ac7230489e80000\"]")
@@ -101,19 +105,25 @@ abstract contract ZacForkTest is Test {
             vm.rpc("eth_sendTransaction", txParams);
         }
 
+        // 6. Mine all queued txs into a single new block, then restore
+        //    anvil's auto-mining. anvil_mine with no args mines 1 block
+        //    including every pending tx (sequential nonce order).
+        vm.rpc("anvil_mine", "[]");
+        vm.rpc("evm_setAutomine", "[true]");
         vm.rpc(
             "anvil_stopImpersonatingAccount",
             string.concat("[\"", safeStr, "\"]")
         );
 
-        // 6. Re-pin forge to the post-apply tip: startBlock + N.
+        // 7. Re-pin forge to the post-apply tip: startBlock + 1 (every
+        //    queued tx batched into a single new block by anvil_mine).
         //    Why: forge's in-process EVM caches state at the pinned block.
         //    The eth_sendTransaction calls above moved anvil's tip but did
         //    NOT move forge's pin — without this, tests still read pre-apply
-        //    state. Assumes auto-mining (anvil default = 1 block per tx).
-        vm.rollFork(startBlock + callsCount);
+        //    state.
+        vm.rollFork(startBlock + 1);
 
         emit log_named_uint("zac plan executed calls", callsCount);
-        emit log_named_uint("rolled forge fork to", startBlock + callsCount);
+        emit log_named_uint("rolled forge fork to", startBlock + 1);
     }
 }

@@ -11,8 +11,10 @@ src = "src"
 out = "out"
 libs = ["lib"]
 ffi = true
-# only run fork tests under this profile.
-match_path = "test/zac/**"
+# Override the inherited no_match_path from default so zac fork tests run here.
+no_match_path = "__never_match__"
+# Only run zac fork tests (skip Counter and any other generic tests).
+match_path = "*zac*"
 fs_permissions = [
   { access = "read-write", path = "../examples" },
   { access = "read", path = "../action" },

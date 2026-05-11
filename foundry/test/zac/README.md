@@ -53,7 +53,7 @@ should error, not silently skip.
 
 ## `zacApply(configPath)` semantics
 
-The helper in `ZacForkTest.sol` does six things in order:
+The helper in `ZacForkTest.sol` does seven things in order:
 
 1. Read `RPC_URL` (hard-fail if unset).
 2. Capture `startBlock = block.number`. This is forge's pinned block, BEFORE
@@ -62,11 +62,14 @@ The helper in `ZacForkTest.sol` does six things in order:
    renders the YAML into a flattened deployment config. **Read-only.**
 4. **FFI**: `bun ../action/cli.ts plan <generated> --out /tmp/....plan.json` —
    computes the role-state-update calls and emits a JSON artifact. **Read-only.**
-5. **`vm.rpc`** loop: fund Safe (`anvil_setBalance`), impersonate it
-   (`anvil_impersonateAccount`), then `eth_sendTransaction` each planned call
-   from the Safe directly. Stop impersonation. **Each tx advances anvil's tip
-   by 1 block (auto-mining).**
-6. `vm.rollFork(startBlock + N)` — re-pin forge to anvil's new tip.
+5. **Disable anvil auto-mining** (`evm_setAutomine(false)`). Fund the Safe
+   (`anvil_setBalance`), impersonate it (`anvil_impersonateAccount`), then
+   `eth_sendTransaction` each planned call from the Safe directly. With
+   auto-mining off, every tx queues in the mempool.
+6. **Mine all queued txs into a single block** (`anvil_mine`), re-enable
+   auto-mining, stop impersonation. The N calls all land in one new block
+   with sequential nonces, executed in submit order.
+7. `vm.rollFork(startBlock + 1)` — re-pin forge to anvil's new tip.
 
 ### Why `vm.rollFork`?
 
@@ -93,9 +96,13 @@ modifier and are NOT short-circuited.
 
 ## Caveats
 
-- **Auto-mining must be on** (anvil default). If you run anvil with
-  `--no-mining`, the `vm.rollFork(startBlock + N)` math is wrong because
-  blocks won't auto-produce per tx. The helper does not defensively check.
+- **Why batch into one block?** Anvil's auto-mining is asynchronous: each
+  `eth_sendTransaction` returns immediately with a tx hash but the block
+  containing it lands shortly *after*. The last submitted tx can linger in
+  the mempool past the helper's probe, leaving forge with the wrong tip.
+  Disabling auto-mining, queuing all txs, then explicitly mining one block
+  eliminates the race. Side effect: all calls execute in a single block —
+  fine for ZAC (each call is an independent owner-only modifier setter).
 - **Nonce drift**: between `zac plan` and the Safe TX Service `submit` step,
   the live Safe nonce may advance. Not relevant for fork tests (we never
   submit), but worth knowing if you use `zac plan` outputs elsewhere.
