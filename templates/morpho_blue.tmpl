@@ -40,6 +40,25 @@ roles:
         params:
           - name: marketParams
             param_type: "tuple"
+            {%- if markets|length == 1 %}
+            operator: "matches"
+            conditions:
+              - operator: "equal_to"
+                value: "{{ markets[0].loan_token }}"
+                value_type: "address"
+              - operator: "equal_to"
+                value: "{{ markets[0].collateral_token }}"
+                value_type: "address"
+              - operator: "equal_to"
+                value: "{{ markets[0].oracle }}"
+                value_type: "address"
+              - operator: "equal_to"
+                value: "{{ markets[0].irm }}"
+                value_type: "address"
+              - operator: "equal_to"
+                value: "{{ markets[0].lltv }}"
+                value_type: "uint256"
+            {%- else %}
             operator: "or"
             conditions:
               {%- for market in markets %}
@@ -61,6 +80,7 @@ roles:
                     value: "{{ market.lltv }}"
                     value_type: "uint256"
               {%- endfor %}
+            {%- endif %}
           - name: assets
             param_type: "static"
             operator: "pass"
@@ -81,6 +101,25 @@ roles:
         params:
           - name: marketParams
             param_type: "tuple"
+            {%- if markets|length == 1 %}
+            operator: "matches"
+            conditions:
+              - operator: "equal_to"
+                value: "{{ markets[0].loan_token }}"
+                value_type: "address"
+              - operator: "equal_to"
+                value: "{{ markets[0].collateral_token }}"
+                value_type: "address"
+              - operator: "equal_to"
+                value: "{{ markets[0].oracle }}"
+                value_type: "address"
+              - operator: "equal_to"
+                value: "{{ markets[0].irm }}"
+                value_type: "address"
+              - operator: "equal_to"
+                value: "{{ markets[0].lltv }}"
+                value_type: "uint256"
+            {%- else %}
             operator: "or"
             conditions:
               {%- for market in markets %}
@@ -102,6 +141,7 @@ roles:
                     value: "{{ market.lltv }}"
                     value_type: "uint256"
               {%- endfor %}
+            {%- endif %}
           - name: assets
             param_type: "static"
             operator: "pass"
