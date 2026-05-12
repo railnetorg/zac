@@ -5,6 +5,7 @@ aliases:
     aave: ../aliases/mainnet/aave.yaml
     tokens: ../aliases/mainnet/tokens.yaml
     metamorpho: ../aliases/mainnet/metamorpho.yaml
+    morpho_blue: ../aliases/mainnet/morpho_blue.yaml
     safes: ./aliases/mainnet/safes.yaml
     modifiers: ./aliases/mainnet/modifiers.yaml
   sepolia:

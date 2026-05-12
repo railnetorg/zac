@@ -1,0 +1,73 @@
+{#-
+  Ondo OUSG — subscribe / redeem
+
+  Required template params:
+    subscriber_address  — address of the OUSG Subscriber/Manager contract
+                          (the contract that mints/redeems OUSG shares)
+    ousg_address        — { address, symbol } of the OUSG share token
+    payment_asset       — { address, symbol } of the payment asset (e.g. USDC)
+
+  Mirrors railnet's `ondo_ousg.yaml`. The role can approve OUSG and the
+  payment asset to the subscriber, then call subscribe / redeem on the
+  subscriber with the payment asset pinned to the configured value.
+-#}
+roles:
+  - address: "{{ ousg_address.address }}" # approval for {{ ousg_address.symbol }}
+    functions:
+      - signature: "function approve(address spender, uint256 amount)"
+        execution_options: "none"
+        params:
+          - name: spender
+            param_type: "static"
+            operator: "equal_to"
+            value: "{{ subscriber_address }}"
+            value_type: "address"
+          - name: amount
+            param_type: "static"
+            operator: "pass"
+
+  - address: "{{ payment_asset.address }}" # approval for {{ payment_asset.symbol }}
+    functions:
+      - signature: "function approve(address spender, uint256 amount)"
+        execution_options: "none"
+        params:
+          - name: spender
+            param_type: "static"
+            operator: "equal_to"
+            value: "{{ subscriber_address }}"
+            value_type: "address"
+          - name: amount
+            param_type: "static"
+            operator: "pass"
+
+  - address: "{{ subscriber_address }}"
+    functions:
+      - signature: "function subscribe(address asset, uint256 amount, uint256 minAmountOut)"
+        execution_options: "none"
+        params:
+          - name: asset
+            param_type: "static"
+            operator: "equal_to"
+            value: "{{ payment_asset.address }}"
+            value_type: "address"
+          - name: amount
+            param_type: "static"
+            operator: "pass"
+          - name: minAmountOut
+            param_type: "static"
+            operator: "pass"
+
+      - signature: "function redeem(uint256 shareAmount, address asset, uint256 minAmountOut)"
+        execution_options: "none"
+        params:
+          - name: shareAmount
+            param_type: "static"
+            operator: "pass"
+          - name: asset
+            param_type: "static"
+            operator: "equal_to"
+            value: "{{ payment_asset.address }}"
+            value_type: "address"
+          - name: minAmountOut
+            param_type: "static"
+            operator: "pass"

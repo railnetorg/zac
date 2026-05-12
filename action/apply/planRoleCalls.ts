@@ -24,6 +24,8 @@ interface SdkBuilders {
     gt: (v: unknown) => unknown;
     lt: (v: unknown) => unknown;
     or: (...args: unknown[]) => unknown;
+    matches: (scoping: unknown[]) => unknown;
+    pass: unknown;
     calldataMatches: (scoping: unknown, abiTypes: readonly string[]) => unknown;
     avatar: unknown;
   };

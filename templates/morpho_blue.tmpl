@@ -1,0 +1,116 @@
+{#-
+  Morpho Blue — per-market supply / withdraw
+
+  Required template params:
+    morpho_address      — address of the Morpho Blue singleton
+    deposit_assets[]    — list of { address, symbol } (loan tokens this role
+                          is allowed to approve and supply)
+    markets[]           — list of {
+                            loan_token, collateral_token, oracle, irm, lltv,
+                            (optional) label
+                          } enumerating every Morpho market this role is
+                          permitted to interact with. Each market is matched
+                          as a tuple against the MarketParams calldata.
+
+  Mirrors railnet's `morpho_blue_usdc.yaml`: a top-level `or` of
+  per-market `matches` over the MarketParams tuple, with onBehalf and
+  receiver pinned to the avatar.
+-#}
+roles:
+{%- for asset in deposit_assets %}
+  - address: "{{ asset.address }}" # approval for {{ asset.symbol }}
+    functions:
+      - signature: "function approve(address spender, uint256 amount)"
+        execution_options: "none"
+        params:
+          - name: spender
+            param_type: "static"
+            operator: "equal_to"
+            value: "{{ morpho_address }}"
+            value_type: "address"
+          - name: amount
+            param_type: "static"
+            operator: "pass"
+{%- endfor %}
+
+  - address: "{{ morpho_address }}"
+    functions:
+      - signature: "function supply((address loanToken, address collateralToken, address oracle, address irm, uint256 lltv) marketParams, uint256 assets, uint256 shares, address onBehalf, bytes data)"
+        execution_options: "none"
+        params:
+          - name: marketParams
+            param_type: "tuple"
+            operator: "or"
+            conditions:
+              {%- for market in markets %}
+              - operator: "matches"
+                conditions:
+                  - operator: "equal_to"
+                    value: "{{ market.loan_token }}"
+                    value_type: "address"
+                  - operator: "equal_to"
+                    value: "{{ market.collateral_token }}"
+                    value_type: "address"
+                  - operator: "equal_to"
+                    value: "{{ market.oracle }}"
+                    value_type: "address"
+                  - operator: "equal_to"
+                    value: "{{ market.irm }}"
+                    value_type: "address"
+                  - operator: "equal_to"
+                    value: "{{ market.lltv }}"
+                    value_type: "uint256"
+              {%- endfor %}
+          - name: assets
+            param_type: "static"
+            operator: "pass"
+          - name: shares
+            param_type: "static"
+            operator: "equal_to"
+            value: "0"
+            value_type: "uint256"
+          - name: onBehalf
+            param_type: "static"
+            operator: "equal_to_avatar"
+          - name: data
+            param_type: "dynamic"
+            operator: "pass"
+
+      - signature: "function withdraw((address loanToken, address collateralToken, address oracle, address irm, uint256 lltv) marketParams, uint256 assets, uint256 shares, address onBehalf, address receiver)"
+        execution_options: "none"
+        params:
+          - name: marketParams
+            param_type: "tuple"
+            operator: "or"
+            conditions:
+              {%- for market in markets %}
+              - operator: "matches"
+                conditions:
+                  - operator: "equal_to"
+                    value: "{{ market.loan_token }}"
+                    value_type: "address"
+                  - operator: "equal_to"
+                    value: "{{ market.collateral_token }}"
+                    value_type: "address"
+                  - operator: "equal_to"
+                    value: "{{ market.oracle }}"
+                    value_type: "address"
+                  - operator: "equal_to"
+                    value: "{{ market.irm }}"
+                    value_type: "address"
+                  - operator: "equal_to"
+                    value: "{{ market.lltv }}"
+                    value_type: "uint256"
+              {%- endfor %}
+          - name: assets
+            param_type: "static"
+            operator: "pass"
+          - name: shares
+            param_type: "static"
+            operator: "pass"
+          - name: onBehalf
+            param_type: "static"
+            operator: "equal_to_avatar"
+          - name: receiver
+            param_type: "static"
+            operator: "equal_to_avatar"

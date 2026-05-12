@@ -1,0 +1,18 @@
+singleton: "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb"
+
+# Markets, mirrored from railnet's morpho_blue_usdc.yaml. Each entry pins
+# loan_token, collateral_token, oracle, irm, lltv for `matches` scoping.
+markets:
+  usdc_cbbtc_86:
+    loan_token: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"  # USDC
+    collateral_token: "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf"  # cbBTC
+    oracle: "0xA6D6950c9F177F1De7f7757FB33539e3Ec60182a"
+    irm: "0x870aC11D48B15DB9a138Cf899d20F13F79Ba00BC"
+    lltv: "860000000000000000"
+
+  usdc_wbtc_86:
+    loan_token: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+    collateral_token: "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"  # WBTC
+    oracle: "0xDddd770BADd886dF3864029e4B377B5F6a2B6b83"
+    irm: "0x870aC11D48B15DB9a138Cf899d20F13F79Ba00BC"
+    lltv: "860000000000000000"

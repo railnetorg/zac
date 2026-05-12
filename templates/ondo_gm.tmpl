@@ -1,0 +1,124 @@
+{#-
+  Ondo Global Markets — mintWithAttestation / redeemWithAttestation
+
+  Required template params:
+    gm_router_address   — address of the GM Router / Subscriber contract
+                          (the contract that consumes mint/redeem-with-
+                          attestation calls)
+    payment_asset       — { address, symbol } of the payment asset (e.g. USDC)
+    gm_tokens[]         — list of { address, symbol } enumerating the GM
+                          tokens this role can mint to / redeem from
+                          (HYGon, TLTon, SHYon, IEFon, …)
+
+  Mirrors railnet's `ondo_gm_usdc.yaml`. The Attestation tuple (9 fields)
+  has only one field meaningfully scoped — `recipient` (index 3). Every
+  other tuple field is left as `pass`. The whole tuple is wrapped in an
+  `or` of per-recipient `matches` so the role can mint into any of the
+  enumerated GM tokens but no others. Outside the tuple, `paymentAsset`
+  is pinned to the configured payment_asset.
+
+  NOTE — Order tuple field NAMES are best-effort guesses (the GM router
+  exposes the struct positionally). Only `recipient` matters for scoping;
+  renaming the other fields will not affect codegen as long as the order
+  and types match the on-chain ABI.
+-#}
+roles:
+  - address: "{{ payment_asset.address }}" # approval for {{ payment_asset.symbol }}
+    functions:
+      - signature: "function approve(address spender, uint256 amount)"
+        execution_options: "none"
+        params:
+          - name: spender
+            param_type: "static"
+            operator: "equal_to"
+            value: "{{ gm_router_address }}"
+            value_type: "address"
+          - name: amount
+            param_type: "static"
+            operator: "pass"
+
+{%- for token in gm_tokens %}
+  - address: "{{ token.address }}" # approval for {{ token.symbol }}
+    functions:
+      - signature: "function approve(address spender, uint256 amount)"
+        execution_options: "none"
+        params:
+          - name: spender
+            param_type: "static"
+            operator: "equal_to"
+            value: "{{ gm_router_address }}"
+            value_type: "address"
+          - name: amount
+            param_type: "static"
+            operator: "pass"
+{%- endfor %}
+
+  - address: "{{ gm_router_address }}"
+    functions:
+      - signature: "function mintWithAttestation((uint256 amount, uint256 deadline, bytes32 hashedNonce, address recipient, uint256 amountIn, uint256 expectedAmountOut, uint256 maxAmountOut, uint8 v, bytes32 r) order, bytes signature, address paymentAsset, uint256 minPaymentReceived)"
+        execution_options: "none"
+        params:
+          - name: order
+            param_type: "tuple"
+            operator: "or"
+            conditions:
+              {%- for token in gm_tokens %}
+              - operator: "matches"
+                conditions:
+                  - operator: "pass"
+                  - operator: "pass"
+                  - operator: "pass"
+                  - operator: "equal_to"
+                    value: "{{ token.address }}"
+                    value_type: "address"
+                  - operator: "pass"
+                  - operator: "pass"
+                  - operator: "pass"
+                  - operator: "pass"
+                  - operator: "pass"
+              {%- endfor %}
+          - name: signature
+            param_type: "dynamic"
+            operator: "pass"
+          - name: paymentAsset
+            param_type: "static"
+            operator: "equal_to"
+            value: "{{ payment_asset.address }}"
+            value_type: "address"
+          - name: minPaymentReceived
+            param_type: "static"
+            operator: "pass"
+
+      - signature: "function redeemWithAttestation((uint256 amount, uint256 deadline, bytes32 hashedNonce, address recipient, uint256 amountIn, uint256 expectedAmountOut, uint256 maxAmountOut, uint8 v, bytes32 r) order, bytes signature, address paymentAsset, uint256 minPaymentReceived)"
+        execution_options: "none"
+        params:
+          - name: order
+            param_type: "tuple"
+            operator: "or"
+            conditions:
+              {%- for token in gm_tokens %}
+              - operator: "matches"
+                conditions:
+                  - operator: "pass"
+                  - operator: "pass"
+                  - operator: "pass"
+                  - operator: "equal_to"
+                    value: "{{ token.address }}"
+                    value_type: "address"
+                  - operator: "pass"
+                  - operator: "pass"
+                  - operator: "pass"
+                  - operator: "pass"
+                  - operator: "pass"
+              {%- endfor %}
+          - name: signature
+            param_type: "dynamic"
+            operator: "pass"
+          - name: paymentAsset
+            param_type: "static"
+            operator: "equal_to"
+            value: "{{ payment_asset.address }}"
+            value_type: "address"
+          - name: minPaymentReceived
+            param_type: "static"
+            operator: "pass"

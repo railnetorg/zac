@@ -1,0 +1,59 @@
+{#-
+  Compound V3 (Comet) — supply / withdraw
+
+  Required template params:
+    comet_address       — address of the Comet pool contract
+    deposit_assets[]    — list of { address, symbol } describing the assets
+                          this role is allowed to supply / withdraw
+
+  Mirrors the policy intent of railnet's `compound_v3.yaml`: the role can
+  approve the Comet for each deposit asset and supply/withdraw any of them.
+-#}
+roles:
+{%- for asset in deposit_assets %}
+  - address: "{{ asset.address }}" # approval for {{ asset.symbol }}
+    functions:
+      - signature: "function approve(address spender, uint256 amount)"
+        execution_options: "none"
+        params:
+          - name: spender
+            param_type: "static"
+            operator: "equal_to"
+            value: "{{ comet_address }}"
+            value_type: "address"
+          - name: amount
+            param_type: "static"
+            operator: "pass"
+{%- endfor %}
+
+  - address: "{{ comet_address }}"
+    functions:
+      - signature: "function supply(address asset, uint256 amount)"
+        execution_options: "none"
+        params:
+          - name: asset
+            param_type: "static"
+            operator: "oneOf"
+            values:
+              {%- for asset in deposit_assets %}
+              - "{{ asset.address }}"
+              {%- endfor %}
+            value_type: "address"
+          - name: amount
+            param_type: "static"
+            operator: "pass"
+
+      - signature: "function withdraw(address asset, uint256 amount)"
+        execution_options: "none"
+        params:
+          - name: asset
+            param_type: "static"
+            operator: "oneOf"
+            values:
+              {%- for asset in deposit_assets %}
+              - "{{ asset.address }}"
+              {%- endfor %}
+            value_type: "address"
+          - name: amount
+            param_type: "static"
+            operator: "pass"
