@@ -1,6 +1,6 @@
 name: action-typecheck
 
-on: [push, pull_request]
+on: [push]
 
 jobs:
   action-typecheck:

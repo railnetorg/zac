@@ -1,6 +1,6 @@
 name: action-audit
 
-on: [push, pull_request]
+on: [push]
 
 jobs:
   action-audit:

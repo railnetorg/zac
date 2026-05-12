@@ -30,8 +30,7 @@ contract AaveV3SepoliaTest is ZacForkTest {
     address constant MEMBER = 0x7FD6E72d8d48f82B9E808eB81673129B1496168A;
 
     // SDK encodeKey('AAVE_V3') = right-padded ASCII bytes32.
-    bytes32 constant ROLE_KEY =
-        0x414156455f563300000000000000000000000000000000000000000000000000;
+    bytes32 constant ROLE_KEY = 0x414156455f563300000000000000000000000000000000000000000000000000;
 
     function setUp() public {
         vm.createSelectFork(vm.envString("RPC_URL"));
@@ -42,21 +41,13 @@ contract AaveV3SepoliaTest is ZacForkTest {
     ///         execTransactionWithRole. The scoped spender is the AAVE pool.
     function test_TF1_RoleMemberCanApproveUSDCForPool() public {
         vm.startPrank(MEMBER);
-        bool ok = IRolesModifier(MODIFIER).execTransactionWithRole(
-            USDC,
-            0,
-            abi.encodeWithSelector(IERC20.approve.selector, AAVE_POOL, 1_000_000),
-            0,
-            ROLE_KEY,
-            true
-        );
+        bool ok = IRolesModifier(MODIFIER)
+            .execTransactionWithRole(
+                USDC, 0, abi.encodeWithSelector(IERC20.approve.selector, AAVE_POOL, 1_000_000), 0, ROLE_KEY, true
+            );
         vm.stopPrank();
         assertTrue(ok, "execTransactionWithRole returned false");
-        assertEq(
-            IERC20(USDC).allowance(SAFE, AAVE_POOL),
-            1_000_000,
-            "Safe -> pool allowance did not update"
-        );
+        assertEq(IERC20(USDC).allowance(SAFE, AAVE_POOL), 1_000_000, "Safe -> pool allowance did not update");
     }
 
     /// @notice TF-2 — fail: a role member trying to approve a non-pool spender
@@ -64,14 +55,10 @@ contract AaveV3SepoliaTest is ZacForkTest {
     function test_TF2_RoleMemberCannotApproveWrongSpender() public {
         vm.startPrank(MEMBER);
         vm.expectRevert();
-        IRolesModifier(MODIFIER).execTransactionWithRole(
-            USDC,
-            0,
-            abi.encodeWithSelector(IERC20.approve.selector, address(0xdead), 1_000_000),
-            0,
-            ROLE_KEY,
-            true
-        );
+        IRolesModifier(MODIFIER)
+            .execTransactionWithRole(
+                USDC, 0, abi.encodeWithSelector(IERC20.approve.selector, address(0xdead), 1_000_000), 0, ROLE_KEY, true
+            );
         vm.stopPrank();
     }
 }

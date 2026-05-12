@@ -1,6 +1,6 @@
 name: contracts-build
 
-on: [push, pull_request]
+on: [push]
 
 jobs:
   contracts-build:

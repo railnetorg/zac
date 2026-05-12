@@ -1,6 +1,6 @@
 name: contracts-format
 
-on: [push, pull_request]
+on: [push]
 
 jobs:
   contracts-format:

@@ -1,6 +1,6 @@
 name: action-format-check
 
-on: [push, pull_request]
+on: [push]
 
 jobs:
   action-format-check:

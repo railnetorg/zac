@@ -1,6 +1,6 @@
 name: action-lint
 
-on: [push, pull_request]
+on: [push]
 
 jobs:
   action-lint:

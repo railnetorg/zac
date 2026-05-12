@@ -27,11 +27,7 @@ abstract contract ZacForkTest is Test {
 
         // Unique temp paths per (test contract, call site).
         string memory generatedPath = string.concat(
-            "/tmp/zac-generated-",
-            vm.toString(uint256(uint160(address(this)))),
-            "-",
-            vm.toString(gasleft()),
-            ".yaml"
+            "/tmp/zac-generated-", vm.toString(uint256(uint160(address(this)))), "-", vm.toString(gasleft()), ".yaml"
         );
         string memory planPath = string.concat(generatedPath, ".plan.json");
 
@@ -74,14 +70,8 @@ abstract contract ZacForkTest is Test {
         //    last submitted tx can linger in the mempool past our probe.
         // 10 ETH = 0x8ac7230489e80000
         vm.rpc("evm_setAutomine", "[false]");
-        vm.rpc(
-            "anvil_setBalance",
-            string.concat("[\"", safeStr, "\",\"0x8ac7230489e80000\"]")
-        );
-        vm.rpc(
-            "anvil_impersonateAccount",
-            string.concat("[\"", safeStr, "\"]")
-        );
+        vm.rpc("anvil_setBalance", string.concat("[\"", safeStr, "\",\"0x8ac7230489e80000\"]"));
+        vm.rpc("anvil_impersonateAccount", string.concat("[\"", safeStr, "\"]"));
 
         // 5. Iterate calls. We read `callsCount` from the plan JSON (set by
         //    serializePlan to calls.length) rather than vm.parseJsonKeys —
@@ -110,10 +100,7 @@ abstract contract ZacForkTest is Test {
         //    including every pending tx (sequential nonce order).
         vm.rpc("anvil_mine", "[]");
         vm.rpc("evm_setAutomine", "[true]");
-        vm.rpc(
-            "anvil_stopImpersonatingAccount",
-            string.concat("[\"", safeStr, "\"]")
-        );
+        vm.rpc("anvil_stopImpersonatingAccount", string.concat("[\"", safeStr, "\"]"));
 
         // 7. Re-pin forge to the post-apply tip: startBlock + 1 (every
         //    queued tx batched into a single new block by anvil_mine).
