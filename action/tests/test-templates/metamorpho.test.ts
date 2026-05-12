@@ -11,7 +11,7 @@ const REPO_ROOT = resolve(__dirname, '../../..');
 const VAULT_A = '0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB';
 const UNDERLYING_A = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48';
 
-describe('metamorpho.tmpl', () => {
+describe('metamorpho/metamorpho.tmpl', () => {
   const env = new nunjucks.Environment(
     new nunjucks.FileSystemLoader([resolve(REPO_ROOT, 'templates')]),
     { throwOnUndefined: true },
@@ -25,11 +25,11 @@ describe('metamorpho.tmpl', () => {
   };
 
   it('TM-1: renders without error', () => {
-    expect(() => env.render('metamorpho.tmpl', params)).not.toThrow();
+    expect(() => env.render('metamorpho/metamorpho.tmpl', params)).not.toThrow();
   });
 
   it('TM-2: rendered output parses + has the 4 ERC-4626 functions + approve', () => {
-    const out = env.render('metamorpho.tmpl', params);
+    const out = env.render('metamorpho/metamorpho.tmpl', params);
     const doc = parseDocument(out);
     expect(doc.errors).toEqual([]);
     expect(out).toContain('function approve(address spender, uint256 amount)');
@@ -40,7 +40,7 @@ describe('metamorpho.tmpl', () => {
   });
 
   it('TM-3: receiver/owner are pinned to avatar via equal_to_avatar', () => {
-    const out = env.render('metamorpho.tmpl', params);
+    const out = env.render('metamorpho/metamorpho.tmpl', params);
     // Count equal_to_avatar occurrences: receiver in deposit (1) + receiver in mint (1) +
     // receiver+owner in withdraw (2) + receiver+owner in redeem (2) = 6 per vault.
     const count = (out.match(/equal_to_avatar/g) ?? []).length;

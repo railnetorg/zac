@@ -9,7 +9,7 @@ const __dirname = resolve(fileURLToPath(import.meta.url), '..');
 const REPO_ROOT = resolve(__dirname, '../../..');
 const TEMPLATES_DIR = resolve(REPO_ROOT, 'templates');
 
-describe('aave_v3.tmpl', () => {
+describe('aave_v3/aave_v3.tmpl', () => {
   const env = new nunjucks.Environment(new nunjucks.FileSystemLoader([TEMPLATES_DIR]), {
     throwOnUndefined: true,
   });
@@ -24,11 +24,11 @@ describe('aave_v3.tmpl', () => {
   };
 
   it('T9-1: renders without error', () => {
-    expect(() => env.render('aave_v3.tmpl', params)).not.toThrow();
+    expect(() => env.render('aave_v3/aave_v3.tmpl', params)).not.toThrow();
   });
 
   it('T9-2: rendered output parses + has expected rules', () => {
-    const out = env.render('aave_v3.tmpl', params);
+    const out = env.render('aave_v3/aave_v3.tmpl', params);
     const doc = parseDocument(out);
     expect(doc.errors).toEqual([]);
     expect(out).toContain('function approve(address spender, uint256 amount)');

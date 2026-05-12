@@ -4,7 +4,7 @@ chain_id: 1
 name: My Safe Morpho Blue Manager
 description: Supply and withdraw USDC across selected Morpho Blue markets
 configs:
-  - template: "../../templates/morpho_blue.tmpl"
+  - template: "../../templates/morpho_blue/morpho_blue.tmpl"
     key: MORPHO_BLUE
     members:
       - "{{ aliases.signers.alice }}"

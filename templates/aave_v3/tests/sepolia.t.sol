@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.13;
 
-import {ZacForkTest} from "./ZacForkTest.sol";
+import {ZacForkTest} from "zac-test/ZacForkTest.sol";
 
 interface IERC20 {
     function approve(address spender, uint256 amount) external returns (bool);

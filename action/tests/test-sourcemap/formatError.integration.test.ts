@@ -35,10 +35,10 @@ describe('formatError integration with templateLocation', () => {
     const err = new ZacError({
       phase: 'validate',
       message: "value_type 'uint256' does not match signature parameter type 'address'",
-      templateLocation: { file: '/templates/aave_v3.tmpl', line: 7 },
+      templateLocation: { file: '/templates/aave_v3/aave_v3.tmpl', line: 7 },
     });
     const out = formatError(err, { stderr: { isTTY: false }, env: {} });
-    expect(out).toMatch(/phase=validate \/templates\/aave_v3\.tmpl:7/);
+    expect(out).toMatch(/phase=validate \/templates\/aave_v3\/aave_v3\.tmpl:7/);
     expect(out).toContain('does not match signature');
   });
 });

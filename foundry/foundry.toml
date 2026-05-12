@@ -10,11 +10,12 @@ no_match_path = "test/zac/**"
 src = "src"
 out = "out"
 libs = ["lib"]
+test = "../templates"
 ffi = true
 # Override the inherited no_match_path from default so zac fork tests run here.
 no_match_path = "__never_match__"
-# Only run zac fork tests (skip Counter and any other generic tests).
-match_path = "*zac*"
+# Allow template tests to import ZacForkTest via remapping.
+remappings = ["zac-test/=test/zac/"]
 fs_permissions = [
   { access = "read-write", path = "../examples" },
   { access = "read", path = "../action" },
