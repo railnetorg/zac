@@ -1,4 +1,3 @@
-import { ZacError } from '../errors';
 import { parseGenerated } from './parseGenerated';
 import { planRoleCalls, type PlanApplyRoleFn } from './planRoleCalls';
 import { resolveRpcUrl } from './rpc';
@@ -36,8 +35,13 @@ export interface RunPlanOpts {
 /**
  * Compute the Safe transaction (calls + safeTxHash + safeTxData) for a
  * generated ZAC config, without signing or posting.
+ *
+ * Returns `null` when `planApplyRole` produces 0 calls — i.e. the on-chain
+ * role state already matches the desired state and there is nothing to
+ * propose. "In sync" is a SUCCESS condition; the caller decides how to
+ * surface it (the CLI prints a one-liner and skips the plan-file write).
  */
-export async function runPlan(opts: RunPlanOpts): Promise<Plan> {
+export async function runPlan(opts: RunPlanOpts): Promise<Plan | null> {
   const generated = parseGenerated(opts.generatedPath);
 
   const resolveArgs: Parameters<typeof resolveRpcUrl>[0] = {
@@ -53,10 +57,8 @@ export async function runPlan(opts: RunPlanOpts): Promise<Plan> {
   const calls = await planRoleCalls(planArgs);
 
   if (calls.length === 0) {
-    throw new ZacError({
-      phase: 'apply',
-      message: 'planApplyRole returned 0 calls — role state is already in sync, nothing to propose',
-    });
+    // In sync — no Safe tx to build. Caller short-circuits.
+    return null;
   }
 
   const buildArgs: Parameters<typeof buildSafeTransaction>[0] = {

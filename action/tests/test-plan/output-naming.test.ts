@@ -117,8 +117,9 @@ describe('plan output naming', () => {
       safeInit: safeInitStub(),
       rpcUrl: 'http://stub/rpc',
     });
+    expect(plan).not.toBeNull();
     const outPath = safeDirPlanPathFor(safeDirs[0]!);
-    writeFileSync(outPath, serializePlan(plan));
+    writeFileSync(outPath, serializePlan(plan!));
     // Exactly one plan file, named by lowercased safe address.
     expect(outPath).toBe(join(safeDir, `${SAFE_A.toLowerCase()}.plan.json`));
   });
@@ -139,8 +140,9 @@ describe('plan output naming', () => {
         safeInit: safeInitStub(),
         rpcUrl: 'http://stub/rpc',
       });
+      expect(plan).not.toBeNull();
       const outPath = planPathFor(gen);
-      writeFileSync(outPath, serializePlan(plan));
+      writeFileSync(outPath, serializePlan(plan!));
       outPaths.push(outPath);
     }
     // Two distinct plan files, one per source stem.
@@ -201,8 +203,9 @@ roles:
         safeInit: safeInitStub(),
         rpcUrl: 'http://stub/rpc',
       });
+      expect(plan).not.toBeNull();
       const outPath = planPathFor(gen);
-      writeFileSync(outPath, serializePlan(plan));
+      writeFileSync(outPath, serializePlan(plan!));
       outPaths.push(outPath);
     }
     // (c) planApplyRole called exactly once per source.

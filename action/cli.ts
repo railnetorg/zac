@@ -367,6 +367,12 @@ export function buildProgram(): Command {
             const planOpts: Parameters<typeof runPlanForSafeDir>[0] = { safeDir: sd };
             if (options.rpcUrl !== undefined) planOpts.rpcUrl = options.rpcUrl;
             const plan = await runPlanForSafeDir(planOpts);
+            if (plan === null) {
+              // In sync: skip write, skip diff. Do NOT touch any existing
+              // stale plan.json — surface as a quiet success line.
+              process.stdout.write(`in sync: ${displayPath(sd.dirPath)} — nothing to plan\n`);
+              return;
+            }
             const json = serializePlan(plan);
             const outPath = safeDirPlanPathFor(sd);
             writeFileSync(outPath, json);
@@ -391,6 +397,12 @@ export function buildProgram(): Command {
           const planOpts: Parameters<typeof runPlan>[0] = { generatedPath: genPath };
           if (options.rpcUrl !== undefined) planOpts.rpcUrl = options.rpcUrl;
           const plan = await runPlan(planOpts);
+          if (plan === null) {
+            // In sync: skip write, skip diff. Do NOT touch any existing
+            // stale plan.json — surface as a quiet success line.
+            process.stdout.write(`in sync: ${displayPath(genPath)} — nothing to plan\n`);
+            return;
+          }
           const json = serializePlan(plan);
           const outPath = planPathFor(genPath);
           writeFileSync(outPath, json);
@@ -535,6 +547,11 @@ export function buildProgram(): Command {
             const planOpts: Parameters<typeof runPlanForSafeDir>[0] = { safeDir: sd };
             if (options.rpcUrl !== undefined) planOpts.rpcUrl = options.rpcUrl;
             const plan = await runPlanForSafeDir(planOpts);
+            if (plan === null) {
+              // In sync: nothing to submit. No Safe tx proposed.
+              process.stdout.write(`in sync: ${displayPath(sd.dirPath)} — nothing to plan\n`);
+              return;
+            }
             // Print the diff using the safe-dir's plan-file path as the
             // header (it's the canonical artifact name even when we don't
             // write it — `apply` doesn't persist the plan).
@@ -566,6 +583,11 @@ export function buildProgram(): Command {
           const planOpts: Parameters<typeof runPlan>[0] = { generatedPath: genPath };
           if (options.rpcUrl !== undefined) planOpts.rpcUrl = options.rpcUrl;
           const plan = await runPlan(planOpts);
+          if (plan === null) {
+            // In sync: nothing to submit. No Safe tx proposed.
+            process.stdout.write(`in sync: ${displayPath(genPath)} — nothing to plan\n`);
+            return;
+          }
           printPlanDiff(plan, { planPath: displayPath(planPathFor(genPath)), sdk });
           const submitArgs: Parameters<typeof runSubmit>[0] = {
             plan,

@@ -5,7 +5,6 @@ import { join } from 'node:path';
 import { runPlanForSafeDir } from '../../apply/runPlanForSafeDir';
 import type { PlanApplyFn } from '../../apply/planSafeDirCalls';
 import type { Call } from '../../apply/planRoleCalls';
-import { ZacError } from '../../errors';
 import { findSafeDirs } from '../../discover';
 
 const tempDirs: string[] = [];
@@ -117,15 +116,16 @@ describe('runPlanForSafeDir', () => {
     expect(captured!.rolesCount).toBe(2);
     expect(captured!.chainId).toBe(1);
     expect(captured!.address.toLowerCase()).toBe(MOD_A.toLowerCase());
-    expect(plan.callsCount).toBe(1);
-    expect(plan.calls).toEqual([{ to: MOD_A, value: '0', data: '0xdeadbeef' }]);
-    expect(plan.safeAddress.toLowerCase()).toBe(SAFE_A.toLowerCase());
-    expect(plan.modifierAddress.toLowerCase()).toBe(MOD_A.toLowerCase());
-    expect(plan.chainId).toBe(1);
-    expect(plan.safeTxHash).toMatch(/^0xabc/);
+    expect(plan).not.toBeNull();
+    expect(plan!.callsCount).toBe(1);
+    expect(plan!.calls).toEqual([{ to: MOD_A, value: '0', data: '0xdeadbeef' }]);
+    expect(plan!.safeAddress.toLowerCase()).toBe(SAFE_A.toLowerCase());
+    expect(plan!.modifierAddress.toLowerCase()).toBe(MOD_A.toLowerCase());
+    expect(plan!.chainId).toBe(1);
+    expect(plan!.safeTxHash).toMatch(/^0xabc/);
   });
 
-  it('TS-11: planApply returning 0 calls → ZacError(phase=apply, role state in sync)', async () => {
+  it('TS-11: planApply returning 0 calls → returns null ("in sync"), does NOT throw', async () => {
     const { root } = plantSafeDir({
       network: 'mainnet',
       chainId: 1,
@@ -135,20 +135,20 @@ describe('runPlanForSafeDir', () => {
     });
     const safeDirs = findSafeDirs(root);
     const planApply: PlanApplyFn = async () => [];
-    try {
-      await runPlanForSafeDir({
-        safeDir: safeDirs[0]!,
-        planApply,
-        encodeKey: fakeEncodeKey,
-        safeInit: safeInitStub(),
-        rpcUrl: 'http://stub/rpc',
-      });
-      throw new Error('expected runPlanForSafeDir to throw');
-    } catch (e) {
-      expect(e).toBeInstanceOf(ZacError);
-      expect((e as ZacError).phase).toBe('apply');
-      expect((e as ZacError).message).toContain('0 calls');
-    }
+    let safeInitCalled = false;
+    const safeInit = async (_cfg: { provider: string; signer?: string; safeAddress: string }) => {
+      safeInitCalled = true;
+      throw new Error('safeInit must not be called when calls.length === 0');
+    };
+    const result = await runPlanForSafeDir({
+      safeDir: safeDirs[0]!,
+      planApply,
+      encodeKey: fakeEncodeKey,
+      safeInit,
+      rpcUrl: 'http://stub/rpc',
+    });
+    expect(result).toBeNull();
+    expect(safeInitCalled).toBe(false);
   });
 
   it('TS-12: revoke calls (data prefix differs from any grant) flow through unchanged', async () => {
@@ -176,7 +176,8 @@ describe('runPlanForSafeDir', () => {
       safeInit: safeInitStub(),
       rpcUrl: 'http://stub/rpc',
     });
-    expect(plan.calls).toHaveLength(3);
-    expect(plan.calls.map((c) => c.data)).toEqual(['0x11111111', '0x22222222', '0x99999999']);
+    expect(plan).not.toBeNull();
+    expect(plan!.calls).toHaveLength(3);
+    expect(plan!.calls.map((c) => c.data)).toEqual(['0x11111111', '0x22222222', '0x99999999']);
   });
 });

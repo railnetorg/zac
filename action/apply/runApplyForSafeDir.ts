@@ -44,10 +44,14 @@ export interface RunApplyForSafeDirOpts {
  * Per-safe-dir apply: compute the per-modifier plan (via `planApply`),
  * then sign + post as a single Safe transaction. This is the
  * `--revoke-unmentioned=true` (default) path.
+ *
+ * Returns `null` when the underlying `runPlanForSafeDir` reports the role
+ * state is already in sync (0 calls); programmatic callers should treat
+ * that as a noop SUCCESS and skip submit.
  */
 export async function runApplyForSafeDir(
   opts: RunApplyForSafeDirOpts,
-): Promise<{ safeTxHash: string }> {
+): Promise<{ safeTxHash: string } | null> {
   const proposerKey =
     opts.proposerPrivateKey ??
     (process.env['ZAC_PROPOSER_PRIVATE_KEY'] as `0x${string}` | undefined);
@@ -67,6 +71,7 @@ export async function runApplyForSafeDir(
   if (opts.safeInit !== undefined) planArgs.safeInit = opts.safeInit;
   if (opts.parseGenerated !== undefined) planArgs.parseGenerated = opts.parseGenerated;
   const plan = await runPlanForSafeDir(planArgs);
+  if (plan === null) return null;
 
   const submitArgs: Parameters<typeof runSubmit>[0] = {
     plan,

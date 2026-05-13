@@ -22,7 +22,12 @@ export interface RunApplyOpts {
   apiKitCtor?: SafeApiKitCtor;
 }
 
-export async function runApply(opts: RunApplyOpts): Promise<{ safeTxHash: string }> {
+/**
+ * Returns `null` when the underlying `runPlan` reports the role state is
+ * already in sync (0 calls); programmatic callers should treat that as a
+ * noop SUCCESS and skip submit.
+ */
+export async function runApply(opts: RunApplyOpts): Promise<{ safeTxHash: string } | null> {
   const proposerKey =
     opts.proposerPrivateKey ??
     (process.env['ZAC_PROPOSER_PRIVATE_KEY'] as `0x${string}` | undefined);
@@ -40,6 +45,7 @@ export async function runApply(opts: RunApplyOpts): Promise<{ safeTxHash: string
   if (opts.encodeKey !== undefined) planArgs.encodeKey = opts.encodeKey;
   if (opts.safeInit !== undefined) planArgs.safeInit = opts.safeInit;
   const plan = await runPlan(planArgs);
+  if (plan === null) return null;
 
   const submitArgs: Parameters<typeof runSubmit>[0] = {
     plan,

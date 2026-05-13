@@ -94,9 +94,10 @@ describe('runApply (chained wrapper regression)', () => {
       apiKitCtor: FakeApiKit,
       rpcUrl: 'http://stub/rpc',
     });
-    expect(result.safeTxHash).toMatch(/^0xabc/);
+    expect(result).not.toBeNull();
+    expect(result!.safeTxHash).toMatch(/^0xabc/);
     expect(proposeCount).toBe(1);
-    expect(receivedHash).toBe(result.safeTxHash);
+    expect(receivedHash).toBe(result!.safeTxHash);
   });
 
   it('T11-14: missing ZAC_PROPOSER_PRIVATE_KEY (no opts override, no env var) → ZacError(phase=apply)', async () => {
@@ -132,37 +133,39 @@ describe('runApply (chained wrapper regression)', () => {
     }
   });
 
-  it('T11-15: planApplyRole returning 0 calls → ZacError(phase=apply, "0 calls")', async () => {
+  it('T11-15: planApplyRole returning 0 calls → returns null ("in sync"); propose NOT called', async () => {
     const planFn: PlanApplyRoleFn = async () => [];
-    const safeInit = async (_cfg: { provider: string; signer?: string; safeAddress: string }) => ({
-      createTransaction: async (args: { transactions: Call[] }) => ({
-        data: { transactions: args.transactions },
-      }),
-      getTransactionHash: async (_tx: { data: unknown }) =>
-        '0xabc' + '1234567890'.repeat(6) + '12345',
-      signHash: async (_hash: string) => ({ data: '0xsig' }),
-    });
+    let safeInitCalled = false;
+    const safeInit = async (_cfg: { provider: string; signer?: string; safeAddress: string }) => {
+      safeInitCalled = true;
+      return {
+        createTransaction: async (args: { transactions: Call[] }) => ({
+          data: { transactions: args.transactions },
+        }),
+        getTransactionHash: async (_tx: { data: unknown }) =>
+          '0xabc' + '1234567890'.repeat(6) + '12345',
+        signHash: async (_hash: string) => ({ data: '0xsig' }),
+      };
+    };
+    let proposeCount = 0;
     class FakeApiKit {
       constructor(_cfg: { chainId: bigint; txServiceUrl?: string; apiKey?: string }) {}
       async proposeTransaction(_args: unknown): Promise<void> {
-        void _args;
+        proposeCount++;
       }
     }
-    try {
-      await runApply({
-        generatedPath: writeGenerated(),
-        proposerPrivateKey: TEST_KEY,
-        planApplyRole: planFn,
-        encodeKey: fakeEncodeKey,
-        safeInit,
-        apiKitCtor: FakeApiKit,
-        rpcUrl: 'http://stub/rpc',
-      });
-      throw new Error('expected runApply to throw');
-    } catch (e) {
-      expect(e).toBeInstanceOf(ZacError);
-      expect((e as ZacError).phase).toBe('apply');
-      expect((e as ZacError).message).toContain('0 calls');
-    }
+    const result = await runApply({
+      generatedPath: writeGenerated(),
+      proposerPrivateKey: TEST_KEY,
+      planApplyRole: planFn,
+      encodeKey: fakeEncodeKey,
+      safeInit,
+      apiKitCtor: FakeApiKit,
+      rpcUrl: 'http://stub/rpc',
+    });
+    expect(result).toBeNull();
+    // No Safe tx built, no propose call.
+    expect(safeInitCalled).toBe(false);
+    expect(proposeCount).toBe(0);
   });
 });

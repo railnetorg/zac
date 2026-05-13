@@ -1,4 +1,3 @@
-import { ZacError } from '../errors';
 import { generatedPathFor } from '../discover';
 import type { SafeDir } from '../discover';
 import { parseGenerated, type Generated } from './parseGenerated';
@@ -43,8 +42,14 @@ export interface RunPlanForSafeDirOpts {
  * `desired.roles` is the union across every source in `safeDir.sources`;
  * the SDK natively emits revoke calls for any role on the modifier not in
  * the aggregated set (the "revoke unmentioned" default).
+ *
+ * Returns `null` when the aggregated `planApply` produces 0 calls — i.e.
+ * the on-chain role state already matches the aggregated desired state
+ * and there is nothing to propose. "In sync" is a SUCCESS condition; the
+ * caller decides how to surface it (the CLI prints a one-liner and skips
+ * the plan-file write).
  */
-export async function runPlanForSafeDir(opts: RunPlanForSafeDirOpts): Promise<Plan> {
+export async function runPlanForSafeDir(opts: RunPlanForSafeDirOpts): Promise<Plan | null> {
   const parse = opts.parseGenerated ?? parseGenerated;
 
   const generateds: Generated[] = opts.safeDir.sources.map((src) => parse(generatedPathFor(src)));
@@ -60,10 +65,8 @@ export async function runPlanForSafeDir(opts: RunPlanForSafeDirOpts): Promise<Pl
   const calls = await planSafeDirCalls(planArgs);
 
   if (calls.length === 0) {
-    throw new ZacError({
-      phase: 'apply',
-      message: `planApply returned 0 calls for safe-dir ${opts.safeDir.dirPath} (modifier=${opts.safeDir.modifierAddress}) — role state is already in sync, nothing to propose`,
-    });
+    // In sync — no Safe tx to build. Caller short-circuits.
+    return null;
   }
 
   const buildArgs: Parameters<typeof buildSafeTransaction>[0] = {

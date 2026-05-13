@@ -127,7 +127,8 @@ describe('runApply end-to-end (Safe sign + propose)', () => {
       apiKitCtor: FakeApiKit,
       rpcUrl: 'http://stub/rpc',
     });
-    expect(result.safeTxHash).toMatch(/^0xfeed/);
+    expect(result).not.toBeNull();
+    expect(result!.safeTxHash).toMatch(/^0xfeed/);
     expect(record).toHaveLength(1);
     expect(record[0]!.safeAddress).toBe('0x3333333333333333333333333333333333333333');
     expect(record[0]!.txServiceUrl).toBe('https://safe-transaction-mainnet.safe.global/api');

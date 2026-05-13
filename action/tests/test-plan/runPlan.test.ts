@@ -4,7 +4,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runPlan } from '../../apply/runPlan';
 import type { PlanApplyRoleFn, Call } from '../../apply/planRoleCalls';
-import { ZacError } from '../../errors';
 import { PlanSchema, serializePlan, parsePlan } from '../../apply/planSchema';
 
 const tempDirs: string[] = [];
@@ -79,18 +78,19 @@ describe('runPlan', () => {
       safeInit: safeInitStub(),
       rpcUrl: 'http://stub/rpc',
     });
-    expect(plan.calls.length).toBeGreaterThanOrEqual(1);
-    expect(plan.callsCount).toBe(plan.calls.length);
-    expect(plan.safeTxHash).toMatch(/^0xabc/);
-    expect(plan.safeAddress).toBe('0x3333333333333333333333333333333333333333');
-    expect(plan.modifierAddress).toBe('0x4444444444444444444444444444444444444444');
-    expect(plan.chainId).toBe(1);
+    expect(plan).not.toBeNull();
+    expect(plan!.calls.length).toBeGreaterThanOrEqual(1);
+    expect(plan!.callsCount).toBe(plan!.calls.length);
+    expect(plan!.safeTxHash).toMatch(/^0xabc/);
+    expect(plan!.safeAddress).toBe('0x3333333333333333333333333333333333333333');
+    expect(plan!.modifierAddress).toBe('0x4444444444444444444444444444444444444444');
+    expect(plan!.chainId).toBe(1);
     // Round-trip.
-    const json = serializePlan(plan);
+    const json = serializePlan(plan!);
     expect(() => PlanSchema.parse(JSON.parse(json))).not.toThrow();
     const parsed = parsePlan(json);
-    expect(parsed.safeTxHash).toBe(plan.safeTxHash);
-    expect(parsed.callsCount).toBe(plan.callsCount);
+    expect(parsed.safeTxHash).toBe(plan!.safeTxHash);
+    expect(parsed.callsCount).toBe(plan!.callsCount);
   });
 
   it('TM-2: DI happy path — mocked planApplyRole + safeInit; assert call forwarding shape', async () => {
@@ -146,21 +146,24 @@ describe('runPlan', () => {
     });
   });
 
-  it('TM-3: planApplyRole returning 0 calls → ZacError(phase=apply, "0 calls")', async () => {
+  it('TM-3: planApplyRole returning 0 calls → returns null ("in sync"), does NOT throw', async () => {
     const planFn: PlanApplyRoleFn = async () => [];
-    try {
-      await runPlan({
-        generatedPath: writeGenerated(),
-        planApplyRole: planFn,
-        encodeKey: fakeEncodeKey,
-        safeInit: safeInitStub(),
-        rpcUrl: 'http://stub/rpc',
-      });
-      throw new Error('expected runPlan to throw');
-    } catch (e) {
-      expect(e).toBeInstanceOf(ZacError);
-      expect((e as ZacError).phase).toBe('apply');
-      expect((e as ZacError).message).toContain('0 calls');
-    }
+    let safeInitCalled = false;
+    const safeInit = async (_cfg: { provider: string; signer?: string; safeAddress: string }) => {
+      safeInitCalled = true;
+      // If we ever reach this, the implementation incorrectly tried to
+      // build a Safe tx for an in-sync source. The assertion below catches
+      // that — but also the call would fail the test by signature.
+      throw new Error('safeInit must not be called when calls.length === 0');
+    };
+    const result = await runPlan({
+      generatedPath: writeGenerated(),
+      planApplyRole: planFn,
+      encodeKey: fakeEncodeKey,
+      safeInit,
+      rpcUrl: 'http://stub/rpc',
+    });
+    expect(result).toBeNull();
+    expect(safeInitCalled).toBe(false);
   });
 });
