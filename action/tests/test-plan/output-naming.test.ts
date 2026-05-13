@@ -1,0 +1,151 @@
+import { describe, it, expect, afterAll } from 'vitest';
+import { join } from 'node:path';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, writeFile } from 'node:fs';
+import { tmpdir } from 'node:os';
+import {
+  safeDirPlanPathFor,
+  planPathFor,
+  findSafeDirs,
+  findGeneratedConfigs,
+} from '../../discover';
+import { runPlanForSafeDir } from '../../apply/runPlanForSafeDir';
+import { runPlan } from '../../apply/runPlan';
+import type { PlanApplyFn } from '../../apply/planSafeDirCalls';
+import type { PlanApplyRoleFn, Call } from '../../apply/planRoleCalls';
+import { serializePlan } from '../../apply/planSchema';
+
+void writeFile; // unused — keep import surface explicit at module read
+
+const tempDirs: string[] = [];
+function makeTempDir(): string {
+  const d = mkdtempSync(join(tmpdir(), 'zac-output-naming-'));
+  tempDirs.push(d);
+  return d;
+}
+afterAll(() => {
+  for (const d of tempDirs) rmSync(d, { recursive: true, force: true });
+});
+
+const SAFE_A = '0x3333333333333333333333333333333333333333';
+const MOD_A = '0x4444444444444444444444444444444444444444';
+
+function plantTwoSourceSafeDir(): { root: string; safeDir: string } {
+  const root = makeTempDir();
+  const dir = join(root, 'mainnet', SAFE_A);
+  mkdirSync(dir, { recursive: true });
+  for (const [name, key] of [
+    ['a', 'ALPHA'],
+    ['b', 'BRAVO'],
+  ]) {
+    writeFileSync(join(dir, `${name}.zac.yaml`), '# x\n');
+    writeFileSync(
+      join(dir, `${name}.yaml`),
+      `deployment:
+  chain_id: 1
+  safe_address: "${SAFE_A}"
+  roles_modifier_address: "${MOD_A}"
+roles:
+  ${key}:
+    members: []
+    targets: []
+`,
+    );
+  }
+  return { root, safeDir: dir };
+}
+
+const fakeEncodeKey = (k: string): `0x${string}` => `0x${k.padEnd(64, '0')}` as `0x${string}`;
+
+function safeInitStub() {
+  return async (_cfg: { provider: string; signer?: string; safeAddress: string }) => ({
+    createTransaction: async (args: { transactions: Call[] }) => ({
+      data: {
+        baseGas: '0',
+        data: '0xdeadbeef',
+        gasPrice: '0',
+        gasToken: '0x0000000000000000000000000000000000000000',
+        nonce: 0,
+        operation: 0,
+        refundReceiver: '0x0000000000000000000000000000000000000000',
+        safeTxGas: '0',
+        to: args.transactions[0]!.to,
+        value: '0',
+      },
+    }),
+    getTransactionHash: async () => '0xabc' + '1234567890'.repeat(6) + '12345',
+    signHash: async () => ({ data: '0xsig' }),
+  });
+}
+
+describe('plan output naming', () => {
+  it('TS-30: per-safe-dir plan path uses lowercased safe address', () => {
+    const path = safeDirPlanPathFor({
+      dirPath: '/configs/mainnet/0xAaaaAaAaaAAAAaAAAAAAaaAaAaaAaaaAaaaAAAaA',
+      safeAddress: '0xAaaaAaAaaAAAAaAAAAAAaaAaAaaAaaaAaaaAAAaA',
+    });
+    expect(path).toBe(
+      join(
+        '/configs/mainnet/0xAaaaAaAaaAAAAaAAAAAAaaAaAaaAaaaAaaaAAAaA',
+        '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.plan.json',
+      ),
+    );
+  });
+
+  it('TS-31: per-safe-dir plan filename is `<lower-safe-addr>.plan.json` (no leakage of stem)', () => {
+    const path = safeDirPlanPathFor({
+      dirPath: '/tmp/x/y',
+      safeAddress: '0xBBbbbbBBbbbbbbBBbBBBbBBbbbbbBbBbBbbbBbBb',
+    });
+    expect(path.endsWith('/0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.plan.json')).toBe(true);
+  });
+
+  it('TS-32: per-file (legacy) plan path is `<stem>.plan.json` next to the generated file', () => {
+    expect(planPathFor('/x/y/aave_safe.yaml')).toBe('/x/y/aave_safe.plan.json');
+  });
+
+  it('TS-33: dir-mode default (safe-dir) — one plan file per safe-dir, named `<safe-addr>.plan.json`', async () => {
+    const { root, safeDir } = plantTwoSourceSafeDir();
+    const safeDirs = findSafeDirs(root);
+    expect(safeDirs).toHaveLength(1);
+    const planApply: PlanApplyFn = async () => [
+      { to: MOD_A as `0x${string}`, data: '0xdeadbeef' as `0x${string}` },
+    ];
+    const plan = await runPlanForSafeDir({
+      safeDir: safeDirs[0]!,
+      planApply,
+      encodeKey: fakeEncodeKey,
+      safeInit: safeInitStub(),
+      rpcUrl: 'http://stub/rpc',
+    });
+    const outPath = safeDirPlanPathFor(safeDirs[0]!);
+    writeFileSync(outPath, serializePlan(plan));
+    // Exactly one plan file, named by lowercased safe address.
+    expect(outPath).toBe(join(safeDir, `${SAFE_A.toLowerCase()}.plan.json`));
+  });
+
+  it('TS-34: dir-mode legacy (per-file) — one plan file per source, named `<stem>.plan.json`', async () => {
+    const { root, safeDir } = plantTwoSourceSafeDir();
+    const generated = findGeneratedConfigs(root);
+    expect(generated).toHaveLength(2);
+    const planApplyRole: PlanApplyRoleFn = async () => [
+      { to: MOD_A as `0x${string}`, data: '0xfeedface' as `0x${string}` },
+    ];
+    const outPaths: string[] = [];
+    for (const gen of generated) {
+      const plan = await runPlan({
+        generatedPath: gen,
+        planApplyRole,
+        encodeKey: fakeEncodeKey,
+        safeInit: safeInitStub(),
+        rpcUrl: 'http://stub/rpc',
+      });
+      const outPath = planPathFor(gen);
+      writeFileSync(outPath, serializePlan(plan));
+      outPaths.push(outPath);
+    }
+    // Two distinct plan files, one per source stem.
+    expect(outPaths.sort()).toEqual(
+      [join(safeDir, 'a.plan.json'), join(safeDir, 'b.plan.json')].sort(),
+    );
+  });
+});

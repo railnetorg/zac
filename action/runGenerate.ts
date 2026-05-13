@@ -38,7 +38,9 @@ export async function runGenerate(opts: RunGenerateOpts): Promise<void> {
     ? opts.configPath
     : resolve(opts.configPath);
   const deploymentDir = dirname(deploymentConfigPath);
-  const network = basename(deploymentDir);
+  // New layout: `<network>/<safe-address>/<name>.zac.yaml` — the parent of
+  // the source is the safe-address dir; the grandparent is the network.
+  const network = basename(dirname(deploymentDir));
 
   // Phase 3 — Load
   const findArgs: { startDir: string; override?: string } = { startDir: deploymentDir };
@@ -77,6 +79,18 @@ export async function runGenerate(opts: RunGenerateOpts): Promise<void> {
 
   // Phase 6 — validate deployment config
   const validatedDeployment = validateDeploymentConfig(deploymentJson);
+
+  // Layout check — the rendered safe_address must match the parent safe-dir
+  // name. Mirrors the strict layout enforced by `findSafeDirs` (used by
+  // plan/apply).
+  const safeDirName = basename(deploymentDir);
+  if (validatedDeployment.safe_address.toLowerCase() !== safeDirName.toLowerCase()) {
+    throw new ZacError({
+      phase: 'validate',
+      message: `safe_address mismatch in ${deploymentConfigPath}: yaml says ${validatedDeployment.safe_address} but parent dir is ${safeDirName} — the dir name must match (case-insensitive) the rendered safe_address`,
+      sourceLocation: { file: deploymentConfigPath },
+    });
+  }
 
   // Phase 4+5+6 — for each configs[] entry: render template, parse, validate
   const entries: ConfigEntry[] = [];

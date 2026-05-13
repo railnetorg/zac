@@ -10,8 +10,14 @@ const execFileP = promisify(execFile);
 const __dirname = resolve(fileURLToPath(import.meta.url), '..');
 const REPO_ROOT = resolve(__dirname, '../../..');
 const CLI = resolve(REPO_ROOT, 'action/cli.ts');
-const EXAMPLE = resolve(REPO_ROOT, 'examples/mainnet/aave_safe.zac.yaml');
-const GENERATED = resolve(REPO_ROOT, 'examples/mainnet/aave_safe.yaml');
+const EXAMPLE = resolve(
+  REPO_ROOT,
+  'examples/mainnet/0x3333333333333333333333333333333333333333/aave_safe.zac.yaml',
+);
+const GENERATED = resolve(
+  REPO_ROOT,
+  'examples/mainnet/0x3333333333333333333333333333333333333333/aave_safe.yaml',
+);
 
 function cleanGenerated(): void {
   if (existsSync(GENERATED)) unlinkSync(GENERATED);

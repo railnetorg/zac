@@ -91,6 +91,7 @@ describe('runApply (chained wrapper regression)', () => {
       encodeKey: fakeEncodeKey,
       safeInit,
       apiKitCtor: FakeApiKit,
+      rpcUrl: 'http://stub/rpc',
     });
     expect(result.safeTxHash).toMatch(/^0xabc/);
     expect(proposeCount).toBe(1);

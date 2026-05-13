@@ -73,6 +73,7 @@ describe('runSubmit', () => {
       proposerPrivateKey: TEST_KEY,
       safeInit,
       apiKitCtor: FakeApiKit,
+      rpcUrl: 'http://stub/rpc',
     });
 
     expect(result.safeTxHash).toBe(PLAN.safeTxHash);

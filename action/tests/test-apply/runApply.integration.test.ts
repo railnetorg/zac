@@ -88,6 +88,7 @@ describe('runApply', () => {
       encodeKey: fakeEncodeKey,
       safeInit: safeInitStub(),
       apiKitCtor: FakeApiKit,
+      rpcUrl: 'http://stub/rpc',
     });
     expect(result.safeTxHash).toMatch(/^0xabc/);
     expect(FakeApiKit.lastInstance!.proposed).toHaveLength(1);
@@ -121,6 +122,7 @@ describe('runApply', () => {
         encodeKey: fakeEncodeKey,
         safeInit: safeInitStub(),
         apiKitCtor: FakeApiKit,
+        rpcUrl: 'http://stub/rpc',
       });
       throw new Error('expected runApply to throw');
     } catch (e) {

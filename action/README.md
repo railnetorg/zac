@@ -16,9 +16,16 @@ The `generate` command runs five phases, fail-fast:
 
 ## Apply pipeline (`apply/`)
 
-The `apply <path>` command parses the generated YAML, calls `planApplyRole` from `zodiac-roles-sdk` for each role key (which diffs the desired state against the on-chain state via the Gnosis Guild subgraph), batches the resulting calls into a single Safe MultiSend via `@safe-global/protocol-kit`, signs the Safe transaction hash with `ZAC_PROPOSER_PRIVATE_KEY`, and proposes it to the Safe Transaction Service via `@safe-global/api-kit`. The Service URL defaults from a per-chain map; `SAFE_API_KEY` is honored if set; `RPC_URL` overrides the public RPC used by Protocol Kit's read-only queries. `<path>` accepts a generated `.yaml` file or a directory (walked recursively — only generated files with a sibling `*.zac.yaml` are applied).
+The `apply <path>` command has two flows, gated by `--revoke-unmentioned` (default `true`):
 
-Discovery is centralized in `discover.ts` (`findZacSources`, `findGeneratedConfigs`, `findPlans`); the CLI iterates and writes outputs alongside the source by convention (`*.zac.yaml` → `*.yaml` → `*.plan.json`).
+- **Per-modifier (default)**: `findSafeDirs` groups sibling `*.zac.yaml` files under each `<network>/<safe-address>/` dir; `runPlanForSafeDir` aggregates the union of role keys and hands them to `zodiac-roles-sdk`'s `planApply` (which natively emits revoke calls for any role on the modifier not in the aggregated set, by diffing against the Zodiac subgraph). One Safe transaction per safe-dir.
+- **Legacy per-file**: when `--revoke-unmentioned=false` (or in single-file mode), `runApply` parses one generated YAML and calls `planApplyRole` from `zodiac-roles-sdk` for each role key. No revokes emitted.
+
+In both flows, the resulting calls are batched into a Safe MultiSend via `@safe-global/protocol-kit`, signed with `ZAC_PROPOSER_PRIVATE_KEY`, and proposed via `@safe-global/api-kit`. The Service URL defaults from a per-chain map; `SAFE_API_KEY` is honored if set; per-chain `<NETWORK>_RPC_URL` (e.g. `MAINNET_RPC_URL`) — falling back to `RPC_URL` — overrides the public RPC used by Protocol Kit's read-only queries. `<path>` accepts a `*.zac.yaml` file or a directory.
+
+Layout is strict: every `*.zac.yaml` must live at `<network>/<safe-address>/<name>.zac.yaml`. The `<safe-address>` dir name must match the rendered `safe_address` (case-insensitive); all siblings must agree on `(chain_id, safe_address, roles_modifier_address)`. Violations surface as `phase=validate` errors at discovery time.
+
+Discovery is centralized in `discover.ts` (`findZacSources`, `findGeneratedConfigs`, `findPlans`, `findSafeDirs`); the CLI iterates and writes outputs alongside the source by convention (`*.zac.yaml` → `*.yaml`; safe-dir mode → `<safe-address>.plan.json` per dir; legacy mode → `<stem>.plan.json` per file).
 
 ## Adding a new operator
 

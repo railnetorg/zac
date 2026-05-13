@@ -77,6 +77,7 @@ describe('runPlan', () => {
       planApplyRole: planFn,
       encodeKey: fakeEncodeKey,
       safeInit: safeInitStub(),
+      rpcUrl: 'http://stub/rpc',
     });
     expect(plan.calls.length).toBeGreaterThanOrEqual(1);
     expect(plan.callsCount).toBe(plan.calls.length);
@@ -153,6 +154,7 @@ describe('runPlan', () => {
         planApplyRole: planFn,
         encodeKey: fakeEncodeKey,
         safeInit: safeInitStub(),
+        rpcUrl: 'http://stub/rpc',
       });
       throw new Error('expected runPlan to throw');
     } catch (e) {

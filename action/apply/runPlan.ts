@@ -1,6 +1,7 @@
 import { ZacError } from '../errors';
 import { parseGenerated } from './parseGenerated';
 import { planRoleCalls, type PlanApplyRoleFn } from './planRoleCalls';
+import { resolveRpcUrl } from './rpc';
 import { buildSafeTransaction, type SafeInitFn } from './safeApi';
 import type { Plan } from './planSchema';
 
@@ -20,7 +21,11 @@ interface SdkBuilders {
 
 export interface RunPlanOpts {
   generatedPath: string;
-  /** Defaults to `process.env.RPC_URL` (forwarded only if set). */
+  /**
+   * CLI `--rpc-url` override. When omitted, the URL is resolved per-chain
+   * via `<NETWORK>_RPC_URL` (e.g. `MAINNET_RPC_URL`) with `RPC_URL` as the
+   * universal fallback. See `resolveRpcUrl`.
+   */
   rpcUrl?: string;
   planApplyRole?: PlanApplyRoleFn;
   encodeKey?: (key: string) => `0x${string}`;
@@ -33,9 +38,13 @@ export interface RunPlanOpts {
  * generated ZAC config, without signing or posting.
  */
 export async function runPlan(opts: RunPlanOpts): Promise<Plan> {
-  const rpcUrl = opts.rpcUrl ?? process.env['RPC_URL'];
-
   const generated = parseGenerated(opts.generatedPath);
+
+  const resolveArgs: Parameters<typeof resolveRpcUrl>[0] = {
+    chainId: generated.deployment.chain_id,
+  };
+  if (opts.rpcUrl !== undefined) resolveArgs.overrideUrl = opts.rpcUrl;
+  const rpcUrl = resolveRpcUrl(resolveArgs);
 
   const planArgs: Parameters<typeof planRoleCalls>[0] = { generated };
   if (opts.planApplyRole !== undefined) planArgs.planApplyRole = opts.planApplyRole;
@@ -54,8 +63,8 @@ export async function runPlan(opts: RunPlanOpts): Promise<Plan> {
     chainId: generated.deployment.chain_id,
     safeAddress: generated.deployment.safe_address,
     calls,
+    rpcUrl,
   };
-  if (rpcUrl !== undefined) buildArgs.rpcUrl = rpcUrl;
   if (opts.safeInit !== undefined) buildArgs.safeInit = opts.safeInit;
   const { safeTxHash, safeTxData } = await buildSafeTransaction(buildArgs);
 

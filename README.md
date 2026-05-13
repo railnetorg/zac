@@ -32,15 +32,17 @@ bun run zac generate <path>     # path is a `*.zac.yaml` file or a directory (wa
 
 The CLI is directory-driven: every subcommand accepts either a single file or a directory, and writes outputs **alongside** the source. Conventions:
 
-- Source configs: `*.zac.yaml` (e.g. `configs/mainnet/aave_v3.zac.yaml`).
+- Source configs: `*.zac.yaml` MUST live at `configs/<network>/<safe-address>/<name>.zac.yaml` (e.g. `configs/mainnet/0xAbCd…1234/aave_v3.zac.yaml`). The `<safe-address>` directory name must match the rendered `safe_address` (case-insensitive); all `*.zac.yaml` siblings in one safe-dir must agree on `(chain_id, safe_address, roles_modifier_address)`.
 - Generated configs: `*.yaml` next to the source (`aave_v3.zac.yaml` → `aave_v3.yaml`).
-- Plan files: `*.plan.json` next to the generated file (`aave_v3.plan.json`).
+- Plan files:
+  - default (`--revoke-unmentioned=true`): one `<safe-address>.plan.json` per safe-dir — the SDK's `planApply` aggregates roles across siblings and natively revokes any role on the modifier not in the aggregated set.
+  - `--revoke-unmentioned=false`: legacy `<stem>.plan.json` next to each generated file — `planApplyRole` is called per source, no revokes.
 
 ## Try the example
 
 ```
-bun ./action/cli.ts generate examples/mainnet/aave_safe.zac.yaml   # one file
-bun ./action/cli.ts generate examples/mainnet/                     # whole dir, recursive
+bun ./action/cli.ts generate examples/mainnet/0x3333333333333333333333333333333333333333/aave_safe.zac.yaml   # one file
+bun ./action/cli.ts generate examples/mainnet/                                                                # whole dir, recursive
 ```
 
 ## Apply
@@ -55,9 +57,11 @@ bun run zac apply <path>                # path is a generated `.yaml` file or a 
 `apply` is plan + submit in one shot. To split them (e.g. for review):
 
 ```
-bun run zac plan   <path>   # writes <stem>.plan.json alongside each generated file
-bun run zac submit <path>   # posts every <stem>.plan.json found under <path>
+bun run zac plan   <path>   # default: one <safe-address>.plan.json per safe-dir
+bun run zac submit <path>   # posts every *.plan.json found under <path>, bundled per safe
 ```
+
+Pass `--revoke-unmentioned=false` to keep the legacy per-file flow (one `<stem>.plan.json` per source, no revokes). The flag is structurally meaningless for single-file mode (one role → no aggregation), so it's silently ignored when `<path>` is a single `*.zac.yaml`.
 
 The proposer signs and submits the transaction proposal; other Safe owners then sign in the Safe UI. Optional env vars: `SAFE_API_KEY` (forwarded to api-kit if rate-limited) and `RPC_URL` (overrides the default per-chain public RPC used by Safe Protocol Kit for read-only queries).
 

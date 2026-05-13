@@ -69,6 +69,22 @@ describe('cli plan + submit', () => {
     expect(stderr.length).toBeGreaterThan(0);
   });
 
+  it('TM-7f: submit <empty-dir> exits non-zero with "no matching files found"', async () => {
+    const d = makeTempDir();
+    const env = { ...process.env };
+    env['ZAC_PROPOSER_PRIVATE_KEY'] =
+      '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
+    const { code, stderr } = await runCli(['submit', d], env);
+    expect(code).not.toBe(0);
+    expect(stderr).toContain('no matching files found');
+  });
+
+  it('TM-7g: submit --help mentions auto-bundling', async () => {
+    const { code, stdout } = await runCli(['submit', '--help']);
+    expect(code).toBe(0);
+    expect(stdout).toMatch(/bundle|bundled/i);
+  });
+
   it('TM-7e: submit with a syntactically-valid plan but no ZAC_PROPOSER_PRIVATE_KEY → phase=apply error', async () => {
     const d = makeTempDir();
     const planPath = join(d, 'plan.json');
