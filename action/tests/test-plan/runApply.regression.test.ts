@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runApply } from '../../apply/runApply';
 import type { PlanApplyRoleFn, Call } from '../../apply/planRoleCalls';
+import { ZacError } from '../../errors';
 
 const tempDirs: string[] = [];
 function makeTempDir(): string {
@@ -96,5 +97,72 @@ describe('runApply (chained wrapper regression)', () => {
     expect(result.safeTxHash).toMatch(/^0xabc/);
     expect(proposeCount).toBe(1);
     expect(receivedHash).toBe(result.safeTxHash);
+  });
+
+  it('T11-14: missing ZAC_PROPOSER_PRIVATE_KEY (no opts override, no env var) → ZacError(phase=apply)', async () => {
+    const original = process.env['ZAC_PROPOSER_PRIVATE_KEY'];
+    delete process.env['ZAC_PROPOSER_PRIVATE_KEY'];
+    const safeInit = async (_cfg: { provider: string; signer?: string; safeAddress: string }) => ({
+      createTransaction: async (args: { transactions: Call[] }) => ({
+        data: { transactions: args.transactions },
+      }),
+      getTransactionHash: async (_tx: { data: unknown }) =>
+        '0xabc' + '1234567890'.repeat(6) + '12345',
+      signHash: async (_hash: string) => ({ data: '0xsig' }),
+    });
+    class FakeApiKit {
+      constructor(_cfg: { chainId: bigint; txServiceUrl?: string; apiKey?: string }) {}
+      async proposeTransaction(_args: unknown): Promise<void> {
+        void _args;
+      }
+    }
+    try {
+      await expect(
+        runApply({
+          generatedPath: writeGenerated(),
+          planApplyRole: (async () => []) as PlanApplyRoleFn,
+          encodeKey: fakeEncodeKey,
+          safeInit,
+          apiKitCtor: FakeApiKit,
+          rpcUrl: 'http://stub/rpc',
+        }),
+      ).rejects.toThrow(ZacError);
+    } finally {
+      if (original !== undefined) process.env['ZAC_PROPOSER_PRIVATE_KEY'] = original;
+    }
+  });
+
+  it('T11-15: planApplyRole returning 0 calls → ZacError(phase=apply, "0 calls")', async () => {
+    const planFn: PlanApplyRoleFn = async () => [];
+    const safeInit = async (_cfg: { provider: string; signer?: string; safeAddress: string }) => ({
+      createTransaction: async (args: { transactions: Call[] }) => ({
+        data: { transactions: args.transactions },
+      }),
+      getTransactionHash: async (_tx: { data: unknown }) =>
+        '0xabc' + '1234567890'.repeat(6) + '12345',
+      signHash: async (_hash: string) => ({ data: '0xsig' }),
+    });
+    class FakeApiKit {
+      constructor(_cfg: { chainId: bigint; txServiceUrl?: string; apiKey?: string }) {}
+      async proposeTransaction(_args: unknown): Promise<void> {
+        void _args;
+      }
+    }
+    try {
+      await runApply({
+        generatedPath: writeGenerated(),
+        proposerPrivateKey: TEST_KEY,
+        planApplyRole: planFn,
+        encodeKey: fakeEncodeKey,
+        safeInit,
+        apiKitCtor: FakeApiKit,
+        rpcUrl: 'http://stub/rpc',
+      });
+      throw new Error('expected runApply to throw');
+    } catch (e) {
+      expect(e).toBeInstanceOf(ZacError);
+      expect((e as ZacError).phase).toBe('apply');
+      expect((e as ZacError).message).toContain('0 calls');
+    }
   });
 });

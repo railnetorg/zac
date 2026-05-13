@@ -1,6 +1,6 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import { join } from 'node:path';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, writeFile } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync, writeFile } from 'node:fs';
 import { tmpdir } from 'node:os';
 import {
   safeDirPlanPathFor,
@@ -147,5 +147,79 @@ describe('plan output naming', () => {
     expect(outPaths.sort()).toEqual(
       [join(safeDir, 'a.plan.json'), join(safeDir, 'b.plan.json')].sort(),
     );
+  });
+
+  it('TS-35: dir-mode legacy across 2 safe-dirs × 2 sources — 4 <stem>.plan.json, no <safe-addr>.plan.json, planApplyRole called once per source', async () => {
+    // Mirrors what `bun cli plan <root>` does with default flags: walk the
+    // root, call legacy runPlan on each generated YAML, write each plan
+    // alongside as <stem>.plan.json. Two safes × two sources = 4 plans
+    // total; the per-modifier aggregated <safe-addr>.plan.json should NOT
+    // appear anywhere.
+    const root = makeTempDir();
+    const safes = [
+      '0x3333333333333333333333333333333333333333',
+      '0x5555555555555555555555555555555555555555',
+    ];
+    const dirs: string[] = [];
+    for (const safe of safes) {
+      const dir = join(root, 'mainnet', safe);
+      mkdirSync(dir, { recursive: true });
+      dirs.push(dir);
+      for (const [stem, key] of [
+        ['a', 'ALPHA'],
+        ['b', 'BRAVO'],
+      ]) {
+        writeFileSync(join(dir, `${stem}.zac.yaml`), '# x\n');
+        writeFileSync(
+          join(dir, `${stem}.yaml`),
+          `deployment:
+  chain_id: 1
+  safe_address: "${safe}"
+  roles_modifier_address: "${MOD_A}"
+roles:
+  ${key}:
+    members: []
+    targets: []
+`,
+        );
+      }
+    }
+    const generated = findGeneratedConfigs(root);
+    expect(generated).toHaveLength(4);
+
+    let planApplyRoleCalls = 0;
+    const planApplyRole: PlanApplyRoleFn = async () => {
+      planApplyRoleCalls += 1;
+      return [{ to: MOD_A as `0x${string}`, data: '0xfeedface' as `0x${string}` }];
+    };
+    const outPaths: string[] = [];
+    for (const gen of generated) {
+      const plan = await runPlan({
+        generatedPath: gen,
+        planApplyRole,
+        encodeKey: fakeEncodeKey,
+        safeInit: safeInitStub(),
+        rpcUrl: 'http://stub/rpc',
+      });
+      const outPath = planPathFor(gen);
+      writeFileSync(outPath, serializePlan(plan));
+      outPaths.push(outPath);
+    }
+    // (c) planApplyRole called exactly once per source.
+    expect(planApplyRoleCalls).toBe(4);
+    // (a) 4 <stem>.plan.json files at the right locations.
+    expect(outPaths.sort()).toEqual(
+      [
+        join(dirs[0]!, 'a.plan.json'),
+        join(dirs[0]!, 'b.plan.json'),
+        join(dirs[1]!, 'a.plan.json'),
+        join(dirs[1]!, 'b.plan.json'),
+      ].sort(),
+    );
+    // (b) no per-modifier <safe-addr>.plan.json was written.
+    for (const safe of safes) {
+      const dir = join(root, 'mainnet', safe);
+      expect(existsSync(join(dir, `${safe}.plan.json`))).toBe(false);
+    }
   });
 });
