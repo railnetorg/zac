@@ -382,14 +382,18 @@ export interface PlanGroup {
 }
 
 /**
- * Group plans by `(safeAddress, chainId)`. Order is deterministic: groups
- * appear in the order their first plan is encountered in the input; plans
- * within a group preserve input order.
+ * Group plans by `(safeAddress, chainId)`. The grouping key is the
+ * LOWERCASED safe address — two plans whose `safeAddress` differs only by
+ * casing (e.g. EIP-55 checksum vs. all-lowercase dir-name) belong to the
+ * same group. Order is deterministic: groups appear in the order their
+ * first plan is encountered in the input; plans within a group preserve
+ * input order. The group's `safeAddress` is preserved from the first plan
+ * encountered (caller decides whether to lowercase downstream).
  */
 export function groupPlansBySafe(plans: Plan[]): PlanGroup[] {
   const groups = new Map<string, PlanGroup>();
   for (const plan of plans) {
-    const key = `${plan.safeAddress}@${plan.chainId}`;
+    const key = `${plan.safeAddress.toLowerCase()}@${plan.chainId}`;
     let group = groups.get(key);
     if (group === undefined) {
       group = { safeAddress: plan.safeAddress, chainId: plan.chainId, plans: [] };
