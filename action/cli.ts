@@ -184,7 +184,7 @@ export function buildProgram(): Command {
   program
     .command('plan <path>')
     .description(
-      "compute role-state-update calls + Safe TX hash; output as JSON (no signing, no posting). <path> is a `*.zac.yaml` file or a directory (walked recursively — sources must live at `<network>/<safe-address>/<name>.zac.yaml`). In directory mode (default `--revoke-unmentioned=true`), plans are aggregated per safe-dir and the SDK's `planApply` emits revoke calls for any role on the modifier not in the aggregated set; output is `<safe-address>.plan.json` inside each safe-dir. With `--revoke-unmentioned=false` (or in file mode), each source produces a per-file `<stem>.plan.json` via `planApplyRole` with no revokes. RPC URL is resolved per-chainId via `<NETWORK>_RPC_URL` (e.g. `MAINNET_RPC_URL`, `BASE_RPC_URL`), falling back to `RPC_URL`.",
+      "compute role-state-update calls + Safe TX hash; output as JSON (no signing, no posting). <path> is a `*.zac.yaml` file or a directory (walked recursively — sources must live at `<network>/<safe-address>/<name>.zac.yaml`). By default (`--revoke-unmentioned=false`), each source produces a per-file `<stem>.plan.json` via `planApplyRole` with no revokes. With `--revoke-unmentioned=true` in directory mode, plans are aggregated per safe-dir and the SDK's `planApply` emits revoke calls for any role on the modifier not in the aggregated set; output is `<safe-address>.plan.json` inside each safe-dir. RPC URL is resolved per-chainId via `<NETWORK>_RPC_URL` (e.g. `MAINNET_RPC_URL`, `BASE_RPC_URL`), falling back to `RPC_URL`.",
     )
     .option(
       '--rpc-url <url>',
@@ -192,9 +192,9 @@ export function buildProgram(): Command {
     )
     .option(
       '--revoke-unmentioned <bool>',
-      "when true (default), directory-mode aggregates roles per safe-dir and uses the SDK's `planApply` (which natively revokes any role on the modifier not in the aggregated set). when false, every source is planned independently via `planApplyRole` and no revokes are emitted. ignored in file-mode (always per-file legacy).",
+      "when true, directory-mode aggregates roles per safe-dir and uses the SDK's `planApply` (which natively revokes any role on the modifier not in the aggregated set). when false (default), every source is planned independently via `planApplyRole` and no revokes are emitted. ignored in file-mode (always per-file legacy).",
       (v: string) => parseBool('--revoke-unmentioned', v),
-      true,
+      false,
     )
     .action(async (inputPath: string, options: { rpcUrl?: string; revokeUnmentioned: boolean }) => {
       const { runPlan } = await import('./apply/runPlan');
@@ -317,7 +317,7 @@ export function buildProgram(): Command {
   program
     .command('apply <path>')
     .description(
-      'propose role state updates as Safe transactions (signed by ZAC_PROPOSER_PRIVATE_KEY env var; optional SAFE_API_KEY). <path> is a `*.zac.yaml` file or a directory (walked recursively — sources must live at `<network>/<safe-address>/<name>.zac.yaml`). In directory mode (default `--revoke-unmentioned=true`), one Safe transaction per safe-dir aggregates all sources via `planApply` (revoking any unmentioned role). With `--revoke-unmentioned=false` (or in file mode), each source proposes its own per-role transaction via `planApplyRole`. RPC URL is resolved per-chainId via `<NETWORK>_RPC_URL` (e.g. `MAINNET_RPC_URL`, `BASE_RPC_URL`), falling back to `RPC_URL`.',
+      'propose role state updates as Safe transactions (signed by ZAC_PROPOSER_PRIVATE_KEY env var; optional SAFE_API_KEY). <path> is a `*.zac.yaml` file or a directory (walked recursively — sources must live at `<network>/<safe-address>/<name>.zac.yaml`). By default (`--revoke-unmentioned=false`), each source proposes its own per-role transaction via `planApplyRole`. With `--revoke-unmentioned=true` in directory mode, one Safe transaction per safe-dir aggregates all sources via `planApply` (revoking any unmentioned role). RPC URL is resolved per-chainId via `<NETWORK>_RPC_URL` (e.g. `MAINNET_RPC_URL`, `BASE_RPC_URL`), falling back to `RPC_URL`.',
     )
     .option(
       '--rpc-url <url>',
@@ -325,9 +325,9 @@ export function buildProgram(): Command {
     )
     .option(
       '--revoke-unmentioned <bool>',
-      "when true (default), directory-mode aggregates roles per safe-dir and uses the SDK's `planApply` (which natively revokes any role on the modifier not in the aggregated set). when false, every source is applied independently via `planApplyRole` and no revokes are emitted. ignored in file-mode (always per-file legacy).",
+      "when true, directory-mode aggregates roles per safe-dir and uses the SDK's `planApply` (which natively revokes any role on the modifier not in the aggregated set). when false (default), every source is applied independently via `planApplyRole` and no revokes are emitted. ignored in file-mode (always per-file legacy).",
       (v: string) => parseBool('--revoke-unmentioned', v),
-      true,
+      false,
     )
     .action(async (inputPath: string, options: { rpcUrl?: string; revokeUnmentioned: boolean }) => {
       const { runApply } = await import('./apply/runApply');

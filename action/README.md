@@ -16,10 +16,10 @@ The `generate` command runs five phases, fail-fast:
 
 ## Apply pipeline (`apply/`)
 
-The `apply <path>` command has two flows, gated by `--revoke-unmentioned` (default `true`):
+The `apply <path>` command has two flows, gated by `--revoke-unmentioned` (default `false`):
 
-- **Per-modifier (default)**: `findSafeDirs` groups sibling `*.zac.yaml` files under each `<network>/<safe-address>/` dir; `runPlanForSafeDir` aggregates the union of role keys and hands them to `zodiac-roles-sdk`'s `planApply` (which natively emits revoke calls for any role on the modifier not in the aggregated set, by diffing against the Zodiac subgraph). One Safe transaction per safe-dir.
-- **Legacy per-file**: when `--revoke-unmentioned=false` (or in single-file mode), `runApply` parses one generated YAML and calls `planApplyRole` from `zodiac-roles-sdk` for each role key. No revokes emitted.
+- **Legacy per-file (default)**: `runApply` parses one generated YAML at a time and calls `planApplyRole` from `zodiac-roles-sdk` for each role key. No revokes emitted; roles not declared in any source are left untouched on the modifier.
+- **Per-modifier**: with `--revoke-unmentioned=true` in directory mode, `findSafeDirs` groups sibling `*.zac.yaml` files under each `<network>/<safe-address>/` dir; `runPlanForSafeDir` aggregates the union of role keys and hands them to `zodiac-roles-sdk`'s `planApply` (which natively emits revoke calls for any role on the modifier not in the aggregated set, by diffing against the Zodiac subgraph). One Safe transaction per safe-dir.
 
 In both flows, the resulting calls are batched into a Safe MultiSend via `@safe-global/protocol-kit`, signed with `ZAC_PROPOSER_PRIVATE_KEY`, and proposed via `@safe-global/api-kit`. The Service URL defaults from a per-chain map; `SAFE_API_KEY` is honored if set; per-chain `<NETWORK>_RPC_URL` (e.g. `MAINNET_RPC_URL`) — falling back to `RPC_URL` — overrides the public RPC used by Protocol Kit's read-only queries. `<path>` accepts a `*.zac.yaml` file or a directory.
 

@@ -45,9 +45,9 @@ async function runCli(args: string[], env: NodeJS.ProcessEnv = {}): Promise<CliR
  * directly under `<network>/` (the old, pre-refactor layout). This lets us
  * verify which code path the CLI takes:
  *
- * - `findSafeDirs` (safe-dir mode, default `--revoke-unmentioned=true`)
- *   throws `phase=validate` on the parent-dir layout check.
- * - `findGeneratedConfigs` (legacy mode, `--revoke-unmentioned=false`) is
+ * - `findSafeDirs` (safe-dir mode, `--revoke-unmentioned=true`) throws
+ *   `phase=validate` on the parent-dir layout check.
+ * - `findGeneratedConfigs` (legacy mode, default `--revoke-unmentioned=false`) is
  *   layout-aware as well — both modes apply the same strict layout. So we
  *   verify the FLAG sources both go through layout validation by asserting
  *   `phase=validate` either way; the routing distinction surfaces in the
@@ -71,20 +71,20 @@ roles: {}
 }
 
 describe('cli routing (dir vs file, --revoke-unmentioned)', () => {
-  it('TS-40: dir-mode with default flag rejects pre-refactor layout (`<network>/<file>.zac.yaml`) with `phase=validate`', async () => {
+  it('TS-40: dir-mode with `--revoke-unmentioned=true` rejects pre-refactor layout (`<network>/<file>.zac.yaml`) with `phase=validate`', async () => {
     const root = plantOldLayout();
-    const { code, stderr } = await runCli(['plan', root]);
+    const { code, stderr } = await runCli(['plan', '--revoke-unmentioned', 'true', root]);
     expect(code).not.toBe(0);
     expect(stderr).toContain('phase=validate');
     expect(stderr).toMatch(/configs\/<network>\/<safe-address>/);
   });
 
-  it('TS-41: dir-mode with `--revoke-unmentioned=false` ALSO rejects the pre-refactor layout (legacy path applies the same strict layout)', async () => {
+  it('TS-41: dir-mode with default flag (legacy mode) ALSO rejects the pre-refactor layout (same strict layout applies)', async () => {
     const root = plantOldLayout();
-    const { code, stderr } = await runCli(['plan', '--revoke-unmentioned', 'false', root]);
+    const { code, stderr } = await runCli(['plan', root]);
     expect(code).not.toBe(0);
-    // Either layout error surfaces here — but the legacy path goes through
-    // `findGeneratedConfigs`, which calls the same layout validator.
+    // The legacy path goes through `findGeneratedConfigs`, which calls the
+    // same layout validator.
     expect(stderr).toContain('phase=validate');
   });
 

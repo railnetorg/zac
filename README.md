@@ -35,8 +35,8 @@ The CLI is directory-driven: every subcommand accepts either a single file or a 
 - Source configs: `*.zac.yaml` MUST live at `configs/<network>/<safe-address>/<name>.zac.yaml` (e.g. `configs/mainnet/0xAbCd…1234/aave_v3.zac.yaml`). The `<safe-address>` directory name must match the rendered `safe_address` (case-insensitive); all `*.zac.yaml` siblings in one safe-dir must agree on `(chain_id, safe_address, roles_modifier_address)`.
 - Generated configs: `*.yaml` next to the source (`aave_v3.zac.yaml` → `aave_v3.yaml`).
 - Plan files:
-  - default (`--revoke-unmentioned=true`): one `<safe-address>.plan.json` per safe-dir — the SDK's `planApply` aggregates roles across siblings and natively revokes any role on the modifier not in the aggregated set.
-  - `--revoke-unmentioned=false`: legacy `<stem>.plan.json` next to each generated file — `planApplyRole` is called per source, no revokes.
+  - default (`--revoke-unmentioned=false`): one `<stem>.plan.json` next to each generated file — `planApplyRole` is called per source, no revokes.
+  - `--revoke-unmentioned=true`: one `<safe-address>.plan.json` per safe-dir — the SDK's `planApply` aggregates roles across siblings and natively revokes any role on the modifier not in the aggregated set.
 
 ## Try the example
 
