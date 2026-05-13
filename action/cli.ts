@@ -16,6 +16,7 @@ import {
   type SafeDir,
 } from './discover';
 import { runGenerate } from './runGenerate';
+import { parseGenerated } from './apply/parseGenerated';
 
 declare const Bun: { main: string } | undefined;
 
@@ -27,6 +28,50 @@ function displayPath(p: string): string {
   const rel = relative(process.cwd(), p);
   // If the relative path escapes cwd, fall back to absolute.
   return rel.startsWith('..') ? p : rel;
+}
+
+/**
+ * Lazily load the SDK pieces the diff printer needs (`decodeKey` for
+ * roleKey decoding, `rolesAbi` for viem-side calldata decoding). Mirrors
+ * the lazy-import pattern in the runners — the SDK module is heavy and
+ * pulling it in eagerly slows `--help`.
+ */
+async function loadDiffSdk(): Promise<{
+  decodeKey: (k: string) => string;
+  rolesAbi: readonly unknown[];
+}> {
+  const mod = (await import('zodiac-roles-sdk')) as unknown as {
+    decodeKey: (k: string) => string;
+    rolesAbi: readonly unknown[];
+  };
+  return { decodeKey: mod.decodeKey, rolesAbi: mod.rolesAbi };
+}
+
+/**
+ * The set of role keys declared across every source in a safe-dir. Used
+ * by the diff printer in per-safe-dir mode to flag revokes targeting
+ * roles that no `.zac.yaml` mentions (those are the "unmentioned" revokes
+ * the SDK emits when `--revoke-unmentioned=true`).
+ *
+ * Parses each source's generated sibling YAML; this is the same parse
+ * `runPlanForSafeDir` runs internally but kept here to avoid changing
+ * the runner's return signature.
+ */
+function declaredRoleKeysForSafeDir(sd: SafeDir): Set<string> {
+  const out = new Set<string>();
+  for (const src of sd.sources) {
+    // `findSafeDirs` already validated every source's generated sibling
+    // exists and parses — re-parsing here is cheap (one file per source)
+    // and avoids threading a new return field through the runners.
+    const genPath = src.slice(0, -'.zac.yaml'.length) + '.yaml';
+    try {
+      const parsed = parseGenerated(genPath);
+      for (const key of Object.keys(parsed.roles)) out.add(key);
+    } catch {
+      // Best-effort: never block the diff print on a parse hiccup.
+    }
+  }
+  return out;
 }
 
 interface BatchOutcome {
@@ -304,6 +349,8 @@ export function buildProgram(): Command {
         const { runPlan } = await import('./apply/runPlan');
         const { runPlanForSafeDir } = await import('./apply/runPlanForSafeDir');
         const { serializePlan } = await import('./apply/planSchema');
+        const { printPlanDiff } = await import('./apply/printPlanDiff');
+        const sdk = await loadDiffSdk();
 
         const absInput = isAbsolute(inputPath) ? inputPath : resolve(inputPath);
         // Surface missing-path errors as `phase=load` (mirrors `submit`).
@@ -323,6 +370,11 @@ export function buildProgram(): Command {
             const json = serializePlan(plan);
             const outPath = safeDirPlanPathFor(sd);
             writeFileSync(outPath, json);
+            printPlanDiff(plan, {
+              planPath: displayPath(outPath),
+              declaredRoleKeys: declaredRoleKeysForSafeDir(sd),
+              sdk,
+            });
             process.stdout.write(`planned: ${displayPath(outPath)}\n`);
           });
           if (!ok) {
@@ -342,6 +394,7 @@ export function buildProgram(): Command {
           const json = serializePlan(plan);
           const outPath = planPathFor(genPath);
           writeFileSync(outPath, json);
+          printPlanDiff(plan, { planPath: displayPath(outPath), sdk });
           process.stdout.write(`planned: ${displayPath(outPath)}\n`);
         });
         if (!ok) {
@@ -446,8 +499,15 @@ export function buildProgram(): Command {
         options: { rpcUrl?: string; revokeUnmentioned: boolean },
         command: Command,
       ) => {
-        const { runApply } = await import('./apply/runApply');
-        const { runApplyForSafeDir } = await import('./apply/runApplyForSafeDir');
+        // `apply` is `plan + submit` chained internally. We dispatch the
+        // two stages explicitly (rather than calling `runApply`) so we can
+        // print the plan diff between them — users see what's about to be
+        // proposed before the Safe Transaction Service post.
+        const { runPlan } = await import('./apply/runPlan');
+        const { runPlanForSafeDir } = await import('./apply/runPlanForSafeDir');
+        const { runSubmit } = await import('./apply/runSubmit');
+        const { printPlanDiff } = await import('./apply/printPlanDiff');
+        const sdk = await loadDiffSdk();
 
         // Pre-validate the proposer key once, before any batch starts.
         // Without this, N safe-dirs / N sources would each surface their own
@@ -459,6 +519,7 @@ export function buildProgram(): Command {
             message: 'ZAC_PROPOSER_PRIVATE_KEY env var is required for apply',
           });
         }
+        const apiKey = process.env['SAFE_API_KEY'];
 
         const absInput = isAbsolute(inputPath) ? inputPath : resolve(inputPath);
         if (!existsSync(absInput)) {
@@ -471,12 +532,24 @@ export function buildProgram(): Command {
         if (useSafeDirMode) {
           const safeDirs = findSafeDirs(inputPath);
           const { ok } = await runSafeDirBatch(safeDirs, 'apply', async (sd) => {
-            const applyOpts: Parameters<typeof runApplyForSafeDir>[0] = {
-              safeDir: sd,
+            const planOpts: Parameters<typeof runPlanForSafeDir>[0] = { safeDir: sd };
+            if (options.rpcUrl !== undefined) planOpts.rpcUrl = options.rpcUrl;
+            const plan = await runPlanForSafeDir(planOpts);
+            // Print the diff using the safe-dir's plan-file path as the
+            // header (it's the canonical artifact name even when we don't
+            // write it — `apply` doesn't persist the plan).
+            printPlanDiff(plan, {
+              planPath: displayPath(safeDirPlanPathFor(sd)),
+              declaredRoleKeys: declaredRoleKeysForSafeDir(sd),
+              sdk,
+            });
+            const submitArgs: Parameters<typeof runSubmit>[0] = {
+              plan,
               proposerPrivateKey: proposerKey,
             };
-            if (options.rpcUrl !== undefined) applyOpts.rpcUrl = options.rpcUrl;
-            const result = await runApplyForSafeDir(applyOpts);
+            if (apiKey !== undefined) submitArgs.apiKey = apiKey;
+            if (options.rpcUrl !== undefined) submitArgs.rpcUrl = options.rpcUrl;
+            const result = await runSubmit(submitArgs);
             process.stdout.write(
               `applied safe=${sd.safeAddress} chain=${sd.chainId} (${sd.sources.length} source${sd.sources.length === 1 ? '' : 's'}): safeTxHash ${result.safeTxHash}\n`,
             );
@@ -490,12 +563,17 @@ export function buildProgram(): Command {
         // Legacy per-file flow.
         const generated = resolveGeneratedInputs(inputPath, inputIsFile, absInput);
         const { ok } = await runBatch(generated, 'apply', async (genPath) => {
-          const applyOpts: Parameters<typeof runApply>[0] = {
-            generatedPath: genPath,
+          const planOpts: Parameters<typeof runPlan>[0] = { generatedPath: genPath };
+          if (options.rpcUrl !== undefined) planOpts.rpcUrl = options.rpcUrl;
+          const plan = await runPlan(planOpts);
+          printPlanDiff(plan, { planPath: displayPath(planPathFor(genPath)), sdk });
+          const submitArgs: Parameters<typeof runSubmit>[0] = {
+            plan,
             proposerPrivateKey: proposerKey,
           };
-          if (options.rpcUrl !== undefined) applyOpts.rpcUrl = options.rpcUrl;
-          const result = await runApply(applyOpts);
+          if (apiKey !== undefined) submitArgs.apiKey = apiKey;
+          if (options.rpcUrl !== undefined) submitArgs.rpcUrl = options.rpcUrl;
+          const result = await runSubmit(submitArgs);
           process.stdout.write(
             `applied ${displayPath(genPath)}: safeTxHash ${result.safeTxHash}\n`,
           );
