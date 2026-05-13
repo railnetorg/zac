@@ -94,7 +94,7 @@ function walk(dir: string, onFile: (path: string) => void): void {
 function layoutError(sourcePath: string): never {
   throw new ZacError({
     phase: 'validate',
-    message: `expected configs/<network>/<safe-address>/<name>.zac.yaml; got ${sourcePath} — move into a 0x-prefixed dir whose name matches safe_address`,
+    message: `expected <network>/<safe-address>/<name>.zac.yaml layout; got ${sourcePath} — move into a 0x-prefixed dir whose name matches safe_address`,
   });
 }
 

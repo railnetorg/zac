@@ -76,7 +76,7 @@ describe('cli routing (dir vs file, --revoke-unmentioned)', () => {
     const { code, stderr } = await runCli(['plan', '--revoke-unmentioned', 'true', root]);
     expect(code).not.toBe(0);
     expect(stderr).toContain('phase=validate');
-    expect(stderr).toMatch(/configs\/<network>\/<safe-address>/);
+    expect(stderr).toMatch(/<network>\/<safe-address>\/<name>\.zac\.yaml layout/);
   });
 
   it('TS-41: dir-mode with default flag (legacy mode) ALSO rejects the pre-refactor layout (same strict layout applies)', async () => {
