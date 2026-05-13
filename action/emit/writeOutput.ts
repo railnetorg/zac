@@ -10,7 +10,7 @@ export function writeOutput(content: string, outPath?: string): void {
   if (existsSync(outPath) && statSync(outPath).isDirectory()) {
     throw new ZacError({
       phase: 'emit',
-      message: `--out path is an existing directory: ${outPath}`,
+      message: `output path is an existing directory: ${outPath}`,
     });
   }
   const parent = dirname(outPath);

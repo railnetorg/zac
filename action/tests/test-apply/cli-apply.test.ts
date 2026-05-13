@@ -47,14 +47,15 @@ describe('cli apply', () => {
     expect(stderr.length).toBeGreaterThan(0);
   });
 
-  it('T11-19: apply <nonexistent> exits 1 with phase=apply in stderr', async () => {
-    // Strip ZAC_PROPOSER_PRIVATE_KEY from env so the parse error surfaces (or
-    // the missing-key error does — either is phase=apply).
+  it('T11-19: apply <nonexistent> exits 1 with phase= in stderr', async () => {
+    // Strip ZAC_PROPOSER_PRIVATE_KEY from env so the parse/discovery error
+    // surfaces (or the missing-key error does). Discovery errors now surface
+    // as phase=load when the path doesn't exist.
     const env = { ...process.env };
     delete env['ZAC_PROPOSER_PRIVATE_KEY'];
     const { code, stderr } = await runCli(['apply', '/definitely/does/not/exist.yaml'], env);
     expect(code).toBe(1);
-    expect(stderr).toContain('phase=apply');
+    expect(stderr).toContain('phase=');
   });
 
   it('T11-20: README documents zac apply + ZAC_PROPOSER_PRIVATE_KEY', () => {

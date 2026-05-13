@@ -1,8 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { readFileSync, existsSync, unlinkSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { planRoleCalls, type PlanApplyRoleFn } from '../../apply/planRoleCalls';
 import { parseGenerated } from '../../apply/parseGenerated';
@@ -12,16 +11,16 @@ const REPO_ROOT = resolve(__dirname, '../../..');
 const CLI = resolve(REPO_ROOT, 'action/cli.ts');
 
 describe('morpho-blue composite ops — end-to-end', () => {
-  it('TC-10: examples/mainnet/morpho_blue_safe.yaml renders, validates, and routes through planRoleCalls against the REAL SDK without throwing', async () => {
-    // Step 1: render the morpho-blue config via the real `zac generate`.
-    const tempDir = mkdtempSync(join(tmpdir(), 'zac-morpho-int-'));
-    const generatedPath = join(tempDir, 'morpho_generated.yaml');
+  it('TC-10: examples/mainnet/morpho_blue_safe.zac.yaml renders, validates, and routes through planRoleCalls against the REAL SDK without throwing', async () => {
+    const sourcePath = 'examples/mainnet/morpho_blue_safe.zac.yaml';
+    const generatedPath = resolve(REPO_ROOT, 'examples/mainnet/morpho_blue_safe.yaml');
+    if (existsSync(generatedPath)) unlinkSync(generatedPath);
     try {
-      execFileSync(
-        'bun',
-        [CLI, 'generate', 'examples/mainnet/morpho_blue_safe.yaml', '--out', generatedPath],
-        { cwd: REPO_ROOT, stdio: 'pipe' },
-      );
+      // Step 1: render the morpho-blue config via the real `zac generate`.
+      execFileSync('bun', [CLI, 'generate', sourcePath], {
+        cwd: REPO_ROOT,
+        stdio: 'pipe',
+      });
 
       const yaml = readFileSync(generatedPath, 'utf8');
       // Smoke checks that the composite ops survived rendering.
@@ -62,7 +61,7 @@ describe('morpho-blue composite ops — end-to-end', () => {
       expect(calls).toHaveLength(1);
       expect(calls[0]!.data).toBe('0xdeadbeef');
     } finally {
-      rmSync(tempDir, { recursive: true, force: true });
+      if (existsSync(generatedPath)) unlinkSync(generatedPath);
     }
   });
 });

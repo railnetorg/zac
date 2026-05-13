@@ -1,12 +1,9 @@
 name: zac
-description: Generate Zodiac Roles V2 configs from a deployment YAML
+description: Generate Zodiac Roles V2 configs from `*.zac.yaml` sources
 inputs:
   config-path:
-    description: Path to the deployment config YAML
+    description: Path to a `.zac.yaml` source file or a directory of sources (walked recursively). Generated `.yaml` files are written alongside each source.
     required: true
-  out-path:
-    description: Path to write the rendered output (default stdout)
-    required: false
 runs:
   using: composite
   steps:
@@ -14,12 +11,7 @@ runs:
     - shell: bash
       env:
         ZAC_CONFIG_PATH: ${{ inputs.config-path }}
-        ZAC_OUT_PATH: ${{ inputs.out-path }}
       run: |
         cd "${{ github.action_path }}/.."
         bun install --cwd action
-        if [ -n "$ZAC_OUT_PATH" ]; then
-          bun ./action/cli.ts generate "$ZAC_CONFIG_PATH" --out "$ZAC_OUT_PATH"
-        else
-          bun ./action/cli.ts generate "$ZAC_CONFIG_PATH"
-        fi
+        bun ./action/cli.ts generate "$ZAC_CONFIG_PATH"

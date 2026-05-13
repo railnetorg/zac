@@ -34,24 +34,25 @@ describe('cli', () => {
   });
 
   it('T2-12: generate <nonexistent> exits 1 with phase= in stderr', async () => {
-    const { code, stderr } = await runCli(['generate', '/definitely/does/not/exist.yaml']);
+    const { code, stderr } = await runCli(['generate', '/definitely/does/not/exist.zac.yaml']);
     expect(code).toBe(1);
     expect(stderr).toContain('phase=');
   });
 
-  it('T2-13: --out flag is parsed (still errors via stub, but parsing succeeds)', async () => {
-    const { code, stderr } = await runCli([
-      'generate',
-      '/x.yaml',
-      '--out',
-      '/tmp/zac-test-out.yaml',
-    ]);
+  it('T2-13: generate rejects a non-`.zac.yaml` file path', async () => {
+    // File mode requires the `.zac.yaml` suffix; this surfaces a phase=load error.
+    const { code, stderr } = await runCli(['generate', '/tmp/not-a-source.yaml']);
     expect(code).toBe(1);
     expect(stderr).toContain('phase=');
   });
 
   it('T2-14: --config flag is parsed', async () => {
-    const { code, stderr } = await runCli(['generate', '/x.yaml', '--config', '/y/config.yaml']);
+    const { code, stderr } = await runCli([
+      'generate',
+      '/x.zac.yaml',
+      '--config',
+      '/y/config.yaml',
+    ]);
     expect(code).toBe(1);
     expect(stderr).toContain('phase=');
   });
