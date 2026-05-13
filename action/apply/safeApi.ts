@@ -1,5 +1,4 @@
 import { privateKeyToAccount } from 'viem/accounts';
-import * as viemChains from 'viem/chains';
 import { ZacError } from '../errors';
 import { safeServiceUrlForChain } from './safeServiceUrl';
 import type { Call } from './planRoleCalls';
@@ -44,8 +43,12 @@ export interface BuildSafeTxOpts {
   chainId: number;
   safeAddress: string;
   calls: Call[];
-  /** RPC URL for protocol-kit read-only queries (nonce, etc.). Defaults to viem per-chain default. */
-  rpcUrl?: string;
+  /**
+   * RPC URL for protocol-kit read-only queries (nonce, etc.). Required —
+   * production callers pre-resolve via `resolveRpcUrl` (which throws if
+   * unresolvable).
+   */
+  rpcUrl: string;
   /** Injected for testability — pass a stub Safe.init function. */
   safeInit?: SafeInitFn;
 }
@@ -61,20 +64,12 @@ export interface BuildSafeTxResult {
  * the live Safe contract.
  */
 export async function buildSafeTransaction(opts: BuildSafeTxOpts): Promise<BuildSafeTxResult> {
-  const rpcUrl = opts.rpcUrl ?? defaultRpcUrlForChain(opts.chainId);
-  if (rpcUrl === null) {
-    throw new ZacError({
-      phase: 'apply',
-      message: `no default RPC URL available for chainId ${opts.chainId}; set RPC_URL env var`,
-    });
-  }
-
   const safeInit = opts.safeInit ?? (await loadSafeInit());
 
   let safe: SafeLike;
   try {
     safe = await safeInit({
-      provider: rpcUrl,
+      provider: opts.rpcUrl,
       safeAddress: opts.safeAddress,
     });
   } catch (err) {
@@ -94,8 +89,11 @@ export interface SignAndProposeOpts {
   plan: Plan;
   proposerPrivateKey: `0x${string}`;
   apiKey?: string;
-  /** RPC URL for protocol-kit (needed to re-init Safe to sign). */
-  rpcUrl?: string;
+  /**
+   * RPC URL for protocol-kit (needed to re-init Safe to sign). Required —
+   * production callers pre-resolve via `resolveRpcUrl`.
+   */
+  rpcUrl: string;
   /** Override Safe Transaction Service URL (default: from per-chain map). */
   txServiceUrl?: string;
   /** Injected for testability. */
@@ -117,14 +115,6 @@ export async function signAndPropose(opts: SignAndProposeOpts): Promise<{ safeTx
     });
   }
 
-  const rpcUrl = opts.rpcUrl ?? defaultRpcUrlForChain(opts.plan.chainId);
-  if (rpcUrl === null) {
-    throw new ZacError({
-      phase: 'apply',
-      message: `no default RPC URL available for chainId ${opts.plan.chainId}; set RPC_URL env var`,
-    });
-  }
-
   const proposerAddress = privateKeyToAccount(opts.proposerPrivateKey).address;
 
   const safeInit = opts.safeInit ?? (await loadSafeInit());
@@ -133,7 +123,7 @@ export async function signAndPropose(opts: SignAndProposeOpts): Promise<{ safeTx
   let safe: SafeLike;
   try {
     safe = await safeInit({
-      provider: rpcUrl,
+      provider: opts.rpcUrl,
       signer: opts.proposerPrivateKey,
       safeAddress: opts.plan.safeAddress,
     });
@@ -169,74 +159,6 @@ export async function signAndPropose(opts: SignAndProposeOpts): Promise<{ safeTx
   }
 
   return { safeTxHash: opts.plan.safeTxHash };
-}
-
-export interface ProposeOpts {
-  chainId: number;
-  safeAddress: string;
-  calls: Call[];
-  proposerPrivateKey: `0x${string}`;
-  apiKey?: string;
-  rpcUrl?: string;
-  txServiceUrl?: string;
-  safeInit?: SafeInitFn;
-  apiKitCtor?: SafeApiKitCtor;
-}
-
-/**
- * Backwards-compatible one-shot helper: build + sign + propose in a single
- * call. Existing T11-* tests still use this entry point. Internally chains
- * `buildSafeTransaction` and `signAndPropose`. `runApply` no longer calls
- * this directly — it goes through `runPlan` + `runSubmit`.
- */
-export async function proposeToSafe(opts: ProposeOpts): Promise<{ safeTxHash: string }> {
-  const buildOpts: BuildSafeTxOpts = {
-    chainId: opts.chainId,
-    safeAddress: opts.safeAddress,
-    calls: opts.calls,
-  };
-  if (opts.rpcUrl !== undefined) buildOpts.rpcUrl = opts.rpcUrl;
-  if (opts.safeInit !== undefined) buildOpts.safeInit = opts.safeInit;
-  const { safeTxHash, safeTxData } = await buildSafeTransaction(buildOpts);
-
-  const plan: Plan = {
-    calls: opts.calls,
-    callsCount: opts.calls.length,
-    chainId: opts.chainId,
-    modifierAddress: '0x0000000000000000000000000000000000000000',
-    safeAddress: opts.safeAddress,
-    safeTxData,
-    safeTxHash,
-  };
-
-  const submitOpts: SignAndProposeOpts = {
-    plan,
-    proposerPrivateKey: opts.proposerPrivateKey,
-  };
-  if (opts.apiKey !== undefined) submitOpts.apiKey = opts.apiKey;
-  if (opts.rpcUrl !== undefined) submitOpts.rpcUrl = opts.rpcUrl;
-  if (opts.txServiceUrl !== undefined) submitOpts.txServiceUrl = opts.txServiceUrl;
-  if (opts.safeInit !== undefined) submitOpts.safeInit = opts.safeInit;
-  if (opts.apiKitCtor !== undefined) submitOpts.apiKitCtor = opts.apiKitCtor;
-
-  return signAndPropose(submitOpts);
-}
-
-function defaultRpcUrlForChain(chainId: number): string | null {
-  for (const v of Object.values(viemChains)) {
-    if (
-      v &&
-      typeof v === 'object' &&
-      'id' in v &&
-      (v as { id: unknown }).id === chainId &&
-      'rpcUrls' in v
-    ) {
-      const rpcs = (v as { rpcUrls?: { default?: { http?: readonly string[] } } }).rpcUrls;
-      const http = rpcs?.default?.http;
-      if (http && http.length > 0 && typeof http[0] === 'string') return http[0];
-    }
-  }
-  return null;
 }
 
 async function loadSafeInit(): Promise<SafeInitFn> {
