@@ -11,6 +11,7 @@ aliases:
   sepolia:
     aave: ../aliases/sepolia/aave.yaml
     tokens: ../aliases/sepolia/tokens.yaml
+    morpho_blue: ../aliases/sepolia/morpho_blue.yaml
     safes: ./aliases/sepolia/safes.yaml
     modifiers: ./aliases/sepolia/modifiers.yaml
   base:

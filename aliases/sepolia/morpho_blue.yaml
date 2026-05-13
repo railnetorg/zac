@@ -1,0 +1,13 @@
+# Morpho Blue singleton on Sepolia.
+singleton: "0xd011EE229E7459ba1ddd22631eF7bF528d424A14"
+
+# Example Sepolia market for illustration only. Sepolia markets are
+# unstable; verify these addresses against a current `MarketCreated`
+# event before planning against real chain state.
+markets:
+  usdc_weth_915:
+    loan_token: "0x94a9D9AC8a22534E3FaCa9F4e7F2E2cf85d5E4C8"  # USDC (Sepolia)
+    collateral_token: "0x7b79995e5f793A07Bc00c21412e50Ecae098E7f9"  # WETH (Sepolia)
+    oracle: "0x0000000000000000000000000000000000000000"  # PLACEHOLDER
+    irm: "0x0000000000000000000000000000000000000000"  # PLACEHOLDER
+    lltv: "915000000000000000"
