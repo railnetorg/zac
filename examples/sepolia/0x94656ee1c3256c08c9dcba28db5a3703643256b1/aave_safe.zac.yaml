@@ -9,7 +9,5 @@ configs:
     members:
       - "{{ aliases.signers.sepolia_member }}"
     params:
-      pool_address: "{{ aliases.aave.pool }}"
       deposit_assets:
-        - address: "{{ aliases.tokens.USDC }}"
-          symbol: "USDC"
+        - address: "{{ aliases.tokens.DAI }}"

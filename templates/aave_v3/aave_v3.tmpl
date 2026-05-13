@@ -1,6 +1,6 @@
 roles:
 {%- for asset in deposit_assets %}
-  - address: "{{ asset.address }}" # approval for {{ asset.symbol }}
+  - address: "{{ asset.address }}"
     functions:
       - signature: "function approve(address spender, uint256 amount)"
         execution_options: "none"
@@ -8,14 +8,14 @@ roles:
           - name: spender
             param_type: "static"
             operator: "equal_to"
-            value: "{{ pool_address }}"
+            value: "{{ aliases.aave.pool }}"
             value_type: "address"
           - name: amount
             param_type: "static"
             operator: "pass"
 {%- endfor %}
 
-  - address: "{{ pool_address }}"
+  - address: "{{ aliases.aave.pool }}"
     functions:
       - signature: "function supply(address asset, uint256 amount, address onBehalfOf, uint16 referralCode)"
         execution_options: "none"

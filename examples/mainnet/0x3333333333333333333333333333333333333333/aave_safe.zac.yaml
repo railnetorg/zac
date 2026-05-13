@@ -10,7 +10,6 @@ configs:
       - "{{ aliases.signers.alice }}"
       - "{{ aliases.signers.bob }}"
     params:
-      pool_address: "{{ aliases.aave.pool }}"
       deposit_assets:
         - address: "{{ aliases.tokens.USDC }}"
           symbol: "USDC"

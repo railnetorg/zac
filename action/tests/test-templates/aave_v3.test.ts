@@ -14,9 +14,11 @@ describe('aave_v3/aave_v3.tmpl', () => {
     throwOnUndefined: true,
   });
   env.addFilter('keccak', keccak);
+  env.addGlobal('aliases', {
+    aave: { pool: '0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2' },
+  });
 
   const params = {
-    pool_address: '0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2',
     deposit_assets: [
       { address: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', symbol: 'USDC' },
       { address: '0x6B175474E89094C44Da98b954EedeAC495271d0F', symbol: 'DAI' },
