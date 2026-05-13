@@ -1,3 +1,4 @@
+import { ZacError } from '../errors';
 import type { Generated } from './parseGenerated';
 import { toSdkTargets } from './toSdkTargets';
 
@@ -62,7 +63,16 @@ export async function planRoleCalls(opts: PlanRoleCallsOpts): Promise<Call[]> {
       chainId: opts.generated.deployment.chain_id,
       address: opts.generated.deployment.roles_modifier_address as `0x${string}`,
     };
-    const result = await sdk.planApplyRole(desired, meta);
+    let result: SdkPlannedCall[];
+    try {
+      result = await sdk.planApplyRole(desired, meta);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      throw new ZacError({
+        phase: 'apply',
+        message: `planApplyRole failed for chainId=${meta.chainId} modifier=${meta.address} roleKey=${keyStr}: ${reason} (the SDK fetches current state from the Zodiac subgraph; check connectivity + that the modifier is indexed)`,
+      });
+    }
     for (const c of result) {
       allCalls.push({ to: c.to, value: '0', data: c.data });
     }

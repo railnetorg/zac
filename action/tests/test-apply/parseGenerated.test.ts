@@ -61,7 +61,7 @@ describe('parseGenerated', () => {
     expect(out.roles['AAVE_V3']!.targets[0]!.functions[0]!.signature).toContain('approve');
   });
 
-  it('T11-4: missing deployment block → ZacError(phase=apply)', () => {
+  it('T11-4: missing deployment block → ZacError(phase=validate)', () => {
     const p = writeFixture(`roles:
   AAVE_V3:
     members: []
@@ -71,12 +71,12 @@ describe('parseGenerated', () => {
     try {
       parseGenerated(p);
     } catch (e) {
-      expect((e as ZacError).phase).toBe('apply');
+      expect((e as ZacError).phase).toBe('validate');
       expect((e as ZacError).message).toContain('deployment');
     }
   });
 
-  it('T11-5: invalid safe_address → ZacError(phase=apply)', () => {
+  it('T11-5: invalid safe_address → ZacError(phase=validate)', () => {
     const p = writeFixture(`deployment:
   chain_id: 1
   safe_address: "not-an-address"
@@ -87,18 +87,30 @@ roles: {}
     try {
       parseGenerated(p);
     } catch (e) {
-      expect((e as ZacError).phase).toBe('apply');
+      expect((e as ZacError).phase).toBe('validate');
       expect((e as ZacError).message).toContain('safe_address');
     }
   });
 
-  it('T11-6: nonexistent file → ZacError(phase=apply)', () => {
+  it('T11-6: nonexistent file → ZacError(phase=load)', () => {
     expect(() => parseGenerated('/definitely/does/not/exist.yaml')).toThrow(ZacError);
     try {
       parseGenerated('/definitely/does/not/exist.yaml');
     } catch (e) {
-      expect((e as ZacError).phase).toBe('apply');
+      expect((e as ZacError).phase).toBe('load');
       expect((e as ZacError).message).toContain('failed to read');
+    }
+  });
+
+  it('T11-6b: malformed YAML → ZacError(phase=parse)', () => {
+    // Invalid YAML: unmatched bracket triggers eemeli/yaml parse error.
+    const p = writeFixture('deployment: [unbalanced\n');
+    expect(() => parseGenerated(p)).toThrow(ZacError);
+    try {
+      parseGenerated(p);
+    } catch (e) {
+      expect((e as ZacError).phase).toBe('parse');
+      expect((e as ZacError).message).toContain('YAML parse failed');
     }
   });
 });

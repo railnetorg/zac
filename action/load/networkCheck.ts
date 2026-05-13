@@ -25,20 +25,20 @@ export function checkNetwork(opts: NetworkCheckOpts): void {
   // (a) directory ↔ table
   if (!isKnownNetworkDirectory(opts.directoryName)) {
     throw new ZacError({
-      phase: 'load',
+      phase: 'validate',
       message: `unknown network directory '${opts.directoryName}'; supported: [${supportedNetworkDirectories().join(', ')}]`,
     });
   }
   const expectedChainId = networkForDirectory(opts.directoryName);
   if (expectedChainId === null) {
     throw new ZacError({
-      phase: 'load',
+      phase: 'validate',
       message: `internal: networkForDirectory returned null for '${opts.directoryName}'`,
     });
   }
   if (expectedChainId !== opts.declaredChainId) {
     throw new ZacError({
-      phase: 'load',
+      phase: 'validate',
       message: `directory '${opts.directoryName}' implies chain_id ${expectedChainId} but config declares ${opts.declaredChainId}`,
     });
   }
@@ -46,7 +46,7 @@ export function checkNetwork(opts: NetworkCheckOpts): void {
   // (b) chain_id ↔ viem/chains
   if (!chainIdInViem(opts.declaredChainId)) {
     throw new ZacError({
-      phase: 'load',
+      phase: 'validate',
       message: `chain_id ${opts.declaredChainId} is not in viem/chains`,
     });
   }

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { planRoleCalls, type PlanApplyRoleFn } from '../../apply/planRoleCalls';
 import type { Generated } from '../../apply/parseGenerated';
+import { ZacError } from '../../errors';
 
 const FIXED_KEY: `0x${string}` = `0x${'a'.repeat(64)}`;
 
@@ -66,5 +67,27 @@ describe('planRoleCalls', () => {
       encodeKey: fakeEncodeKey,
     });
     expect(out).toEqual([]);
+  });
+
+  it('T11-10b: planApplyRole throwing → ZacError(phase=apply) with chainId + modifier + roleKey in message', async () => {
+    const stub: PlanApplyRoleFn = async () => {
+      throw new Error('subgraph 503');
+    };
+    try {
+      await planRoleCalls({
+        generated,
+        planApplyRole: stub,
+        encodeKey: fakeEncodeKey,
+      });
+      throw new Error('expected planRoleCalls to throw');
+    } catch (e) {
+      expect(e).toBeInstanceOf(ZacError);
+      const ze = e as ZacError;
+      expect(ze.phase).toBe('apply');
+      expect(ze.message).toContain('chainId=1');
+      expect(ze.message).toContain('0x4444444444444444444444444444444444444444');
+      expect(ze.message).toContain('roleKey=AAVE_V3');
+      expect(ze.message).toContain('subgraph 503');
+    }
   });
 });

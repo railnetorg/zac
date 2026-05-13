@@ -53,7 +53,7 @@ export function parseGenerated(path: string): Generated {
     raw = readFileSync(path, 'utf8');
   } catch {
     throw new ZacError({
-      phase: 'apply',
+      phase: 'load',
       message: `failed to read ${path}`,
       sourceLocation: { file: path },
     });
@@ -61,7 +61,7 @@ export function parseGenerated(path: string): Generated {
   const doc = parseDocument(raw);
   if (doc.errors.length > 0) {
     throw new ZacError({
-      phase: 'apply',
+      phase: 'parse',
       message: `YAML parse failed in ${path}: ${doc.errors[0]!.message}`,
       sourceLocation: { file: path },
     });
@@ -70,7 +70,7 @@ export function parseGenerated(path: string): Generated {
   if (!result.success) {
     const first = result.error.issues[0]!;
     throw new ZacError({
-      phase: 'apply',
+      phase: 'validate',
       message: `${first.path.join('.')}: ${first.message}`,
       sourceLocation: { file: path },
     });
