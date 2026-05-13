@@ -1,0 +1,10 @@
+singleton: "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb"
+
+# Markets, mirrored from railnet's morpho_blue_usdc_base.yaml.
+markets:
+  usdc_cbeth_915:
+    loan_token: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"  # USDC
+    collateral_token: "0x70654AaD8B7734dc319d0C3608ec7B32e03FA162"  # cbETH
+    oracle: "0x74Ba0b0F5D36c3Ca9B4e5E35c91EE329292398D5"
+    irm: "0x46415998764C29aB2a25CbeA6254146D50D22687"
+    lltv: "915000000000000000"

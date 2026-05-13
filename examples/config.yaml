@@ -13,3 +13,8 @@ aliases:
     tokens: ../aliases/sepolia/tokens.yaml
     safes: ./aliases/sepolia/safes.yaml
     modifiers: ./aliases/sepolia/modifiers.yaml
+  base:
+    tokens: ../aliases/base/tokens.yaml
+    morpho_blue: ../aliases/base/morpho_blue.yaml
+    safes: ./aliases/base/safes.yaml
+    modifiers: ./aliases/base/modifiers.yaml
