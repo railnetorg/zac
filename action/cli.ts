@@ -135,6 +135,26 @@ function parseBool(name: string, value: string): boolean {
 }
 
 /**
+ * Emit a one-line warning when the user explicitly passed
+ * `--revoke-unmentioned=true` in file-mode, where the flag is a no-op.
+ * Without this, the flag silently downgrades to legacy and the user has
+ * no signal that their intent was ignored. Skipped when the flag is at
+ * its default (`false`) or when the user explicitly chose `false`.
+ */
+function warnIfFileFlagNoOp(
+  command: Command,
+  optionName: 'revokeUnmentioned',
+  value: boolean,
+  inputIsFile: boolean,
+): void {
+  if (!inputIsFile || value !== true) return;
+  if (command.getOptionValueSource(optionName) !== 'cli') return;
+  process.stderr.write(
+    'WARN: --revoke-unmentioned has no effect in file-mode; pass a directory to enable per-safe-dir aggregation\n',
+  );
+}
+
+/**
  * Within each safe-dir, reject the mixed-style condition: a safe-dir must
  * contain EITHER one `<safe-address>.plan.json` (aggregated, per-modifier
  * mode) OR one-or-more `<stem>.plan.json` files matching a sibling
@@ -184,22 +204,55 @@ function assertNoMixedSafeDirPlans(planPaths: string[]): void {
  * Resolve the per-file legacy plan/apply input set. Accepts either:
  * - a `*.zac.yaml` file (single-source: we translate to its sibling
  *   generated `*.yaml`, applying the same layout validation as
- *   `findGeneratedConfigs`),
- * - a generated `*.yaml` file (already validated), or
+ *   `findGeneratedConfigs`), or
  * - a directory (walked recursively via `findGeneratedConfigs`).
+ *
+ * Generated `*.yaml` files are NOT accepted as direct input — the CLI
+ * surface is uniform across subcommands and users always pass the source
+ * `*.zac.yaml`. Passing a `*.yaml` produces a clear error suggesting the
+ * `.zac.yaml` sibling.
+ *
+ * For each resolved source, the generated sibling is `existsSync`-checked
+ * so the friendly "run `zac generate` first" error mirrors the safe-dir
+ * path's wording (see `findSafeDirs` in discover.ts).
  */
 function resolveGeneratedInputs(
   inputPath: string,
   inputIsFile: boolean,
   absInput: string,
 ): string[] {
-  if (inputIsFile && absInput.endsWith('.zac.yaml')) {
-    // Single-file mode with a source file. Validate layout via
-    // `findZacSources` (which throws on bad layout), then translate to
-    // the sibling generated `.yaml`.
-    const sources = findZacSources(absInput);
-    return sources.map(generatedPathFor);
+  if (inputIsFile) {
+    if (absInput.endsWith('.zac.yaml')) {
+      // Single-file mode with a source file. Validate layout via
+      // `findZacSources` (which throws on bad layout), then translate to
+      // the sibling generated `.yaml`.
+      const sources = findZacSources(absInput);
+      const generated = sources.map(generatedPathFor);
+      for (let i = 0; i < generated.length; i += 1) {
+        if (!existsSync(generated[i]!)) {
+          throw new ZacError({
+            phase: 'load',
+            message: `missing generated config for ${sources[i]!}; run \`zac generate\` first`,
+            sourceLocation: { file: sources[i]! },
+          });
+        }
+      }
+      return generated;
+    }
+    if (absInput.endsWith('.yaml')) {
+      // Reject generated `.yaml` direct input — uniform CLI surface.
+      const suggested = absInput.slice(0, -'.yaml'.length) + '.zac.yaml';
+      throw new ZacError({
+        phase: 'load',
+        message: `expected a source file ending in .zac.yaml (not a generated .yaml): ${absInput} — pass ${suggested} instead`,
+      });
+    }
+    // Anything else (e.g. .json, .txt) — fall through to findGeneratedConfigs
+    // which surfaces a clean phase=load error.
+    return findGeneratedConfigs(inputPath);
   }
+  // Directory mode: existence-checking of each generated sibling is handled
+  // inside `findGeneratedConfigs` (the file-mode case there is unused now).
   return findGeneratedConfigs(inputPath);
 }
 
@@ -242,53 +295,60 @@ export function buildProgram(): Command {
       (v: string) => parseBool('--revoke-unmentioned', v),
       false,
     )
-    .action(async (inputPath: string, options: { rpcUrl?: string; revokeUnmentioned: boolean }) => {
-      const { runPlan } = await import('./apply/runPlan');
-      const { runPlanForSafeDir } = await import('./apply/runPlanForSafeDir');
-      const { serializePlan } = await import('./apply/planSchema');
+    .action(
+      async (
+        inputPath: string,
+        options: { rpcUrl?: string; revokeUnmentioned: boolean },
+        command: Command,
+      ) => {
+        const { runPlan } = await import('./apply/runPlan');
+        const { runPlanForSafeDir } = await import('./apply/runPlanForSafeDir');
+        const { serializePlan } = await import('./apply/planSchema');
 
-      const absInput = isAbsolute(inputPath) ? inputPath : resolve(inputPath);
-      // Surface missing-path errors as `phase=load` (mirrors `submit`).
-      if (!existsSync(absInput)) {
-        throw new ZacError({ phase: 'load', message: `path not found: ${absInput}` });
-      }
-      const inputIsFile = statSync(absInput).isFile();
-      const useSafeDirMode = options.revokeUnmentioned && !inputIsFile;
+        const absInput = isAbsolute(inputPath) ? inputPath : resolve(inputPath);
+        // Surface missing-path errors as `phase=load` (mirrors `submit`).
+        if (!existsSync(absInput)) {
+          throw new ZacError({ phase: 'load', message: `path not found: ${absInput}` });
+        }
+        const inputIsFile = statSync(absInput).isFile();
+        warnIfFileFlagNoOp(command, 'revokeUnmentioned', options.revokeUnmentioned, inputIsFile);
+        const useSafeDirMode = options.revokeUnmentioned && !inputIsFile;
 
-      if (useSafeDirMode) {
-        const safeDirs = findSafeDirs(inputPath);
-        const { ok } = await runSafeDirBatch(safeDirs, 'plan', async (sd) => {
-          const planOpts: Parameters<typeof runPlanForSafeDir>[0] = { safeDir: sd };
+        if (useSafeDirMode) {
+          const safeDirs = findSafeDirs(inputPath);
+          const { ok } = await runSafeDirBatch(safeDirs, 'plan', async (sd) => {
+            const planOpts: Parameters<typeof runPlanForSafeDir>[0] = { safeDir: sd };
+            if (options.rpcUrl !== undefined) planOpts.rpcUrl = options.rpcUrl;
+            const plan = await runPlanForSafeDir(planOpts);
+            const json = serializePlan(plan);
+            const outPath = safeDirPlanPathFor(sd);
+            writeFileSync(outPath, json);
+            process.stdout.write(`planned: ${displayPath(outPath)}\n`);
+          });
+          if (!ok) {
+            throw new ZacError({ phase: 'apply', message: 'one or more plan steps failed' });
+          }
+          return;
+        }
+
+        // Legacy per-file flow: file mode always; directory mode when
+        // `--revoke-unmentioned=false`. Accept either a `*.zac.yaml` (we
+        // translate to its sibling generated `*.yaml`) or a directory.
+        const generated = resolveGeneratedInputs(inputPath, inputIsFile, absInput);
+        const { ok } = await runBatch(generated, 'plan', async (genPath) => {
+          const planOpts: Parameters<typeof runPlan>[0] = { generatedPath: genPath };
           if (options.rpcUrl !== undefined) planOpts.rpcUrl = options.rpcUrl;
-          const plan = await runPlanForSafeDir(planOpts);
+          const plan = await runPlan(planOpts);
           const json = serializePlan(plan);
-          const outPath = safeDirPlanPathFor(sd);
+          const outPath = planPathFor(genPath);
           writeFileSync(outPath, json);
           process.stdout.write(`planned: ${displayPath(outPath)}\n`);
         });
         if (!ok) {
           throw new ZacError({ phase: 'apply', message: 'one or more plan steps failed' });
         }
-        return;
-      }
-
-      // Legacy per-file flow: file mode always; directory mode when
-      // `--revoke-unmentioned=false`. Accept either a `*.zac.yaml` (we
-      // translate to its sibling generated `*.yaml`) or a directory.
-      const generated = resolveGeneratedInputs(inputPath, inputIsFile, absInput);
-      const { ok } = await runBatch(generated, 'plan', async (genPath) => {
-        const planOpts: Parameters<typeof runPlan>[0] = { generatedPath: genPath };
-        if (options.rpcUrl !== undefined) planOpts.rpcUrl = options.rpcUrl;
-        const plan = await runPlan(planOpts);
-        const json = serializePlan(plan);
-        const outPath = planPathFor(genPath);
-        writeFileSync(outPath, json);
-        process.stdout.write(`planned: ${displayPath(outPath)}\n`);
-      });
-      if (!ok) {
-        throw new ZacError({ phase: 'apply', message: 'one or more plan steps failed' });
-      }
-    });
+      },
+    );
 
   program
     .command('submit <path>')
@@ -380,45 +440,71 @@ export function buildProgram(): Command {
       (v: string) => parseBool('--revoke-unmentioned', v),
       false,
     )
-    .action(async (inputPath: string, options: { rpcUrl?: string; revokeUnmentioned: boolean }) => {
-      const { runApply } = await import('./apply/runApply');
-      const { runApplyForSafeDir } = await import('./apply/runApplyForSafeDir');
+    .action(
+      async (
+        inputPath: string,
+        options: { rpcUrl?: string; revokeUnmentioned: boolean },
+        command: Command,
+      ) => {
+        const { runApply } = await import('./apply/runApply');
+        const { runApplyForSafeDir } = await import('./apply/runApplyForSafeDir');
 
-      const absInput = isAbsolute(inputPath) ? inputPath : resolve(inputPath);
-      if (!existsSync(absInput)) {
-        throw new ZacError({ phase: 'load', message: `path not found: ${absInput}` });
-      }
-      const inputIsFile = statSync(absInput).isFile();
-      const useSafeDirMode = options.revokeUnmentioned && !inputIsFile;
+        // Pre-validate the proposer key once, before any batch starts.
+        // Without this, N safe-dirs / N sources would each surface their own
+        // copy of the same error.
+        const proposerKey = process.env['ZAC_PROPOSER_PRIVATE_KEY'] as `0x${string}` | undefined;
+        if (proposerKey === undefined) {
+          throw new ZacError({
+            phase: 'apply',
+            message: 'ZAC_PROPOSER_PRIVATE_KEY env var is required for apply',
+          });
+        }
 
-      if (useSafeDirMode) {
-        const safeDirs = findSafeDirs(inputPath);
-        const { ok } = await runSafeDirBatch(safeDirs, 'apply', async (sd) => {
-          const applyOpts: Parameters<typeof runApplyForSafeDir>[0] = { safeDir: sd };
+        const absInput = isAbsolute(inputPath) ? inputPath : resolve(inputPath);
+        if (!existsSync(absInput)) {
+          throw new ZacError({ phase: 'load', message: `path not found: ${absInput}` });
+        }
+        const inputIsFile = statSync(absInput).isFile();
+        warnIfFileFlagNoOp(command, 'revokeUnmentioned', options.revokeUnmentioned, inputIsFile);
+        const useSafeDirMode = options.revokeUnmentioned && !inputIsFile;
+
+        if (useSafeDirMode) {
+          const safeDirs = findSafeDirs(inputPath);
+          const { ok } = await runSafeDirBatch(safeDirs, 'apply', async (sd) => {
+            const applyOpts: Parameters<typeof runApplyForSafeDir>[0] = {
+              safeDir: sd,
+              proposerPrivateKey: proposerKey,
+            };
+            if (options.rpcUrl !== undefined) applyOpts.rpcUrl = options.rpcUrl;
+            const result = await runApplyForSafeDir(applyOpts);
+            process.stdout.write(
+              `applied safe=${sd.safeAddress} chain=${sd.chainId} (${sd.sources.length} source${sd.sources.length === 1 ? '' : 's'}): safeTxHash ${result.safeTxHash}\n`,
+            );
+          });
+          if (!ok) {
+            throw new ZacError({ phase: 'apply', message: 'one or more apply steps failed' });
+          }
+          return;
+        }
+
+        // Legacy per-file flow.
+        const generated = resolveGeneratedInputs(inputPath, inputIsFile, absInput);
+        const { ok } = await runBatch(generated, 'apply', async (genPath) => {
+          const applyOpts: Parameters<typeof runApply>[0] = {
+            generatedPath: genPath,
+            proposerPrivateKey: proposerKey,
+          };
           if (options.rpcUrl !== undefined) applyOpts.rpcUrl = options.rpcUrl;
-          const result = await runApplyForSafeDir(applyOpts);
+          const result = await runApply(applyOpts);
           process.stdout.write(
-            `applied safe=${sd.safeAddress} chain=${sd.chainId} (${sd.sources.length} source${sd.sources.length === 1 ? '' : 's'}): safeTxHash ${result.safeTxHash}\n`,
+            `applied ${displayPath(genPath)}: safeTxHash ${result.safeTxHash}\n`,
           );
         });
         if (!ok) {
           throw new ZacError({ phase: 'apply', message: 'one or more apply steps failed' });
         }
-        return;
-      }
-
-      // Legacy per-file flow.
-      const generated = resolveGeneratedInputs(inputPath, inputIsFile, absInput);
-      const { ok } = await runBatch(generated, 'apply', async (genPath) => {
-        const applyOpts: Parameters<typeof runApply>[0] = { generatedPath: genPath };
-        if (options.rpcUrl !== undefined) applyOpts.rpcUrl = options.rpcUrl;
-        const result = await runApply(applyOpts);
-        process.stdout.write(`applied ${displayPath(genPath)}: safeTxHash ${result.safeTxHash}\n`);
-      });
-      if (!ok) {
-        throw new ZacError({ phase: 'apply', message: 'one or more apply steps failed' });
-      }
-    });
+      },
+    );
 
   return program;
 }
