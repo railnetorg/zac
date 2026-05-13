@@ -16,7 +16,7 @@ The `generate` command runs five phases, fail-fast:
 
 ## Apply pipeline (`apply/`)
 
-The `apply <path>` command has two flows, gated by `--revoke-unmentioned` (default `false`):
+The `apply <path>` command has two flows, gated by `--revoke-unmentioned` (default: `false`):
 
 - **Legacy per-file (default)**: `runApply` parses one generated YAML at a time and calls `planApplyRole` from `zodiac-roles-sdk` for each role key. No revokes emitted; roles not declared in any source are left untouched on the modifier.
 - **Per-modifier**: with `--revoke-unmentioned=true` in directory mode, `findSafeDirs` groups sibling `*.zac.yaml` files under each `<network>/<safe-address>/` dir; `runPlanForSafeDir` aggregates the union of role keys and hands them to `zodiac-roles-sdk`'s `planApply` (which natively emits revoke calls for any role on the modifier not in the aggregated set, by diffing against the Zodiac subgraph). One Safe transaction per safe-dir.
