@@ -2,7 +2,7 @@ name: zac
 description: Generate Zodiac Roles V2 configs from `*.zac.yaml` sources
 inputs:
   config-path:
-    description: Path to a `.zac.yaml` source file or a directory of sources (walked recursively). Generated `.yaml` files are written alongside each source.
+    description: Path to a `.zac.yaml` source file or a directory of sources (walked recursively). Generated `.yaml` files are written under each safe's `zac-out/` subdir (sources live at `<network>/<safe-address>/config/<name>.zac.yaml`).
     required: true
 runs:
   using: composite

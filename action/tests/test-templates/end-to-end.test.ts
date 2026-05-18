@@ -12,11 +12,11 @@ const REPO_ROOT = resolve(__dirname, '../../..');
 const CLI = resolve(REPO_ROOT, 'action/cli.ts');
 const EXAMPLE = resolve(
   REPO_ROOT,
-  'examples/mainnet/0x3333333333333333333333333333333333333333/aave_safe.zac.yaml',
+  'examples/mainnet/0x3333333333333333333333333333333333333333/config/aave_safe.zac.yaml',
 );
 const GENERATED = resolve(
   REPO_ROOT,
-  'examples/mainnet/0x3333333333333333333333333333333333333333/aave_safe.yaml',
+  'examples/mainnet/0x3333333333333333333333333333333333333333/zac-out/aave_safe.yaml',
 );
 
 function cleanGenerated(): void {
@@ -26,7 +26,7 @@ function cleanGenerated(): void {
 describe('end-to-end AAVE V3', () => {
   afterEach(cleanGenerated);
 
-  it('T9-7: cli generate exits 0 and writes alongside', async () => {
+  it('T9-7: cli generate exits 0 and writes under `zac-out/`', async () => {
     const { stdout } = await execFileP('bun', [CLI, 'generate', EXAMPLE]);
     expect(stdout).toContain('generated:');
     expect(existsSync(GENERATED)).toBe(true);

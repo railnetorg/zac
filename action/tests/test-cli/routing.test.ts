@@ -41,28 +41,28 @@ async function runCli(args: string[], env: NodeJS.ProcessEnv = {}): Promise<CliR
 
 /**
  * Plant a layout that violates the strict
- * `<network>/<safe-address>/<name>.zac.yaml` convention: the source lives
- * directly under `<network>/` (the old, pre-refactor layout). This lets us
- * verify which code path the CLI takes:
+ * `<network>/<safe-address>/config/<name>.zac.yaml` convention: the
+ * source lives directly under a `<network>/<safe-address>/` dir but NOT
+ * inside a `config/` subdir (the old, pre-tri-folder layout). This lets
+ * us verify which code path the CLI takes:
  *
- * - `findSafeDirs` (safe-dir mode, `--revoke-unmentioned=true`) throws
- *   `phase=validate` on the parent-dir layout check.
- * - `findGeneratedConfigs` (legacy mode, default `--revoke-unmentioned=false`) is
- *   layout-aware as well — both modes apply the same strict layout. So we
- *   verify the FLAG sources both go through layout validation by asserting
- *   `phase=validate` either way; the routing distinction surfaces in the
- *   error wording.
+ * - file-mode: layout validation fires immediately (`phase=validate`).
+ * - dir-mode (default and `--revoke-unmentioned=true`): the walker
+ *   silently skips sources outside `config/`, so the run surfaces an
+ *   empty-batch "no matching files found" stderr; the file is treated as
+ *   if it weren't there.
  */
 function plantOldLayout(): string {
   const root = makeTempDir();
-  const dir = join(root, 'mainnet');
+  const safe = '0x3333333333333333333333333333333333333333';
+  const dir = join(root, 'mainnet', safe);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'foo.zac.yaml'), '# x\n');
   writeFileSync(
     join(dir, 'foo.yaml'),
     `deployment:
   chain_id: 1
-  safe_address: "0x3333333333333333333333333333333333333333"
+  safe_address: "${safe}"
   roles_modifier_address: "0x4444444444444444444444444444444444444444"
 roles: {}
 `,
@@ -71,30 +71,30 @@ roles: {}
 }
 
 describe('cli routing (dir vs file, --revoke-unmentioned)', () => {
-  it('TS-40: dir-mode with `--revoke-unmentioned=true` rejects pre-refactor layout (`<network>/<file>.zac.yaml`) with `phase=validate`', async () => {
+  it('TS-40: dir-mode with `--revoke-unmentioned=true` SILENTLY SKIPS sources outside `config/` (walker filter); the batch surfaces "no matching files found"', async () => {
     const root = plantOldLayout();
     const { code, stderr } = await runCli(['plan', '--revoke-unmentioned', 'true', root]);
     expect(code).not.toBe(0);
-    expect(stderr).toContain('phase=validate');
-    expect(stderr).toMatch(/<network>\/<safe-address>\/<name>\.zac\.yaml layout/);
+    expect(stderr).toContain('no matching files found');
   });
 
-  it('TS-41: dir-mode with default flag (legacy mode) ALSO rejects the pre-refactor layout (same strict layout applies)', async () => {
+  it('TS-41: dir-mode with default flag (legacy mode) ALSO silently skips sources outside `config/`', async () => {
     const root = plantOldLayout();
     const { code, stderr } = await runCli(['plan', root]);
     expect(code).not.toBe(0);
-    // The legacy path goes through `findGeneratedConfigs`, which calls the
-    // same layout validator.
-    expect(stderr).toContain('phase=validate');
+    // The legacy walker goes through `findGeneratedConfigs`, which only
+    // surfaces `*.yaml` under `zac-out/` — none here.
+    expect(stderr).toContain('no matching files found');
   });
 
-  it('TS-42: file-mode honors the layout regardless of flag value', async () => {
+  it('TS-42: file-mode HARD-ERRORS on the pre-refactor layout regardless of flag value', async () => {
     const root = plantOldLayout();
-    const src = resolve(root, 'mainnet/foo.zac.yaml');
+    const src = resolve(root, 'mainnet/0x3333333333333333333333333333333333333333/foo.zac.yaml');
     for (const flag of ['true', 'false']) {
       const { code, stderr } = await runCli(['plan', '--revoke-unmentioned', flag, src]);
       expect(code).not.toBe(0);
       expect(stderr).toContain('phase=validate');
+      expect(stderr).toMatch(/config\/<name>\.zac\.yaml layout/);
     }
   });
 });

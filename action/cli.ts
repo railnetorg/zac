@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { Command } from 'commander';
-import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
 import { ZacError, formatError } from './errors';
 import {
@@ -12,6 +12,7 @@ import {
   groupPlansBySafe,
   planPathFor,
   safeDirPlanPathFor,
+  sourcePathFor,
   type PlanGroup,
   type SafeDir,
 } from './discover';
@@ -60,10 +61,10 @@ async function loadDiffSdk(): Promise<{
 function declaredRoleKeysForSafeDir(sd: SafeDir): Set<string> {
   const out = new Set<string>();
   for (const src of sd.sources) {
-    // `findSafeDirs` already validated every source's generated sibling
+    // `findSafeDirs` already validated every source's generated companion
     // exists and parses — re-parsing here is cheap (one file per source)
     // and avoids threading a new return field through the runners.
-    const genPath = src.slice(0, -'.zac.yaml'.length) + '.yaml';
+    const genPath = generatedPathFor(src);
     try {
       const parsed = parseGenerated(genPath);
       for (const key of Object.keys(parsed.roles)) out.add(key);
@@ -200,20 +201,20 @@ function warnIfFileFlagNoOp(
 }
 
 /**
- * Within each safe-dir, reject the mixed-style condition: a safe-dir must
- * contain EITHER one `<safe-address>.plan.json` (aggregated, per-modifier
- * mode) OR one-or-more `<stem>.plan.json` files matching a sibling
- * `<stem>.zac.yaml` (legacy per-file mode) — never both. This catches the
- * case where the user runs `plan` once with each flag value and the
- * resulting plan files coexist; bundling both styles would duplicate
- * calls in the proposed Safe transaction.
+ * Within each safe-dir, reject the mixed-style condition: a `txs/` dir
+ * must contain EITHER one `<safe-address>.plan.json` (aggregated,
+ * per-modifier mode) OR one-or-more `<stem>.plan.json` files matching a
+ * sibling `../config/<stem>.zac.yaml` (legacy per-file mode) — never
+ * both. This catches the case where the user runs `plan` once with each
+ * flag value and the resulting plan files coexist; bundling both styles
+ * would duplicate calls in the proposed Safe transaction.
  *
  * Plan files outside both classifications (e.g. orphan `<stem>.plan.json`
- * with no sibling `<stem>.zac.yaml`) are ignored — they predate or
- * post-date the current source set and are not part of the mix check.
+ * with no sibling `../config/<stem>.zac.yaml`) are ignored — they predate
+ * or post-date the current source set and are not part of the mix check.
  */
 function assertNoMixedSafeDirPlans(planPaths: string[]): void {
-  // Group plan paths by their parent dir.
+  // Group plan paths by their parent `txs/` dir.
   const byDir = new Map<string, string[]>();
   for (const p of planPaths) {
     const dir = dirname(p);
@@ -221,8 +222,10 @@ function assertNoMixedSafeDirPlans(planPaths: string[]): void {
     if (list === undefined) byDir.set(dir, [p]);
     else list.push(p);
   }
-  for (const [dir, paths] of byDir) {
-    const dirAddrLower = basename(dir).toLowerCase();
+  for (const [txsDir, paths] of byDir) {
+    // The safe-address dir is the parent of the `txs/` dir.
+    const safeDir = dirname(txsDir);
+    const dirAddrLower = basename(safeDir).toLowerCase();
     let hasAggregated = false;
     const perFileStems: string[] = [];
     for (const p of paths) {
@@ -231,7 +234,7 @@ function assertNoMixedSafeDirPlans(planPaths: string[]): void {
         hasAggregated = true;
         continue;
       }
-      const sibling = resolve(dir, `${stem}.zac.yaml`);
+      const sibling = resolve(safeDir, 'config', `${stem}.zac.yaml`);
       if (existsSync(sibling)) {
         perFileStems.push(stem);
       }
@@ -239,7 +242,7 @@ function assertNoMixedSafeDirPlans(planPaths: string[]): void {
     if (hasAggregated && perFileStems.length > 0) {
       throw new ZacError({
         phase: 'apply',
-        message: `safe-dir ${dir} contains BOTH legacy per-file plan(s) (${perFileStems.map((s) => `${s}.plan.json`).join(', ')}) AND an aggregated plan (${dirAddrLower}.plan.json); these are mutually exclusive — delete one set or re-run plan with the desired mode`,
+        message: `safe-dir ${safeDir} contains BOTH legacy per-file plan(s) (${perFileStems.map((s) => `${s}.plan.json`).join(', ')}) AND an aggregated plan (${dirAddrLower}.plan.json); these are mutually exclusive — delete one set or re-run plan with the desired mode`,
       });
     }
   }
@@ -285,8 +288,16 @@ function resolveGeneratedInputs(
       return generated;
     }
     if (absInput.endsWith('.yaml')) {
-      // Reject generated `.yaml` direct input — uniform CLI surface.
-      const suggested = absInput.slice(0, -'.yaml'.length) + '.zac.yaml';
+      // Reject generated `.yaml` direct input — uniform CLI surface. Hint
+      // at the `config/` sibling rather than literally swapping suffixes,
+      // since the source lives under `config/` and the generated under
+      // `zac-out/`.
+      let suggested: string;
+      try {
+        suggested = sourcePathFor(absInput);
+      } catch {
+        suggested = absInput.slice(0, -'.yaml'.length) + '.zac.yaml';
+      }
       throw new ZacError({
         phase: 'load',
         message: `expected a source file ending in .zac.yaml (not a generated .yaml): ${absInput} — pass ${suggested} instead`,
@@ -308,7 +319,7 @@ export function buildProgram(): Command {
   program
     .command('generate <path>')
     .description(
-      'generate Zodiac Roles V2 configs from `*.zac.yaml` sources; <path> is a file or directory (walked recursively). Output is written alongside each source as `<stem>.yaml`. Sources must live at `<network>/<safe-address>/<name>.zac.yaml`.',
+      'generate Zodiac Roles V2 configs from `*.zac.yaml` sources; <path> is a file or directory (walked recursively). Output is written under `<network>/<safe-address>/zac-out/<stem>.yaml`. Sources must live at `<network>/<safe-address>/config/<name>.zac.yaml`.',
     )
     .option('--config <path>', 'override path to root config.yaml (default: walk up)')
     .action(async (inputPath: string, options: { config?: string }) => {
@@ -328,7 +339,7 @@ export function buildProgram(): Command {
   program
     .command('plan <path>')
     .description(
-      "compute role-state-update calls + Safe TX hash; output as JSON (no signing, no posting). <path> is a `*.zac.yaml` file or a directory (walked recursively — sources must live at `<network>/<safe-address>/<name>.zac.yaml`). By default (`--revoke-unmentioned=false`), each source produces a per-file `<stem>.plan.json` via `planApplyRole` with no revokes. With `--revoke-unmentioned=true` in directory mode, plans are aggregated per safe-dir and the SDK's `planApply` emits revoke calls for any role on the modifier not in the aggregated set; output is `<safe-address>.plan.json` inside each safe-dir. RPC URL is resolved per-chainId via `<NETWORK>_RPC_URL` (e.g. `MAINNET_RPC_URL`, `BASE_RPC_URL`), falling back to `RPC_URL`.",
+      "compute role-state-update calls + Safe TX hash; output as JSON (no signing, no posting). <path> is a `*.zac.yaml` file or a directory (walked recursively — sources must live at `<network>/<safe-address>/config/<name>.zac.yaml`). By default (`--revoke-unmentioned=false`), each source produces a per-file `<stem>.plan.json` under the safe's `txs/` subdir via `planApplyRole` with no revokes. With `--revoke-unmentioned=true` in directory mode, plans are aggregated per safe-dir and the SDK's `planApply` emits revoke calls for any role on the modifier not in the aggregated set; output is `txs/<safe-address>.plan.json` inside each safe-dir. RPC URL is resolved per-chainId via `<NETWORK>_RPC_URL` (e.g. `MAINNET_RPC_URL`, `BASE_RPC_URL`), falling back to `RPC_URL`.",
     )
     .option(
       '--rpc-url <url>',
@@ -375,6 +386,7 @@ export function buildProgram(): Command {
             }
             const json = serializePlan(plan);
             const outPath = safeDirPlanPathFor(sd);
+            mkdirSync(dirname(outPath), { recursive: true });
             writeFileSync(outPath, json);
             printPlanDiff(plan, {
               planPath: displayPath(outPath),
@@ -405,6 +417,7 @@ export function buildProgram(): Command {
           }
           const json = serializePlan(plan);
           const outPath = planPathFor(genPath);
+          mkdirSync(dirname(outPath), { recursive: true });
           writeFileSync(outPath, json);
           printPlanDiff(plan, { planPath: displayPath(outPath), sdk });
           process.stdout.write(`planned: ${displayPath(outPath)}\n`);
@@ -493,7 +506,7 @@ export function buildProgram(): Command {
   program
     .command('apply <path>')
     .description(
-      'propose role state updates as Safe transactions (signed by ZAC_PROPOSER_PRIVATE_KEY env var; optional SAFE_API_KEY). <path> is a `*.zac.yaml` file or a directory (walked recursively — sources must live at `<network>/<safe-address>/<name>.zac.yaml`). By default (`--revoke-unmentioned=false`), each source proposes its own per-role transaction via `planApplyRole`. With `--revoke-unmentioned=true` in directory mode, one Safe transaction per safe-dir aggregates all sources via `planApply` (revoking any unmentioned role). RPC URL is resolved per-chainId via `<NETWORK>_RPC_URL` (e.g. `MAINNET_RPC_URL`, `BASE_RPC_URL`), falling back to `RPC_URL`.',
+      'propose role state updates as Safe transactions (signed by ZAC_PROPOSER_PRIVATE_KEY env var; optional SAFE_API_KEY). <path> is a `*.zac.yaml` file or a directory (walked recursively — sources must live at `<network>/<safe-address>/config/<name>.zac.yaml`). By default (`--revoke-unmentioned=false`), each source proposes its own per-role transaction via `planApplyRole`. With `--revoke-unmentioned=true` in directory mode, one Safe transaction per safe-dir aggregates all sources via `planApply` (revoking any unmentioned role). RPC URL is resolved per-chainId via `<NETWORK>_RPC_URL` (e.g. `MAINNET_RPC_URL`, `BASE_RPC_URL`), falling back to `RPC_URL`.',
     )
     .option(
       '--rpc-url <url>',

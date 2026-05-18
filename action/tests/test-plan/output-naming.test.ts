@@ -32,14 +32,19 @@ const MOD_A = '0x4444444444444444444444444444444444444444';
 function plantTwoSourceSafeDir(): { root: string; safeDir: string } {
   const root = makeTempDir();
   const dir = join(root, 'mainnet', SAFE_A);
-  mkdirSync(dir, { recursive: true });
+  const configDir = join(dir, 'config');
+  const genDir = join(dir, 'zac-out');
+  const txsDir = join(dir, 'txs');
+  mkdirSync(configDir, { recursive: true });
+  mkdirSync(genDir, { recursive: true });
+  mkdirSync(txsDir, { recursive: true });
   for (const [name, key] of [
     ['a', 'ALPHA'],
     ['b', 'BRAVO'],
   ]) {
-    writeFileSync(join(dir, `${name}.zac.yaml`), '# x\n');
+    writeFileSync(join(configDir, `${name}.zac.yaml`), '# x\n');
     writeFileSync(
-      join(dir, `${name}.yaml`),
+      join(genDir, `${name}.yaml`),
       `deployment:
   chain_id: 1
   safe_address: "${SAFE_A}"
@@ -78,7 +83,7 @@ function safeInitStub() {
 }
 
 describe('plan output naming', () => {
-  it('TS-30: per-safe-dir plan path uses lowercased safe address', () => {
+  it('TS-30: per-safe-dir plan path uses lowercased safe address (under `txs/`)', () => {
     const path = safeDirPlanPathFor({
       dirPath: '/configs/mainnet/0xAaaaAaAaaAAAAaAAAAAAaaAaAaaAaaaAaaaAAAaA',
       safeAddress: '0xAaaaAaAaaAAAAaAAAAAAaaAaAaaAaaaAaaaAAAaA',
@@ -86,6 +91,7 @@ describe('plan output naming', () => {
     expect(path).toBe(
       join(
         '/configs/mainnet/0xAaaaAaAaaAAAAaAAAAAAaaAaAaaAaaaAaaaAAAaA',
+        'txs',
         '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.plan.json',
       ),
     );
@@ -96,14 +102,14 @@ describe('plan output naming', () => {
       dirPath: '/tmp/x/y',
       safeAddress: '0xBBbbbbBBbbbbbbBBbBBBbBBbbbbbBbBbBbbbBbBb',
     });
-    expect(path.endsWith('/0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.plan.json')).toBe(true);
+    expect(path.endsWith('/txs/0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.plan.json')).toBe(true);
   });
 
-  it('TS-32: per-file (legacy) plan path is `<stem>.plan.json` next to the generated file', () => {
-    expect(planPathFor('/x/y/aave_safe.yaml')).toBe('/x/y/aave_safe.plan.json');
+  it('TS-32: per-file (legacy) plan path is `<safe>/txs/<stem>.plan.json` (sibling of `zac-out/<stem>.yaml`)', () => {
+    expect(planPathFor('/x/y/zac-out/aave_safe.yaml')).toBe('/x/y/txs/aave_safe.plan.json');
   });
 
-  it('TS-33: dir-mode default (safe-dir) — one plan file per safe-dir, named `<safe-addr>.plan.json`', async () => {
+  it('TS-33: dir-mode default (safe-dir) — one plan file per safe-dir, written as `txs/<safe-addr>.plan.json`', async () => {
     const { root, safeDir } = plantTwoSourceSafeDir();
     const safeDirs = findSafeDirs(root);
     expect(safeDirs).toHaveLength(1);
@@ -120,11 +126,11 @@ describe('plan output naming', () => {
     expect(plan).not.toBeNull();
     const outPath = safeDirPlanPathFor(safeDirs[0]!);
     writeFileSync(outPath, serializePlan(plan!));
-    // Exactly one plan file, named by lowercased safe address.
-    expect(outPath).toBe(join(safeDir, `${SAFE_A.toLowerCase()}.plan.json`));
+    // Exactly one plan file, under `txs/`, named by lowercased safe address.
+    expect(outPath).toBe(join(safeDir, 'txs', `${SAFE_A.toLowerCase()}.plan.json`));
   });
 
-  it('TS-34: dir-mode legacy (per-file) — one plan file per source, named `<stem>.plan.json`', async () => {
+  it('TS-34: dir-mode legacy (per-file) — one plan file per source, written under `txs/<stem>.plan.json`', async () => {
     const { root, safeDir } = plantTwoSourceSafeDir();
     const generated = findGeneratedConfigs(root);
     expect(generated).toHaveLength(2);
@@ -145,18 +151,18 @@ describe('plan output naming', () => {
       writeFileSync(outPath, serializePlan(plan!));
       outPaths.push(outPath);
     }
-    // Two distinct plan files, one per source stem.
+    // Two distinct plan files, one per source stem, all under `txs/`.
     expect(outPaths.sort()).toEqual(
-      [join(safeDir, 'a.plan.json'), join(safeDir, 'b.plan.json')].sort(),
+      [join(safeDir, 'txs', 'a.plan.json'), join(safeDir, 'txs', 'b.plan.json')].sort(),
     );
   });
 
-  it('TS-35: dir-mode legacy across 2 safe-dirs × 2 sources — 4 <stem>.plan.json, no <safe-addr>.plan.json, planApplyRole called once per source', async () => {
+  it('TS-35: dir-mode legacy across 2 safe-dirs × 2 sources — 4 <stem>.plan.json under each `txs/`, no <safe-addr>.plan.json, planApplyRole called once per source', async () => {
     // Mirrors what `bun cli plan <root>` does with default flags: walk the
     // root, call legacy runPlan on each generated YAML, write each plan
-    // alongside as <stem>.plan.json. Two safes × two sources = 4 plans
-    // total; the per-modifier aggregated <safe-addr>.plan.json should NOT
-    // appear anywhere.
+    // under the safe's `txs/` as <stem>.plan.json. Two safes × two
+    // sources = 4 plans total; the per-modifier aggregated
+    // <safe-addr>.plan.json should NOT appear anywhere.
     const root = makeTempDir();
     const safes = [
       '0x3333333333333333333333333333333333333333',
@@ -165,15 +171,20 @@ describe('plan output naming', () => {
     const dirs: string[] = [];
     for (const safe of safes) {
       const dir = join(root, 'mainnet', safe);
-      mkdirSync(dir, { recursive: true });
+      const configDir = join(dir, 'config');
+      const genDir = join(dir, 'zac-out');
+      const txsDir = join(dir, 'txs');
+      mkdirSync(configDir, { recursive: true });
+      mkdirSync(genDir, { recursive: true });
+      mkdirSync(txsDir, { recursive: true });
       dirs.push(dir);
       for (const [stem, key] of [
         ['a', 'ALPHA'],
         ['b', 'BRAVO'],
       ]) {
-        writeFileSync(join(dir, `${stem}.zac.yaml`), '# x\n');
+        writeFileSync(join(configDir, `${stem}.zac.yaml`), '# x\n');
         writeFileSync(
-          join(dir, `${stem}.yaml`),
+          join(genDir, `${stem}.yaml`),
           `deployment:
   chain_id: 1
   safe_address: "${safe}"
@@ -213,16 +224,16 @@ roles:
     // (a) 4 <stem>.plan.json files at the right locations.
     expect(outPaths.sort()).toEqual(
       [
-        join(dirs[0]!, 'a.plan.json'),
-        join(dirs[0]!, 'b.plan.json'),
-        join(dirs[1]!, 'a.plan.json'),
-        join(dirs[1]!, 'b.plan.json'),
+        join(dirs[0]!, 'txs', 'a.plan.json'),
+        join(dirs[0]!, 'txs', 'b.plan.json'),
+        join(dirs[1]!, 'txs', 'a.plan.json'),
+        join(dirs[1]!, 'txs', 'b.plan.json'),
       ].sort(),
     );
     // (b) no per-modifier <safe-addr>.plan.json was written.
     for (const safe of safes) {
       const dir = join(root, 'mainnet', safe);
-      expect(existsSync(join(dir, `${safe}.plan.json`))).toBe(false);
+      expect(existsSync(join(dir, 'txs', `${safe}.plan.json`))).toBe(false);
     }
   });
 });

@@ -8,14 +8,14 @@ const REPO_ROOT = resolve(__dirname, '../../..');
 
 describe('examples path resolution', () => {
   it('T9-6: alias paths in examples/config.yaml resolve to existing files', () => {
-    // walk-up from examples/mainnet/<safe-addr>/aave_safe.zac.yaml finds
-    // examples/config.yaml.
+    // walk-up from examples/mainnet/<safe-addr>/config/aave_safe.zac.yaml
+    // finds examples/config.yaml.
     expect(existsSync(resolve(REPO_ROOT, 'examples/config.yaml'))).toBe(true);
     expect(
       existsSync(
         resolve(
           REPO_ROOT,
-          'examples/mainnet/0x3333333333333333333333333333333333333333/aave_safe.zac.yaml',
+          'examples/mainnet/0x3333333333333333333333333333333333333333/config/aave_safe.zac.yaml',
         ),
       ),
     ).toBe(true);
