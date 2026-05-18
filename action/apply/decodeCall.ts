@@ -59,8 +59,12 @@ const ERC20_SELECTOR_NAMES: Record<string, string> = {
   '0x23b872dd': 'transferFrom',
 };
 
-function lookupFnName(selector: string): string | undefined {
-  return ERC20_SELECTOR_NAMES[selector.toLowerCase()];
+function lookupFnName(
+  selector: string,
+  extraSelectors?: Record<string, string>,
+): string | undefined {
+  const key = selector.toLowerCase();
+  return extraSelectors?.[key] ?? ERC20_SELECTOR_NAMES[key];
 }
 
 function safeDecodeKey(sdk: DecodeSdk, raw: `0x${string}`): string {
@@ -82,7 +86,11 @@ function safeDecodeKey(sdk: DecodeSdk, raw: `0x${string}`): string {
  * re-implementing ABI offsets. Calldata shorter than 4 bytes is treated
  * as unknown.
  */
-export function decodeCall(call: PlanCall, sdk: DecodeSdk): DecodedCall {
+export function decodeCall(
+  call: PlanCall,
+  sdk: DecodeSdk,
+  extraSelectors?: Record<string, string>,
+): DecodedCall {
   const data = call.data;
   if (data.length < 10) {
     // Too short to extract a 4-byte selector — pad to bytes4 so the
@@ -127,7 +135,7 @@ export function decodeCall(call: PlanCall, sdk: DecodeSdk): DecodedCall {
       const roleKey = safeDecodeKey(sdk, args[0] as `0x${string}`);
       const target = args[1] as `0x${string}`;
       const fnSelector = args[2] as `0x${string}`;
-      const fnName = lookupFnName(fnSelector);
+      const fnName = lookupFnName(fnSelector, extraSelectors);
       const out: DecodedCall = { kind: name, roleKey, target, fnSelector };
       if (fnName !== undefined) out.fnName = fnName;
       return out;

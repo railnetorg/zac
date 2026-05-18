@@ -75,6 +75,28 @@ function declaredRoleKeysForSafeDir(sd: SafeDir): Set<string> {
   return out;
 }
 
+/**
+ * Build a selector → function-name map from the generated sibling(s) of
+ * the given source paths. Used by `printPlanDiff` to annotate
+ * `scopeFunction` / `revokeFunction` calls with the user's own function
+ * names beyond the built-in ERC20 catalog. Parse failures are skipped
+ * silently (the printer falls back to raw hex for unknown selectors).
+ */
+function buildSelectorMapForSources(
+  sources: string[],
+  buildMap: typeof import('./apply/buildSelectorMap').buildSelectorMap,
+): Record<string, string> {
+  const generatedList = [];
+  for (const src of sources) {
+    try {
+      generatedList.push(parseGenerated(generatedPathFor(src)));
+    } catch {
+      // best-effort
+    }
+  }
+  return buildMap(generatedList);
+}
+
 interface BatchOutcome {
   ok: boolean;
 }
@@ -361,6 +383,7 @@ export function buildProgram(): Command {
         const { runPlanForSafeDir } = await import('./apply/runPlanForSafeDir');
         const { serializePlan } = await import('./apply/planSchema');
         const { printPlanDiff } = await import('./apply/printPlanDiff');
+        const { buildSelectorMap } = await import('./apply/buildSelectorMap');
         const sdk = await loadDiffSdk();
 
         const absInput = isAbsolute(inputPath) ? inputPath : resolve(inputPath);
@@ -391,6 +414,7 @@ export function buildProgram(): Command {
             printPlanDiff(plan, {
               planPath: displayPath(outPath),
               declaredRoleKeys: declaredRoleKeysForSafeDir(sd),
+              selectorMap: buildSelectorMapForSources(sd.sources, buildSelectorMap),
               sdk,
             });
             process.stdout.write(`planned: ${displayPath(outPath)}\n`);
@@ -419,7 +443,11 @@ export function buildProgram(): Command {
           const outPath = planPathFor(genPath);
           mkdirSync(dirname(outPath), { recursive: true });
           writeFileSync(outPath, json);
-          printPlanDiff(plan, { planPath: displayPath(outPath), sdk });
+          printPlanDiff(plan, {
+            planPath: displayPath(outPath),
+            selectorMap: buildSelectorMapForSources([sourcePathFor(genPath)], buildSelectorMap),
+            sdk,
+          });
           process.stdout.write(`planned: ${displayPath(outPath)}\n`);
         });
         if (!ok) {
@@ -532,6 +560,7 @@ export function buildProgram(): Command {
         const { runPlanForSafeDir } = await import('./apply/runPlanForSafeDir');
         const { runSubmit } = await import('./apply/runSubmit');
         const { printPlanDiff } = await import('./apply/printPlanDiff');
+        const { buildSelectorMap } = await import('./apply/buildSelectorMap');
         const sdk = await loadDiffSdk();
 
         // Pre-validate the proposer key once, before any batch starts.
@@ -571,6 +600,7 @@ export function buildProgram(): Command {
             printPlanDiff(plan, {
               planPath: displayPath(safeDirPlanPathFor(sd)),
               declaredRoleKeys: declaredRoleKeysForSafeDir(sd),
+              selectorMap: buildSelectorMapForSources(sd.sources, buildSelectorMap),
               sdk,
             });
             const submitArgs: Parameters<typeof runSubmit>[0] = {
@@ -601,7 +631,11 @@ export function buildProgram(): Command {
             process.stdout.write(`in sync: ${displayPath(genPath)} — nothing to plan\n`);
             return;
           }
-          printPlanDiff(plan, { planPath: displayPath(planPathFor(genPath)), sdk });
+          printPlanDiff(plan, {
+            planPath: displayPath(planPathFor(genPath)),
+            selectorMap: buildSelectorMapForSources([sourcePathFor(genPath)], buildSelectorMap),
+            sdk,
+          });
           const submitArgs: Parameters<typeof runSubmit>[0] = {
             plan,
             proposerPrivateKey: proposerKey,

@@ -19,6 +19,14 @@ export interface PrintPlanDiffOpts {
    * unit tests pass stubs.
    */
   sdk: DecodeSdk;
+  /**
+   * Optional selector → function-name map, typically built from the
+   * sources being planned (via `buildSelectorMap`). Looked up BEFORE the
+   * built-in ERC20 catalog, so user-defined function signatures decode
+   * to their human name in the `fn=…` suffix. Unknown selectors still
+   * fall through to raw hex.
+   */
+  selectorMap?: Record<string, string>;
 }
 
 /** Section dividers — fixed width 56 chars including header text. */
@@ -188,7 +196,7 @@ function formatAssignRolesLine(call: Extract<DecodedCall, { kind: 'assignRoles' 
  */
 export function printPlanDiff(plan: Plan, opts: PrintPlanDiffOpts): void {
   const out = opts.out ?? process.stdout;
-  const decoded = plan.calls.map((c) => decodeCall(c, opts.sdk));
+  const decoded = plan.calls.map((c) => decodeCall(c, opts.sdk, opts.selectorMap));
   const groups = classify(decoded);
 
   const lines: string[] = [];
