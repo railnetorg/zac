@@ -12,6 +12,7 @@ import {
   groupPlansBySafe,
   planPathFor,
   safeDirPlanPathFor,
+  sourcePathFor,
   type PlanGroup,
   type SafeDir,
 } from './discover';
