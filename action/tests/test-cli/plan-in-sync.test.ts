@@ -19,20 +19,16 @@ const SAFE = '0x3333333333333333333333333333333333333333';
 const MOD = '0x4444444444444444444444444444444444444444';
 
 /**
- * Plant a minimal valid layout
- * `<root>/mainnet/<SAFE>/config/foo.zac.yaml` + generated companion at
- * `<root>/mainnet/<SAFE>/zac-out/foo.yaml`. The 0-calls path is exercised
- * because the mocked `planApplyRole` / `planApply` below return `[]`.
+ * Plant a minimal valid layout `<root>/mainnet/<SAFE>/foo.zac.yaml` +
+ * generated sibling. The 0-calls path is exercised because the mocked
+ * `planApplyRole` / `planApply` below return `[]`.
  */
 function plantSource(): { root: string; src: string; gen: string } {
   const root = makeTempDir();
   const dir = join(root, 'mainnet', SAFE);
-  const configDir = join(dir, 'config');
-  const genDir = join(dir, 'zac-out');
-  mkdirSync(configDir, { recursive: true });
-  mkdirSync(genDir, { recursive: true });
-  const src = join(configDir, 'foo.zac.yaml');
-  const gen = join(genDir, 'foo.yaml');
+  mkdirSync(dir, { recursive: true });
+  const src = join(dir, 'foo.zac.yaml');
+  const gen = join(dir, 'foo.yaml');
   writeFileSync(src, '# x\n');
   writeFileSync(
     gen,
@@ -123,9 +119,7 @@ describe('cli plan — in-sync (0 calls)', () => {
     const prevRpc = process.env['MAINNET_RPC_URL'];
     process.env['MAINNET_RPC_URL'] = 'http://stub.invalid';
     const program = buildProgram();
-    // Plan path lives in the safe's `txs/` subdir; the safe-address dir
-    // is the GRANDPARENT of `gen` (which lives in `zac-out/`).
-    const planPath = join(gen, '..', '..', 'txs', 'foo.plan.json');
+    const planPath = gen.slice(0, -'.yaml'.length) + '.plan.json';
     expect(existsSync(planPath)).toBe(false);
     let out: string;
     try {
@@ -148,9 +142,7 @@ describe('cli plan — in-sync (0 calls)', () => {
 
   it('legacy per-file: existing stale plan.json is NOT overwritten or deleted when in sync', async () => {
     const { root, gen } = plantSource();
-    const txsDir = join(gen, '..', '..', 'txs');
-    mkdirSync(txsDir, { recursive: true });
-    const planPath = join(txsDir, 'foo.plan.json');
+    const planPath = gen.slice(0, -'.yaml'.length) + '.plan.json';
     // Plant a stale plan.json (sentinel bytes) — must be left intact.
     const sentinel = '{"stale":true}\n';
     writeFileSync(planPath, sentinel);
@@ -170,7 +162,7 @@ describe('cli plan — in-sync (0 calls)', () => {
 
   it('per-safe-dir (`--revoke-unmentioned=true`): 0 calls prints "in sync: <dir> — nothing to plan" and does NOT write plan.json', async () => {
     const { root } = plantSource();
-    const planPath = join(root, 'mainnet', SAFE, 'txs', `${SAFE.toLowerCase()}.plan.json`);
+    const planPath = join(root, 'mainnet', SAFE, `${SAFE.toLowerCase()}.plan.json`);
     expect(existsSync(planPath)).toBe(false);
     const prevRpc = process.env['MAINNET_RPC_URL'];
     process.env['MAINNET_RPC_URL'] = 'http://stub.invalid';

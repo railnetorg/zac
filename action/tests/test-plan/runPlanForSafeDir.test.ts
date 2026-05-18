@@ -29,14 +29,11 @@ function plantSafeDir(args: {
 }): { root: string; safeDir: string } {
   const root = makeTempDir();
   const dir = join(root, args.network, args.safeAddress.toLowerCase());
-  const configDir = join(dir, 'config');
-  const genDir = join(dir, 'zac-out');
-  mkdirSync(configDir, { recursive: true });
-  mkdirSync(genDir, { recursive: true });
+  mkdirSync(dir, { recursive: true });
   for (const f of args.files) {
-    writeFileSync(join(configDir, `${f.name}.zac.yaml`), '# x\n');
+    writeFileSync(join(dir, `${f.name}.zac.yaml`), '# x\n');
     writeFileSync(
-      join(genDir, `${f.name}.yaml`),
+      join(dir, `${f.name}.yaml`),
       `deployment:
   chain_id: ${args.chainId}
   safe_address: "${args.safeAddress}"

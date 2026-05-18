@@ -12,7 +12,7 @@ Spec: <https://www.notion.so/357c1910fb6e80a7b2b8f391ae421040>.
 - `action/` — ZAC CLI (Bun + TypeScript): `cli.ts`, `load/`, `render/`, `parse/`, `validate/`, `emit/`, `sourceMap/`, plus `tests/`.
 - `templates/` — Curated role templates shipped with ZAC (`aave_v3.tmpl`, `_macros/`).
 - `aliases/` — Curated per-chain alias library (`mainnet/aave.yaml`, `mainnet/tokens.yaml`).
-- `examples/` — End-to-end deployment example (`config.yaml`, `mainnet/<safe-address>/config/aave_safe.zac.yaml`).
+- `examples/` — End-to-end deployment example (`config.yaml`, `mainnet/<safe-address>/aave_safe.zac.yaml`).
 
 ## Usage (host repos)
 
@@ -30,29 +30,19 @@ Run:
 bun run zac generate <path>     # path is a `*.zac.yaml` file or a directory (walked recursively)
 ```
 
-The CLI is directory-driven: every subcommand accepts either a single file or a directory. Each safe-address directory has three fixed subfolders for artifacts: `config/` (sources), `zac-out/` (generated YAML), and `txs/` (plan JSON):
+The CLI is directory-driven: every subcommand accepts either a single file or a directory, and writes outputs **alongside** the source. Conventions:
 
-```
-<network>/<safe-address>/
-  config/<name>.zac.yaml         # sources (you edit these)
-  zac-out/<name>.yaml            # `zac generate` output
-  txs/<name>.plan.json           # `zac plan` output (legacy per-file)
-  txs/<safe-address>.plan.json   # `zac plan --revoke-unmentioned=true` (aggregated per-modifier)
-```
-
-Conventions:
-
-- Source configs: `*.zac.yaml` MUST live at `<network>/<safe-address>/config/<name>.zac.yaml` (e.g. `configs/mainnet/0xAbCd…1234/config/aave_v3.zac.yaml`). The `<safe-address>` directory name must match the rendered `safe_address` (case-insensitive); all `*.zac.yaml` siblings in one `config/` must agree on `(chain_id, safe_address, roles_modifier_address)`. Network directory names are case-sensitive and must match the canonical lowercase form (`mainnet`, `base`, `sepolia`, …).
-- Generated configs: `*.yaml` under `zac-out/` (`config/aave_v3.zac.yaml` → `zac-out/aave_v3.yaml`).
-- Plan files (always under `txs/`):
-  - default (`--revoke-unmentioned=false`): one `<stem>.plan.json` per source — `planApplyRole` is called per source, no revokes emitted. Roles not declared in any source are left untouched on the modifier.
+- Source configs: `*.zac.yaml` MUST live at `<network>/<safe-address>/<name>.zac.yaml` (e.g. `configs/mainnet/0xAbCd…1234/aave_v3.zac.yaml`). The `<safe-address>` directory name must match the rendered `safe_address` (case-insensitive); all `*.zac.yaml` siblings in one safe-dir must agree on `(chain_id, safe_address, roles_modifier_address)`. Network directory names are case-sensitive and must match the canonical lowercase form (`mainnet`, `base`, `sepolia`, …).
+- Generated configs: `*.yaml` next to the source (`aave_v3.zac.yaml` → `aave_v3.yaml`).
+- Plan files:
+  - default (`--revoke-unmentioned=false`): one `<stem>.plan.json` next to each source — `planApplyRole` is called per source, no revokes emitted. Roles not declared in any source are left untouched on the modifier.
   - `--revoke-unmentioned=true` (directory mode only): one `<safe-address>.plan.json` per safe-dir — the SDK's `planApply` aggregates roles across siblings and natively revokes any role on the modifier not in the aggregated set.
 
 ## Try the example
 
 ```
-bun ./action/cli.ts generate examples/mainnet/0x3333333333333333333333333333333333333333/config/aave_safe.zac.yaml   # one file
-bun ./action/cli.ts generate examples/mainnet/                                                                       # whole dir, recursive
+bun ./action/cli.ts generate examples/mainnet/0x3333333333333333333333333333333333333333/aave_safe.zac.yaml   # one file
+bun ./action/cli.ts generate examples/mainnet/                                                                # whole dir, recursive
 ```
 
 ## Apply

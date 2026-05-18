@@ -4,7 +4,7 @@ chain_id: 11155111
 name: Sepolia Test Safe Morpho Blue Manager
 description: Supply and withdraw USDC on Morpho Blue Sepolia, single-member test config
 configs:
-  - template: "../../../../templates/morpho_blue/morpho_blue.tmpl"
+  - template: "../../../templates/morpho_blue/morpho_blue.tmpl"
     key: MORPHO_BLUE
     members:
       - "{{ aliases.signers.sepolia_member }}"

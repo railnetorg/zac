@@ -50,9 +50,8 @@ roles:
 }
 
 /**
- * Create a layout `<root>/<network>/<safeDirName>/config/<name>.zac.yaml`
- * with a matching generated `<root>/<network>/<safeDirName>/zac-out/<name>.yaml`.
- * Returns the source's absolute path.
+ * Create a layout `<root>/<network>/<safeDirName>/<name>.zac.yaml` with a
+ * matching generated `.yaml`. Returns the source's absolute path.
  */
 function plantSource(
   root: string,
@@ -66,28 +65,22 @@ function plantSource(
     roleKey?: string;
   },
 ): string {
-  const safeDir = join(root, network, safeDirName);
-  const configDir = join(safeDir, 'config');
-  const genDir = join(safeDir, 'zac-out');
-  mkdirSync(configDir, { recursive: true });
-  mkdirSync(genDir, { recursive: true });
-  const src = join(configDir, `${name}.zac.yaml`);
-  const gen = join(genDir, `${name}.yaml`);
+  const dir = join(root, network, safeDirName);
+  mkdirSync(dir, { recursive: true });
+  const src = join(dir, `${name}.zac.yaml`);
+  const gen = join(dir, `${name}.yaml`);
   writeSource(src, '# rendered separately\n');
   writeGenerated(gen, body);
   return src;
 }
 
 describe('findSafeDirs — layout validation', () => {
-  it('throws when the safe-address dir is not a 0x-prefixed address', () => {
+  it('throws when the parent dir is not a 0x-prefixed address', () => {
     const root = makeTempDir();
-    const safeDir = join(root, 'mainnet', 'not-an-address');
-    const configDir = join(safeDir, 'config');
-    const genDir = join(safeDir, 'zac-out');
-    mkdirSync(configDir, { recursive: true });
-    mkdirSync(genDir, { recursive: true });
-    writeSource(join(configDir, 'foo.zac.yaml'), '# x\n');
-    writeGenerated(join(genDir, 'foo.yaml'), {
+    const dir = join(root, 'mainnet', 'not-an-address');
+    mkdirSync(dir, { recursive: true });
+    writeSource(join(dir, 'foo.zac.yaml'), '# x\n');
+    writeGenerated(join(dir, 'foo.yaml'), {
       chainId: 1,
       safeAddress: SAFE_A_LO,
       modifierAddress: MOD_LO,
@@ -97,7 +90,7 @@ describe('findSafeDirs — layout validation', () => {
       findSafeDirs(root);
     } catch (e) {
       expect((e as ZacError).phase).toBe('validate');
-      expect((e as ZacError).message).toContain('config/<name>.zac.yaml layout');
+      expect((e as ZacError).message).toContain('0x-prefixed');
     }
   });
 
@@ -248,10 +241,10 @@ describe('findSafeDirs — layout validation', () => {
 
   it('missing generated `.yaml` → load error pointing the user to `zac generate`', () => {
     const root = makeTempDir();
-    const configDir = join(root, 'mainnet', SAFE_A_LO, 'config');
-    mkdirSync(configDir, { recursive: true });
-    writeSource(join(configDir, 'foo.zac.yaml'), '# x\n');
-    // No zac-out/ companion written.
+    const dir = join(root, 'mainnet', SAFE_A_LO);
+    mkdirSync(dir, { recursive: true });
+    writeSource(join(dir, 'foo.zac.yaml'), '# x\n');
+    // No sibling .yaml written.
     expect(() => findSafeDirs(root)).toThrowError(ZacError);
     try {
       findSafeDirs(root);
@@ -286,14 +279,11 @@ describe('findSafeDirs — layout validation', () => {
 
   it('injectable parseGenerated stub bypasses parseGenerated entirely (DI sanity check)', () => {
     const root = makeTempDir();
-    const safeDir = join(root, 'mainnet', SAFE_A_LO);
-    const configDir = join(safeDir, 'config');
-    const genDir = join(safeDir, 'zac-out');
-    mkdirSync(configDir, { recursive: true });
-    mkdirSync(genDir, { recursive: true });
-    writeSource(join(configDir, 'foo.zac.yaml'), '# x\n');
+    const dir = join(root, 'mainnet', SAFE_A_LO);
+    mkdirSync(dir, { recursive: true });
+    writeSource(join(dir, 'foo.zac.yaml'), '# x\n');
     // Generated file just has to EXIST — content is read by the stub.
-    writeFileSync(join(genDir, 'foo.yaml'), '');
+    writeFileSync(join(dir, 'foo.yaml'), '');
     const stub = (_p: string): Generated => ({
       deployment: {
         chain_id: 1,
@@ -305,19 +295,5 @@ describe('findSafeDirs — layout validation', () => {
     const safeDirs = findSafeDirs(root, { parseGenerated: stub });
     expect(safeDirs).toHaveLength(1);
     expect(safeDirs[0]!.modifierAddress).toBe(MOD_LO);
-  });
-
-  it('returns the SAFE-ADDRESS dir, NOT the `config/` subdir, as dirPath', () => {
-    const root = makeTempDir();
-    const src = plantSource(root, 'mainnet', SAFE_A_LO, 'foo', {
-      chainId: 1,
-      safeAddress: SAFE_A_LO,
-      modifierAddress: MOD_LO,
-    });
-    const safeDirs = findSafeDirs(root);
-    expect(safeDirs).toHaveLength(1);
-    expect(safeDirs[0]!.dirPath).toBe(join(root, 'mainnet', SAFE_A_LO));
-    // Sanity: the source path lives one level deeper, in `config/`.
-    expect(src).toBe(join(safeDirs[0]!.dirPath, 'config', 'foo.zac.yaml'));
   });
 });

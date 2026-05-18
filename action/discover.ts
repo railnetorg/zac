@@ -13,12 +13,6 @@ import type { Plan } from './apply/planSchema';
 const ZAC_SOURCE_SUFFIX = '.zac.yaml';
 /** A plan file: ends in `.plan.json`. */
 const PLAN_SUFFIX = '.plan.json';
-/** Per-safe subfolder for source `.zac.yaml` files. */
-const SOURCE_SUBDIR = 'config';
-/** Per-safe subfolder for generated `.yaml` files. */
-const GENERATED_SUBDIR = 'zac-out';
-/** Per-safe subfolder for `.plan.json` files (both per-file and aggregated). */
-const PLAN_SUBDIR = 'txs';
 /** A generated YAML file: ends in `.yaml` but NOT `.zac.yaml`. */
 function isYamlNotSource(name: string): boolean {
   return name.endsWith('.yaml') && !name.endsWith(ZAC_SOURCE_SUFFIX);
@@ -27,10 +21,7 @@ function isYamlNotSource(name: string): boolean {
 /** Match a 0x-prefixed 40-hex-char address dir name (case-insensitive). */
 const ADDRESS_DIR_RE = /^0x[0-9a-fA-F]{40}$/;
 
-/**
- * Translate a source path `<safe>/config/<stem>.zac.yaml` to its companion
- * generated path `<safe>/zac-out/<stem>.yaml`.
- */
+/** Strip `.zac.yaml` from a source path → its alongside generated path. */
 export function generatedPathFor(sourcePath: string): string {
   if (!sourcePath.endsWith(ZAC_SOURCE_SUFFIX)) {
     throw new ZacError({
@@ -38,15 +29,10 @@ export function generatedPathFor(sourcePath: string): string {
       message: `expected a source file ending in ${ZAC_SOURCE_SUFFIX}: ${sourcePath}`,
     });
   }
-  const stem = basename(sourcePath).slice(0, -ZAC_SOURCE_SUFFIX.length);
-  const safeDir = dirname(dirname(sourcePath));
-  return join(safeDir, GENERATED_SUBDIR, `${stem}.yaml`);
+  return sourcePath.slice(0, -ZAC_SOURCE_SUFFIX.length) + '.yaml';
 }
 
-/**
- * Translate a generated path `<safe>/zac-out/<stem>.yaml` to its companion
- * source path `<safe>/config/<stem>.zac.yaml`.
- */
+/** Given a generated path (`<stem>.yaml`), return its sibling source path (`<stem>.zac.yaml`). */
 export function sourcePathFor(generatedPath: string): string {
   if (!generatedPath.endsWith('.yaml') || generatedPath.endsWith(ZAC_SOURCE_SUFFIX)) {
     throw new ZacError({
@@ -54,15 +40,10 @@ export function sourcePathFor(generatedPath: string): string {
       message: `expected a generated file ending in .yaml (not ${ZAC_SOURCE_SUFFIX}): ${generatedPath}`,
     });
   }
-  const stem = basename(generatedPath).slice(0, -'.yaml'.length);
-  const safeDir = dirname(dirname(generatedPath));
-  return join(safeDir, SOURCE_SUBDIR, `${stem}${ZAC_SOURCE_SUFFIX}`);
+  return generatedPath.slice(0, -'.yaml'.length) + ZAC_SOURCE_SUFFIX;
 }
 
-/**
- * Translate a generated path `<safe>/zac-out/<stem>.yaml` to its companion
- * plan path `<safe>/txs/<stem>.plan.json`.
- */
+/** Given a generated path (`<stem>.yaml`), return its sibling plan path (`<stem>.plan.json`). */
 export function planPathFor(generatedPath: string): string {
   if (!generatedPath.endsWith('.yaml') || generatedPath.endsWith(ZAC_SOURCE_SUFFIX)) {
     throw new ZacError({
@@ -70,27 +51,16 @@ export function planPathFor(generatedPath: string): string {
       message: `expected a generated file ending in .yaml (not ${ZAC_SOURCE_SUFFIX}): ${generatedPath}`,
     });
   }
-  const stem = basename(generatedPath).slice(0, -'.yaml'.length);
-  const safeDir = dirname(dirname(generatedPath));
-  return join(safeDir, PLAN_SUBDIR, `${stem}${PLAN_SUFFIX}`);
+  return generatedPath.slice(0, -'.yaml'.length) + PLAN_SUFFIX;
 }
 
 /**
  * Plan file path for a whole safe-dir (per-modifier plan):
- * `<safeDir.dirPath>/txs/<safeAddress lowercase>.plan.json`. Each safe-dir
+ * `<safeDir.dirPath>/<safeAddress lowercase>.plan.json`. Each safe-dir
  * produces exactly one plan file via the per-modifier `planApply` path.
  */
 export function safeDirPlanPathFor(safeDir: { dirPath: string; safeAddress: string }): string {
-  return join(safeDir.dirPath, PLAN_SUBDIR, safeDir.safeAddress.toLowerCase() + PLAN_SUFFIX);
-}
-
-/**
- * Absolute path of the safe-address directory for a source path
- * `<network>/<safe>/config/<name>.zac.yaml`. The safe-address dir is the
- * GRANDPARENT of the source (the `config/` subdir is between).
- */
-export function safeDirFromSource(sourcePath: string): string {
-  return dirname(dirname(sourcePath));
+  return join(safeDir.dirPath, safeDir.safeAddress.toLowerCase() + PLAN_SUFFIX);
 }
 
 function toAbs(p: string): string {
@@ -119,52 +89,42 @@ function walk(dir: string, onFile: (path: string) => void): void {
 
 /**
  * Layout error message for sources outside the
- * `<network>/<safe-address>/config/<name>.zac.yaml` convention.
+ * `<network>/<safe-address>/<name>.zac.yaml` convention.
  */
 function layoutError(sourcePath: string): never {
   throw new ZacError({
     phase: 'validate',
-    message: `expected <network>/<safe-address>/config/<name>.zac.yaml layout; got ${sourcePath} — sources must live in a \`config/\` subdir under a 0x-prefixed safe-address dir`,
+    message: `expected <network>/<safe-address>/<name>.zac.yaml layout; got ${sourcePath} — move into a 0x-prefixed dir whose name matches safe_address`,
   });
 }
 
 /**
- * Validate the layout walking up from a `.zac.yaml` source:
- *   immediate parent must be `config/`
- *   grandparent must be a 0x-prefixed 40-hex address dir
- *   great-grandparent must be a known network dir
- * Returns the safe-address dir's absolute path and the network name on
- * success. Throws `ZacError(phase='validate')` otherwise.
+ * Validate the parent dir is a 0x-prefixed 40-hex-char address and the
+ * grandparent is a known network directory. Returns the parent dir's
+ * absolute path on success. Throws `ZacError(phase='validate')` otherwise.
  */
 function validateSourcePathLayout(sourcePath: string): { safeDir: string; network: string } {
-  const configDir = dirname(sourcePath);
-  if (basename(configDir) !== SOURCE_SUBDIR) {
+  const parentDir = dirname(sourcePath);
+  const parentName = basename(parentDir);
+  if (!ADDRESS_DIR_RE.test(parentName)) {
     layoutError(sourcePath);
   }
-  const safeDir = dirname(configDir);
-  const safeDirName = basename(safeDir);
-  if (!ADDRESS_DIR_RE.test(safeDirName)) {
-    layoutError(sourcePath);
-  }
-  const networkName = basename(dirname(safeDir));
-  if (!isKnownNetworkDirectory(networkName)) {
+  const grandparentName = basename(dirname(parentDir));
+  if (!isKnownNetworkDirectory(grandparentName)) {
     throw new ZacError({
       phase: 'validate',
-      message: `unknown network directory '${networkName}' for ${sourcePath}; supported: [${supportedNetworkDirectories().join(', ')}]`,
+      message: `unknown network directory '${grandparentName}' for ${sourcePath}; supported: [${supportedNetworkDirectories().join(', ')}]`,
     });
   }
-  return { safeDir, network: networkName };
+  return { safeDir: parentDir, network: grandparentName };
 }
 
 /**
  * Discover ZAC source configs (`*.zac.yaml`) under `path`.
- * - If `path` is a file: must end in `.zac.yaml`; returns `[path]` (strict
- *   layout check: must sit at `<network>/<safe-address>/config/<name>.zac.yaml`).
- * - If `path` is a directory: walks recursively; returns every `*.zac.yaml`
- *   under a `config/` parent directory. Sources NOT under a `config/`
- *   parent are silently skipped (irrelevant to ZAC).
+ * - If `path` is a file: must end in `.zac.yaml`; returns `[path]`.
+ * - If `path` is a directory: walks recursively, returns every `*.zac.yaml`.
  * Returned paths are absolute. Every returned path passes the strict
- * `<network>/<safe-address>/config/<name>.zac.yaml` layout check.
+ * `<network>/<safe-address>/<name>.zac.yaml` layout check.
  */
 export function findZacSources(path: string): string[] {
   const abs = toAbs(path);
@@ -182,11 +142,7 @@ export function findZacSources(path: string): string[] {
   }
   const found: string[] = [];
   walk(abs, (p) => {
-    if (!p.endsWith(ZAC_SOURCE_SUFFIX)) return;
-    // Only surface sources living under a `config/` subdir. Anything else
-    // is silently skipped at directory-walk time (it's not addressed to ZAC).
-    if (basename(dirname(p)) !== SOURCE_SUBDIR) return;
-    found.push(p);
+    if (p.endsWith(ZAC_SOURCE_SUFFIX)) found.push(p);
   });
   for (const p of found) validateSourcePathLayout(p);
   found.sort();
@@ -195,13 +151,12 @@ export function findZacSources(path: string): string[] {
 
 /**
  * Discover generated configs under `path`. A generated config is a `*.yaml`
- * file that lives under a `zac-out/` subdir and has a sibling source
- * `../config/<stem>.zac.yaml`.
+ * file that has a sibling source `*.zac.yaml` of the same stem.
  * - If `path` is a file: must end in `.yaml` and NOT `.zac.yaml`; returns `[path]`.
  *   (No sibling check in file mode — caller is asking explicitly for this file.)
- * - If `path` is a directory: walks recursively; returns every `*.yaml`
- *   under a `zac-out/` parent that has a matching `../config/<stem>.zac.yaml`.
- * Returned paths are absolute. Layout (`<network>/<safe-address>/zac-out/<stem>.yaml`)
+ * - If `path` is a directory: walks recursively; returns every `*.yaml` with a
+ *   matching sibling `.zac.yaml`.
+ * Returned paths are absolute. Layout (`<network>/<safe-address>/<stem>.yaml`)
  * is enforced for every returned path.
  */
 export function findGeneratedConfigs(path: string): string[] {
@@ -221,8 +176,6 @@ export function findGeneratedConfigs(path: string): string[] {
   const found: string[] = [];
   walk(abs, (p) => {
     if (!isYamlNotSource(basename(p))) return;
-    // Only surface generated files living under a `zac-out/` subdir.
-    if (basename(dirname(p)) !== GENERATED_SUBDIR) return;
     const sibling = sourcePathFor(p);
     if (existsSync(sibling)) found.push(p);
   });
@@ -234,9 +187,7 @@ export function findGeneratedConfigs(path: string): string[] {
 /**
  * Discover plan files (`*.plan.json`) under `path`.
  * - If `path` is a file: must end in `.plan.json`; returns `[path]`.
- * - If `path` is a directory: walks recursively; returns every `*.plan.json`
- *   under a `txs/` parent. Plans NOT under a `txs/` parent are silently
- *   skipped (irrelevant to ZAC's submit flow).
+ * - If `path` is a directory: walks recursively, returns every `*.plan.json`.
  * Returned paths are absolute.
  */
 export function findPlans(path: string): string[] {
@@ -254,9 +205,7 @@ export function findPlans(path: string): string[] {
   }
   const found: string[] = [];
   walk(abs, (p) => {
-    if (!p.endsWith(PLAN_SUFFIX)) return;
-    if (basename(dirname(p)) !== PLAN_SUBDIR) return;
-    found.push(p);
+    if (p.endsWith(PLAN_SUFFIX)) found.push(p);
   });
   found.sort();
   return found;
@@ -264,17 +213,14 @@ export function findPlans(path: string): string[] {
 
 /**
  * A safe-dir grouping: one `<network>/<safe-address>/` directory containing
- * a `config/` subdir with one or more `.zac.yaml` files, all sharing the
- * same `(chain_id, safe_address, roles_modifier_address)`.
+ * one or more sibling `.zac.yaml` files, all sharing the same
+ * `(chain_id, safe_address, roles_modifier_address)`.
  *
  * `sources` are absolute paths to the `.zac.yaml` files (the lookup unit for
  * `runPlanForSafeDir`). `safeAddress` is the lowercased dir name (matching
  * the layout convention); `chainId` comes from the network table; both are
  * cross-checked against the rendered `.yaml` bodies. `modifierAddress`
  * comes from the rendered YAML bodies (which must agree across siblings).
- *
- * `dirPath` is the SAFE-ADDRESS dir (the grandparent of each `.zac.yaml`),
- * NOT the inner `config/` subdir.
  */
 export interface SafeDir {
   dirPath: string;
@@ -300,17 +246,16 @@ export interface FindSafeDirsOpts {
  * Discover safe-dirs under `path`. Used by per-modifier plan/apply flows.
  *
  * - If `path` is a file (must be a `*.zac.yaml`), produces a single-source
- *   safe-dir for that file's GRANDPARENT (the safe-address dir).
+ *   safe-dir for that file's parent.
  * - If `path` is a directory, walks recursively and groups every `.zac.yaml`
- *   under its `<network>/<safe-address>/config/` parent.
+ *   under its `<network>/<safe-address>/` parent.
  *
  * Layout validation is strict — every source must live at
- * `<network>/<safe-address>/config/<name>.zac.yaml`. Each source's
- * generated companion at `<safe>/zac-out/<stem>.yaml` must exist (run `zac
- * generate` first); we read it to extract `chain_id`, `safe_address`,
- * `roles_modifier_address`. All sources within a safe-dir must agree on
- * those three values, and the rendered `safe_address` must match the
- * safe-address dir name (case-insensitive).
+ * `<network>/<safe-address>/<name>.zac.yaml`. Each source's generated
+ * sibling `.yaml` must exist (run `zac generate` first); we read it to
+ * extract `chain_id`, `safe_address`, `roles_modifier_address`. All sources
+ * within a safe-dir must agree on those three values, and the rendered
+ * `safe_address` must match the parent dir name (case-insensitive).
  *
  * Returned safe-dirs are ordered deterministically by `dirPath`; `sources`
  * within each safe-dir are sorted by path.
@@ -319,10 +264,10 @@ export function findSafeDirs(path: string, opts: FindSafeDirsOpts = {}): SafeDir
   const parse = opts.parseGenerated ?? parseGenerated;
   const sources = findZacSources(path);
 
-  // Group by safe-address dir (grandparent of each source).
+  // Group by parent dir.
   const byDir = new Map<string, string[]>();
   for (const src of sources) {
-    const dir = safeDirFromSource(src);
+    const dir = dirname(src);
     const list = byDir.get(dir);
     if (list === undefined) byDir.set(dir, [src]);
     else list.push(src);
@@ -338,9 +283,8 @@ export function findSafeDirs(path: string, opts: FindSafeDirsOpts = {}): SafeDir
 }
 
 function buildSafeDir(dirPath: string, sources: string[], parse: ParseGeneratedFn): SafeDir {
-  // Layout — every source in this dir must share the same safe-address dir
-  // (it does by construction) and that dir must be a 0x-addr under a known
-  // network.
+  // Layout — every source in this dir must share the same parent (it does by
+  // construction) and that parent must be a 0x-addr under a known network.
   const { network } = validateSourcePathLayout(sources[0]!);
   const dirAddress = basename(dirPath).toLowerCase() as `0x${string}`;
   const expectedChainId = networkForDirectory(network);
@@ -351,7 +295,7 @@ function buildSafeDir(dirPath: string, sources: string[], parse: ParseGeneratedF
     });
   }
 
-  // Parse every source's generated companion to extract deployment fields.
+  // Parse every source's generated sibling to extract deployment fields.
   const parsed = sources.map((src) => {
     const gen = generatedPathFor(src);
     if (!existsSync(gen)) {
@@ -364,7 +308,7 @@ function buildSafeDir(dirPath: string, sources: string[], parse: ParseGeneratedF
     return { src, gen, generated: parse(gen) };
   });
 
-  // Body match: every YAML's safe_address must match the safe-address dir name.
+  // Body match: every YAML's safe_address must match the parent dir name.
   for (const { src, generated } of parsed) {
     if (generated.deployment.safe_address.toLowerCase() !== dirAddress) {
       throw new ZacError({
@@ -460,5 +404,5 @@ export function groupPlansBySafe(plans: Plan[]): PlanGroup[] {
   return [...groups.values()];
 }
 
-// Re-export the suffix + subdir constants for callers that want to check or label.
-export { ZAC_SOURCE_SUFFIX, PLAN_SUFFIX, SOURCE_SUBDIR, GENERATED_SUBDIR, PLAN_SUBDIR };
+// Re-export the suffix constants for callers that want to check or label.
+export { ZAC_SOURCE_SUFFIX, PLAN_SUFFIX };

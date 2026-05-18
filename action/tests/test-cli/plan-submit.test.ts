@@ -88,21 +88,16 @@ describe('cli plan + submit', () => {
   it('TM-7h: submit <dir> with BOTH aggregated + per-file plans in one safe-dir → phase=apply rejection', async () => {
     // Plant a safe-dir that contains BOTH styles of plan file (the legacy
     // per-file `<stem>.plan.json` AND the per-modifier aggregated
-    // `<safe-address>.plan.json`) under the safe's `txs/` subdir. The CLI
-    // must refuse before bundling so the user doesn't end up submitting
-    // duplicated calls.
+    // `<safe-address>.plan.json`). The CLI must refuse before bundling so
+    // the user doesn't end up submitting duplicated calls.
     const root = makeTempDir();
     const safe = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
     const dir = join(root, 'mainnet', safe);
-    const configDir = join(dir, 'config');
-    const txsDir = join(dir, 'txs');
-    mkdirSync(configDir, { recursive: true });
-    mkdirSync(txsDir, { recursive: true });
-    const aggregatedPath = join(txsDir, `${safe}.plan.json`);
-    const perFilePath = join(txsDir, 'aave_safe.plan.json');
-    // The legacy per-file detection looks for a sibling
-    // `../config/<stem>.zac.yaml`.
-    writeFileSync(join(configDir, 'aave_safe.zac.yaml'), '# x\n');
+    mkdirSync(dir, { recursive: true });
+    const aggregatedPath = join(dir, `${safe}.plan.json`);
+    const perFilePath = join(dir, 'aave_safe.plan.json');
+    // The legacy per-file detection looks for a sibling `<stem>.zac.yaml`.
+    writeFileSync(join(dir, 'aave_safe.zac.yaml'), '# x\n');
     const plan = {
       calls: [
         {

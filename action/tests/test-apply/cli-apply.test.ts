@@ -40,23 +40,20 @@ afterAll(() => {
 });
 
 /**
- * Plant a valid layout `<root>/mainnet/<safeAddress>/config/foo.zac.yaml`
- * (plus companion generated `<root>/mainnet/<safeAddress>/zac-out/foo.yaml`
- * when `writeGenerated=true`). Returns the source absolute path.
+ * Plant a valid layout `<root>/mainnet/<safeAddress>/foo.zac.yaml` (plus
+ * sibling generated `foo.yaml` when `writeGenerated=true`). Returns the
+ * source absolute path.
  */
 function plantSafeDirSource(opts: { writeGenerated: boolean }): { root: string; src: string } {
   const root = makeTempDir();
   const safe = '0x3333333333333333333333333333333333333333';
   const dir = join(root, 'mainnet', safe);
-  const configDir = join(dir, 'config');
-  const genDir = join(dir, 'zac-out');
-  mkdirSync(configDir, { recursive: true });
-  const src = join(configDir, 'foo.zac.yaml');
+  mkdirSync(dir, { recursive: true });
+  const src = join(dir, 'foo.zac.yaml');
   writeFileSync(src, '# x\n');
   if (opts.writeGenerated) {
-    mkdirSync(genDir, { recursive: true });
     writeFileSync(
-      join(genDir, 'foo.yaml'),
+      join(dir, 'foo.yaml'),
       `deployment:
   chain_id: 1
   safe_address: "${safe}"
@@ -162,10 +159,7 @@ describe('cli apply', () => {
     // Passing the generated .yaml directly must be rejected with a clear
     // hint pointing to the source.
     const { src } = plantSafeDirSource({ writeGenerated: true });
-    // `src` lives at `<safe>/config/foo.zac.yaml`; the generated companion
-    // lives at `<safe>/zac-out/foo.yaml`.
-    const safeDir = join(src, '..', '..');
-    const generated = resolve(safeDir, 'zac-out', 'foo.yaml');
+    const generated = src.slice(0, -'.zac.yaml'.length) + '.yaml';
     const { code, stderr } = await runCli(['plan', generated]);
     expect(code).toBe(1);
     expect(stderr).toContain('phase=load');

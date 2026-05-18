@@ -13,10 +13,10 @@ const CLI = resolve(REPO_ROOT, 'action/cli.ts');
 describe('morpho-blue composite ops — end-to-end', () => {
   it('TC-10: examples/mainnet/morpho_blue_safe.zac.yaml renders, validates, and routes through planRoleCalls against the REAL SDK without throwing', async () => {
     const sourcePath =
-      'examples/mainnet/0x3333333333333333333333333333333333333333/config/morpho_blue_safe.zac.yaml';
+      'examples/mainnet/0x3333333333333333333333333333333333333333/morpho_blue_safe.zac.yaml';
     const generatedPath = resolve(
       REPO_ROOT,
-      'examples/mainnet/0x3333333333333333333333333333333333333333/zac-out/morpho_blue_safe.yaml',
+      'examples/mainnet/0x3333333333333333333333333333333333333333/morpho_blue_safe.yaml',
     );
     if (existsSync(generatedPath)) unlinkSync(generatedPath);
     try {

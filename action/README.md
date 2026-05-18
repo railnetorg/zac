@@ -10,7 +10,7 @@ The `generate` command runs five phases, fail-fast:
 2. **render** (`render/`) — Nunjucks-render the deployment config and per-template entries with `aliases` global and `keccak` filter.
 3. **parse** (`parse/`) — eemeli/yaml `parseDocument` with `LineCounter`. Source positions retained for downstream error reporting.
 4. **validate** (`validate/`) — top-level zod schema for the deployment config; recursive `OperatorSchema` (8 leaf + 8 composite operators); per-signature ABI-family rules; sanity checks (named params, address checksum).
-5. **emit** (`emit/`) — merge role states by `key` (members deduped, hard-error on duplicate `(address, signature)`), serialize to YAML, write the generated file under `<safe>/zac-out/<stem>.yaml` (the source lives at `<safe>/config/<stem>.zac.yaml`).
+5. **emit** (`emit/`) — merge role states by `key` (members deduped, hard-error on duplicate `(address, signature)`), serialize to YAML, write the generated file alongside the source (`*.zac.yaml` → `*.yaml`).
 
 `sourceMap/` ships the §9.43 best-effort template-line guess used by `formatError`.
 
@@ -19,13 +19,13 @@ The `generate` command runs five phases, fail-fast:
 The `apply <path>` command has two flows, gated by `--revoke-unmentioned` (default: `false`):
 
 - **Legacy per-file (default)**: `runApply` parses one generated YAML at a time and calls `planApplyRole` from `zodiac-roles-sdk` for each role key. No revokes emitted; roles not declared in any source are left untouched on the modifier.
-- **Per-modifier**: with `--revoke-unmentioned=true` in directory mode, `findSafeDirs` groups sibling `*.zac.yaml` files under each `<network>/<safe-address>/config/` dir; `runPlanForSafeDir` aggregates the union of role keys and hands them to `zodiac-roles-sdk`'s `planApply` (which natively emits revoke calls for any role on the modifier not in the aggregated set, by diffing against the Zodiac subgraph). One Safe transaction per safe-dir.
+- **Per-modifier**: with `--revoke-unmentioned=true` in directory mode, `findSafeDirs` groups sibling `*.zac.yaml` files under each `<network>/<safe-address>/` dir; `runPlanForSafeDir` aggregates the union of role keys and hands them to `zodiac-roles-sdk`'s `planApply` (which natively emits revoke calls for any role on the modifier not in the aggregated set, by diffing against the Zodiac subgraph). One Safe transaction per safe-dir.
 
 In both flows, the resulting calls are batched into a Safe MultiSend via `@safe-global/protocol-kit`, signed with `ZAC_PROPOSER_PRIVATE_KEY`, and proposed via `@safe-global/api-kit`. The Service URL defaults from a per-chain map; `SAFE_API_KEY` is honored if set; per-chain `<NETWORK>_RPC_URL` (e.g. `MAINNET_RPC_URL`) — falling back to `RPC_URL` — overrides the public RPC used by Protocol Kit's read-only queries. `<path>` accepts a `*.zac.yaml` file or a directory.
 
-Layout is strict: every `*.zac.yaml` must live at `<network>/<safe-address>/config/<name>.zac.yaml`. The `<safe-address>` dir name must match the rendered `safe_address` (case-insensitive); all siblings in a `config/` must agree on `(chain_id, safe_address, roles_modifier_address)`. Violations surface as `phase=validate` errors at discovery time.
+Layout is strict: every `*.zac.yaml` must live at `<network>/<safe-address>/<name>.zac.yaml`. The `<safe-address>` dir name must match the rendered `safe_address` (case-insensitive); all siblings must agree on `(chain_id, safe_address, roles_modifier_address)`. Violations surface as `phase=validate` errors at discovery time.
 
-Each safe-address dir owns three fixed subfolders: `config/` (sources), `zac-out/` (generated YAML — written by `generate`, created with `mkdirSync({ recursive: true })`), and `txs/` (plan JSON — written by `plan`/`apply`, also created on demand). Discovery is centralized in `discover.ts` (`findZacSources`, `findGeneratedConfigs`, `findPlans`, `findSafeDirs`) and is layout-aware: walkers only return files under the appropriate subfolder; the path helpers `generatedPathFor`, `sourcePathFor`, `planPathFor`, and `safeDirPlanPathFor` move between them deterministically (`<safe>/config/<stem>.zac.yaml` ↔ `<safe>/zac-out/<stem>.yaml` ↔ `<safe>/txs/<stem>.plan.json`; aggregated mode writes `<safe>/txs/<safe-address>.plan.json`).
+Discovery is centralized in `discover.ts` (`findZacSources`, `findGeneratedConfigs`, `findPlans`, `findSafeDirs`); the CLI iterates and writes outputs alongside the source by convention (`*.zac.yaml` → `*.yaml`; safe-dir mode → `<safe-address>.plan.json` per dir; legacy mode → `<stem>.plan.json` per file).
 
 ## Adding a new operator
 

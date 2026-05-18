@@ -19,21 +19,16 @@ const SAFE = '0x3333333333333333333333333333333333333333';
 const MOD = '0x4444444444444444444444444444444444444444';
 
 /**
- * Plant a minimal valid layout
- * `<root>/mainnet/<SAFE>/config/foo.zac.yaml` + generated companion at
- * `<root>/mainnet/<SAFE>/zac-out/foo.yaml` that declares one role (no
- * targets / no members) so the legacy per-file plan flow is exercised
- * end-to-end.
+ * Plant a minimal valid layout `<root>/mainnet/<SAFE>/foo.zac.yaml` +
+ * generated sibling that declares one role (no targets / no members) so
+ * the legacy per-file plan flow is exercised end-to-end.
  */
 function plantSource(): { root: string; src: string; gen: string } {
   const root = makeTempDir();
   const dir = join(root, 'mainnet', SAFE);
-  const configDir = join(dir, 'config');
-  const genDir = join(dir, 'zac-out');
-  mkdirSync(configDir, { recursive: true });
-  mkdirSync(genDir, { recursive: true });
-  const src = join(configDir, 'foo.zac.yaml');
-  const gen = join(genDir, 'foo.yaml');
+  mkdirSync(dir, { recursive: true });
+  const src = join(dir, 'foo.zac.yaml');
+  const gen = join(dir, 'foo.yaml');
   writeFileSync(src, '# x\n');
   writeFileSync(
     gen,

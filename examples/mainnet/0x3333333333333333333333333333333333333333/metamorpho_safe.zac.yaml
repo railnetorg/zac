@@ -4,7 +4,7 @@ chain_id: 1
 name: My Safe MetaMorpho LP
 description: Deposit and withdraw on MetaMorpho vaults; receiver/owner pinned to avatar
 configs:
-  - template: "../../../../templates/metamorpho/metamorpho.tmpl"
+  - template: "../../../templates/metamorpho/metamorpho.tmpl"
     key: METAMORPHO_LP
     members:
       - "{{ aliases.signers.alice }}"
