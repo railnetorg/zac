@@ -1,3 +1,4 @@
+import { getAddress } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { ZacError } from '../errors';
 import { safeServiceUrlForChain } from './safeServiceUrl';
@@ -144,8 +145,12 @@ export async function signAndPropose(opts: SignAndProposeOpts): Promise<{ safeTx
   const apiKit = new ApiKitClass(apiKitConfig);
 
   try {
+    // Safe Tx Service rejects non-EIP-55 addresses with "Checksum address
+    // validation failed". `Plan.safeAddress` is lowercased to match the
+    // on-disk safe-dir naming convention (see `discover.ts`), so checksum
+    // it here at the API boundary.
     await apiKit.proposeTransaction({
-      safeAddress: opts.plan.safeAddress,
+      safeAddress: getAddress(opts.plan.safeAddress),
       safeTransactionData: opts.plan.safeTxData,
       safeTxHash: opts.plan.safeTxHash,
       senderAddress: proposerAddress,
