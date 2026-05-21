@@ -1,8 +1,23 @@
 {
+  "lib/aave-v3-origin": {
+    "rev": "f6f9cfc373d3c127d5f9a80afd7818cbcc5724fc"
+  },
   "lib/forge-std": {
     "tag": {
       "name": "v1.16.1",
       "rev": "620536fa5277db4e3fd46772d5cbc1ea0696fb43"
     }
+  },
+  "lib/halmos-cheatcodes": {
+    "rev": "6da4e692c357ba6d641a2e677a28298cac9f76ab"
+  },
+  "lib/morpho-blue": {
+    "rev": "1478e9cfe1b4d514f80682b3b60e4e12ff3ee45a"
+  },
+  "lib/openzeppelin-contracts": {
+    "rev": "cd05883078060e0cd8a7bd36636944570dbe1722"
+  },
+  "lib/safe-smart-account": {
+    "rev": "d7de455e0103bd3b6d1d6a4075d7c36d1869d677"
   }
 }
