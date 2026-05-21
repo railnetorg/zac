@@ -1,15 +1,19 @@
 name: action-typecheck
 
-on: [push, pull_request]
+on: [push]
 
 jobs:
   action-typecheck:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          submodules: recursive
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: oven-sh/setup-bun@v2
 
       - uses: extractions/setup-just@v4
+
+      - run: just install
 
       - run: just action-typecheck

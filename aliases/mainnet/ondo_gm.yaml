@@ -1,0 +1,8 @@
+router: "0x2c158BC456e027b2AfFCCadF1BDBD9f5fC4c5C8c"
+
+# GM token addresses the role can mint into / redeem from.
+tokens:
+  HYGon: "0xed3618bb8778f8ebbe2f241da532227591771d04"
+  TLTon: "0x992651bfeb9a0dcc4457610e284ba66d86489d4d"
+  SHYon: "0x5c424b9b60383fce7fe7069d2a2b1047bcd04a73"
+  IEFon: "0xa2ec76139028f279a1c790d323c57cc4158098d6"

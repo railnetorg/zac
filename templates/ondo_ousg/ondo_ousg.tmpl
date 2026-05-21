@@ -1,0 +1,74 @@
+{#-
+  Ondo OUSG — subscribe / redeem.
+
+  The OUSG subscriber (a.k.a. OUSGInstantManager) is canonical-per-chain,
+  so it is resolved from aliases.ondo_ousg.subscriber inside the template
+  — NOT passed as a param. The subscriber alias entry must declare:
+    address     — subscriber contract address
+    share_token — OUSG share-token contract address (kept in the Ondo
+                  namespace because OUSG is Ondo-specific, not a token
+                  any other protocol would reference)
+
+  Required template params:
+    payment_assets — list of token alias keys the Safe is permitted to
+                     subscribe / redeem with (e.g. ["USDC"]). Each entry
+                     resolved via aliases.tokens[<key>] — missing ⇒
+                     render-time error.
+
+  Resolved from aliases (NOT params):
+    aliases.ondo_ousg.subscriber.address     — subscriber contract
+    aliases.ondo_ousg.subscriber.share_token — OUSG address
+    aliases.tokens[<asset>]                  — payment-asset address per entry
+
+  Output shape:
+    - One approve role per token (OUSG + each payment_asset), with
+      spender = subscriber (single, equal_to).
+    - One subscribe / redeem role on the subscriber, with `asset` pinned
+      to oneOf(payment_assets). The on-chain contract additionally
+      enforces that share_token can never be passed as the payment leg.
+-#}
+{%- from "_macros/common.tmpl" import approve -%}
+{%- set sub = aliases.ondo_ousg.subscriber -%}
+roles:
+  {{ approve(sub.share_token, sub.address) | indent(2) }}
+{%- for asset in payment_assets %}
+  {{ approve(aliases.tokens[asset], sub.address) | indent(2) }}
+{%- endfor %}
+
+  - address: "{{ sub.address }}"
+    functions:
+      - signature: "function subscribe(address asset, uint256 amount, uint256 minAmountOut)"
+        execution_options: "none"
+        params:
+          - name: asset
+            param_type: "static"
+            operator: "oneOf"
+            values:
+              {%- for asset in payment_assets %}
+              - "{{ aliases.tokens[asset] }}"
+              {%- endfor %}
+            value_type: "address"
+          - name: amount
+            param_type: "static"
+            operator: "pass"
+          - name: minAmountOut
+            param_type: "static"
+            operator: "pass"
+
+      - signature: "function redeem(uint256 shareAmount, address asset, uint256 minAmountOut)"
+        execution_options: "none"
+        params:
+          - name: shareAmount
+            param_type: "static"
+            operator: "pass"
+          - name: asset
+            param_type: "static"
+            operator: "oneOf"
+            values:
+              {%- for asset in payment_assets %}
+              - "{{ aliases.tokens[asset] }}"
+              {%- endfor %}
+            value_type: "address"
+          - name: minAmountOut
+            param_type: "static"
+            operator: "pass"

@@ -1,44 +1,60 @@
 # install foundry submodules and action dependencies
 install:
     git submodule update --init --recursive
-    cd action && uv sync --all-groups
+    cd action && bun install
 
 # build solidity contracts
 contracts-build:
-    forge build --sizes
+    cd foundry && forge build --sizes
 
 # apply solidity formatting
 contracts-format:
-    forge fmt
+    cd foundry && forge fmt
 
 # check solidity formatting
 contracts-format-check:
-    forge fmt --check
+    cd foundry && forge fmt --check
 
 # run solidity tests
 contracts-test:
-    forge test -vvv
+    cd foundry && forge test -vvv
 
-# run action python tests
+# spawn anvil forking <upstream>, run forge tests against it under the fork profile, clean up
+# usage: just forge-test-fork https://sepolia-rpc.example
+forge-test-fork upstream:
+    @bash -c '\
+      anvil --fork-url {{upstream}} --port 8546 --quiet & \
+      ANVIL_PID=$$!; \
+      trap "kill $$ANVIL_PID 2>/dev/null" EXIT; \
+      for i in 1 2 3 4 5 6 7 8 9 10; do \
+        if curl -s -o /dev/null -X POST -H "Content-Type: application/json" \
+          --data "{\"jsonrpc\":\"2.0\",\"method\":\"eth_blockNumber\",\"params\":[],\"id\":1}" \
+          http://127.0.0.1:8546; then break; fi; \
+        sleep 1; \
+      done; \
+      cd foundry && FOUNDRY_PROFILE=fork RPC_URL=http://127.0.0.1:8546 forge test -vvv \
+    '
+
+# run action ts tests
 action-test:
-    cd action && uv run --group test pytest -v
+    cd action && bun run test
 
-# lint action python code
+# lint action ts code
 action-lint:
-    cd action && uv run --group dev ruff check .
+    cd action && bun run lint
 
-# apply action python formatting
+# apply action ts formatting
 action-format:
-    cd action && uv run --group dev ruff format .
+    cd action && bun run format
 
-# check action python formatting
+# check action ts formatting
 action-format-check:
-    cd action && uv run --group dev ruff format --check .
+    cd action && bun run format-check
 
-# type check action python code
+# type check action ts code
 action-typecheck:
-    cd action && uv run --group dev ty check src/
+    cd action && bun run typecheck
 
-# audit action python dependencies
+# audit action ts dependencies
 action-audit:
-    cd action && uv run --group dev pip-audit
+    cd action && bun audit

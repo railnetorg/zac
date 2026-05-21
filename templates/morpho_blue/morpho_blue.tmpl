@@ -1,0 +1,182 @@
+{#-
+  Morpho Blue — supply / withdraw on a curated market set.
+
+  Singleton is canonical-per-chain, resolved from
+  aliases.morpho_blue.singleton (NOT a param). Markets are referenced by
+  alias KEY under aliases.morpho_blue.markets. Each market entry must
+  declare the full MarketParams tuple:
+    loan_token, collateral_token, oracle, irm, lltv
+  All five are resolved with no existence guard — a missing key (or a
+  missing field on the resolved entry) throws at render time.
+
+  Loan-token approves are AUTO-DERIVED from the union of
+  markets[*].loan_token. The Safe only needs approve scopes for tokens
+  it can actually supply, and the markets list already names them — so
+  there is no separate `deposit_assets` param. Approves go straight to
+  the loan-token address pulled from the alias entry, bypassing
+  aliases.tokens (the alias registry is already the ground truth).
+
+  Required template params:
+    markets — list of market alias keys, e.g.
+              ["usdc_cbbtc_86", "usdc_wbtc_86", "usdc_wsteth_86"].
+              Each entry resolved via aliases.morpho_blue.markets[<key>].
+
+  Resolved from aliases (NOT params):
+    aliases.morpho_blue.singleton          — Morpho Blue singleton
+    aliases.morpho_blue.markets[<key>]     — MarketParams tuple per market
+
+  Output shape:
+    - One approve role per UNIQUE loan_token, with
+      spender = equal_to singleton.
+    - One supply / withdraw role on the singleton, with marketParams =
+      `or` of per-market `matches` over all five MarketParams fields.
+      `shares = 0` is pinned on supply (forces the assets-mode supply
+      path — shares-mode is a documented footgun). `onBehalf` is pinned
+      to the avatar on both functions; `receiver` is pinned to the
+      avatar on withdraw.
+
+  Length-1 optimization: when `markets` has exactly one entry, the
+  marketParams scoping emits a bare `matches` (no `or` wrapper).
+  Required because `or` with < 2 conditions is rejected at apply time
+  (action/apply/toSdkTargets.ts:67).
+-#}
+{%- from "_macros/common.tmpl" import approve -%}
+{%- set singleton = aliases.morpho_blue.singleton -%}
+{#- Pass 1: collect unique loan_tokens across the configured markets -#}
+{%- set loan_tokens = [] -%}
+{%- for key in markets -%}
+  {%- set market = aliases.morpho_blue.markets[key] -%}
+  {%- if market.loan_token not in loan_tokens -%}
+    {%- set _ = loan_tokens.push(market.loan_token) -%}
+  {%- endif -%}
+{%- endfor -%}
+roles:
+{%- for token in loan_tokens %}
+  {{ approve(token, singleton) | indent(2) }}
+{%- endfor %}
+
+  - address: "{{ singleton }}"
+    functions:
+      - signature: "function supply((address loanToken, address collateralToken, address oracle, address irm, uint256 lltv) marketParams, uint256 assets, uint256 shares, address onBehalf, bytes data)"
+        execution_options: "none"
+        params:
+          - name: marketParams
+            param_type: "tuple"
+{%- if markets | length == 1 %}
+{%- set m = aliases.morpho_blue.markets[markets[0]] %}
+            operator: "matches"
+            conditions:
+              - operator: "equal_to"
+                value: "{{ m.loan_token }}"
+                value_type: "address"
+              - operator: "equal_to"
+                value: "{{ m.collateral_token }}"
+                value_type: "address"
+              - operator: "equal_to"
+                value: "{{ m.oracle }}"
+                value_type: "address"
+              - operator: "equal_to"
+                value: "{{ m.irm }}"
+                value_type: "address"
+              - operator: "equal_to"
+                value: "{{ m.lltv }}"
+                value_type: "uint256"
+{%- else %}
+            operator: "or"
+            conditions:
+              {%- for key in markets %}
+              {%- set m = aliases.morpho_blue.markets[key] %}
+              - operator: "matches"
+                conditions:
+                  - operator: "equal_to"
+                    value: "{{ m.loan_token }}"
+                    value_type: "address"
+                  - operator: "equal_to"
+                    value: "{{ m.collateral_token }}"
+                    value_type: "address"
+                  - operator: "equal_to"
+                    value: "{{ m.oracle }}"
+                    value_type: "address"
+                  - operator: "equal_to"
+                    value: "{{ m.irm }}"
+                    value_type: "address"
+                  - operator: "equal_to"
+                    value: "{{ m.lltv }}"
+                    value_type: "uint256"
+              {%- endfor %}
+{%- endif %}
+          - name: assets
+            param_type: "static"
+            operator: "pass"
+          - name: shares
+            param_type: "static"
+            operator: "equal_to"
+            value: "0"
+            value_type: "uint256"
+          - name: onBehalf
+            param_type: "static"
+            operator: "equal_to_avatar"
+          - name: data
+            param_type: "dynamic"
+            operator: "pass"
+
+      - signature: "function withdraw((address loanToken, address collateralToken, address oracle, address irm, uint256 lltv) marketParams, uint256 assets, uint256 shares, address onBehalf, address receiver)"
+        execution_options: "none"
+        params:
+          - name: marketParams
+            param_type: "tuple"
+{%- if markets | length == 1 %}
+{%- set m = aliases.morpho_blue.markets[markets[0]] %}
+            operator: "matches"
+            conditions:
+              - operator: "equal_to"
+                value: "{{ m.loan_token }}"
+                value_type: "address"
+              - operator: "equal_to"
+                value: "{{ m.collateral_token }}"
+                value_type: "address"
+              - operator: "equal_to"
+                value: "{{ m.oracle }}"
+                value_type: "address"
+              - operator: "equal_to"
+                value: "{{ m.irm }}"
+                value_type: "address"
+              - operator: "equal_to"
+                value: "{{ m.lltv }}"
+                value_type: "uint256"
+{%- else %}
+            operator: "or"
+            conditions:
+              {%- for key in markets %}
+              {%- set m = aliases.morpho_blue.markets[key] %}
+              - operator: "matches"
+                conditions:
+                  - operator: "equal_to"
+                    value: "{{ m.loan_token }}"
+                    value_type: "address"
+                  - operator: "equal_to"
+                    value: "{{ m.collateral_token }}"
+                    value_type: "address"
+                  - operator: "equal_to"
+                    value: "{{ m.oracle }}"
+                    value_type: "address"
+                  - operator: "equal_to"
+                    value: "{{ m.irm }}"
+                    value_type: "address"
+                  - operator: "equal_to"
+                    value: "{{ m.lltv }}"
+                    value_type: "uint256"
+              {%- endfor %}
+{%- endif %}
+          - name: assets
+            param_type: "static"
+            operator: "pass"
+          - name: shares
+            param_type: "static"
+            operator: "pass"
+          - name: onBehalf
+            param_type: "static"
+            operator: "equal_to_avatar"
+          - name: receiver
+            param_type: "static"
+            operator: "equal_to_avatar"

@@ -1,0 +1,14 @@
+roles_modifier_address: "{{ aliases.modifiers.my_modifier }}"
+safe_address: "{{ aliases.safes.my_safe }}"
+chain_id: 1
+name: My Safe Maple Manager
+description: Deposit / request-redeem / redeem on Maple pools matching the listed assets
+configs:
+  - template: "../../../templates/maple/maple.tmpl"
+    key: MAPLE
+    members:
+      - "{{ aliases.signers.alice }}"
+      - "{{ aliases.signers.bob }}"
+    params:
+      deposit_assets:
+        - "USDC"

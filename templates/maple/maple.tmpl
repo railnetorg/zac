@@ -1,0 +1,77 @@
+{#-
+  Maple — deposit / requestRedeem / redeem on ERC-4626-style Maple pools.
+
+  Each entry in deposit_assets is the UNDERLYING asset of a Maple pool.
+  The template resolves the pool via aliases.maple[<asset_lower>_pool]
+  with NO existence guard. If the alias is missing on the active chain,
+  rendering throws — there is no silent fall-through. To grant the Safe
+  access to a pool, add the asset to deposit_assets AND make sure the
+  matching pool alias exists in aliases/<chain>/maple.yaml.
+
+  Required template params:
+    deposit_assets — list of token alias keys, each the underlying asset
+                     of a Maple pool on the active chain. Example: ["USDC"].
+                     - aliases.tokens[<key>]            must exist
+                     - aliases.maple[<key_lower>_pool]  must exist
+                     Either lookup missing ⇒ render-time error.
+
+  Exit flow (two-step, Maple-specific):
+    Maple pools settle redemptions periodically, so withdrawing is a
+    request-then-claim flow:
+      1. requestRedeem(shares, owner=safe)       — queues the redemption
+      2. (wait for the pool's next settlement)
+      3. redeem(shares, receiver=safe, owner=safe) — claims the assets
+
+  Output shape:
+    - One approve role per asset; spender = oneOf(all resolved pools) so
+      the Safe can approve any in-scope pool to pull its underlying.
+    - One deposit / requestRedeem / redeem role per resolved pool, with
+      every address parameter pinned to the avatar so shares and assets
+      can never be routed off the Safe.
+-#}
+{%- from "_macros/common.tmpl" import approve -%}
+{%- set pools = [] -%}
+{%- for token in deposit_assets -%}
+  {%- set _ = pools.push(aliases.maple[(token | lower) + "_pool"]) -%}
+{%- endfor -%}
+roles:
+{%- for token in deposit_assets %}
+  {{ approve(aliases.tokens[token], pools) | indent(2) }}
+{%- endfor %}
+{%- for pool in pools %}
+
+  - address: "{{ pool }}"
+    functions:
+      - signature: "function deposit(uint256 assets, address receiver)"
+        execution_options: "none"
+        params:
+          - name: assets
+            param_type: "static"
+            operator: "pass"
+          - name: receiver
+            param_type: "static"
+            operator: "equal_to_avatar"
+
+      - signature: "function requestRedeem(uint256 shares, address owner)"
+        execution_options: "none"
+        params:
+          - name: shares
+            param_type: "static"
+            operator: "pass"
+          - name: owner
+            param_type: "static"
+            operator: "equal_to_avatar"
+
+      - signature: "function redeem(uint256 shares, address receiver, address owner)"
+        execution_options: "none"
+        params:
+          - name: shares
+            param_type: "static"
+            operator: "pass"
+          - name: receiver
+            param_type: "static"
+            operator: "equal_to_avatar"
+          - name: owner
+            param_type: "static"
+            operator: "equal_to_avatar"
+{%- endfor %}

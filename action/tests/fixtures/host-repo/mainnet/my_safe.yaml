@@ -1,0 +1,6 @@
+roles_modifier_address: '{{ aliases.modifiers.my_modifier }}'
+safe_address: '{{ aliases.safes.my_safe }}'
+chain_id: 1
+name: My Safe
+description: placeholder
+configs: []

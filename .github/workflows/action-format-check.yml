@@ -1,0 +1,19 @@
+name: action-format-check
+
+on: [push]
+
+jobs:
+  action-format-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: extractions/setup-just@v4
+
+      - run: just install
+
+      - run: just action-format-check

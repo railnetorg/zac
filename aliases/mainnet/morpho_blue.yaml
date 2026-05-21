@@ -1,0 +1,39 @@
+singleton: "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb"
+
+# Markets, mirrored from railnet's morpho_blue_usdc.yaml. Each entry pins
+# loan_token, collateral_token, oracle, irm, lltv for `matches` scoping.
+markets:
+  usdc_cbbtc_86:
+    loan_token: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"  # USDC
+    collateral_token: "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf"  # cbBTC
+    oracle: "0xA6D6950c9F177F1De7f7757FB33539e3Ec60182a"
+    irm: "0x870aC11D48B15DB9a138Cf899d20F13F79Ba00BC"
+    lltv: "860000000000000000"
+
+  usdc_wbtc_86:
+    loan_token: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+    collateral_token: "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"  # WBTC
+    oracle: "0xDddd770BADd886dF3864029e4B377B5F6a2B6b83"
+    irm: "0x870aC11D48B15DB9a138Cf899d20F13F79Ba00BC"
+    lltv: "860000000000000000"
+
+  usdc_pteth_915:
+    loan_token: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+    collateral_token: "0x238a700eD6165261Cf8b2e544ba797BC11e466Ba"  # ptETH
+    oracle: "0x0cB1928EcA8783F05a07D9Ae2AfB33f38BFBEb78"
+    irm: "0x870aC11D48B15DB9a138Cf899d20F13F79Ba00BC"
+    lltv: "915000000000000000"
+
+  usdc_wsteth_86:
+    loan_token: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+    collateral_token: "0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0"  # wstETH
+    oracle: "0x48F7E36EB6B826B2dF4B2E630B62Cd25e89E40e2"
+    irm: "0x870aC11D48B15DB9a138Cf899d20F13F79Ba00BC"
+    lltv: "860000000000000000"
+
+  usdc_resteth_915:
+    loan_token: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+    collateral_token: "0x80ac24aA929eaF5013f6436cdA2a7ba190f5Cc0b"  # rsETH
+    oracle: "0x80032f4cb6E3573b9ed61E888AF658E48Fb790cC"
+    irm: "0x870aC11D48B15DB9a138Cf899d20F13F79Ba00BC"
+    lltv: "915000000000000000"

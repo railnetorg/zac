@@ -1,0 +1,61 @@
+{#-
+  Aave V3 — supply / withdraw on the canonical chain pool.
+
+  Required template params:
+    deposit_assets — list of token alias keys (e.g. ["USDC", "DAI"]) the
+                     Safe is permitted to supply / withdraw.
+
+  Resolved from aliases (NOT params):
+    aliases.tokens[<key>] — token address for each entry in deposit_assets
+    aliases.aave.pool      — Aave V3 Pool address for the active chain
+
+  Deployment configs only declare *what* assets are in scope; the pool and
+  token addresses are pulled from the per-chain alias registry. Both must
+  be defined on the active chain or rendering fails fast.
+-#}
+{%- from "_macros/common.tmpl" import approve -%}
+roles:
+{%- for token in deposit_assets %}
+  {{ approve(aliases.tokens[token], aliases.aave.pool) | indent(2) }}
+{%- endfor %}
+
+  - address: "{{ aliases.aave.pool }}"
+    functions:
+      - signature: "function supply(address asset, uint256 amount, address onBehalfOf, uint16 referralCode)"
+        execution_options: "none"
+        params:
+          - name: asset
+            param_type: "static"
+            operator: "oneOf"
+            values:
+              {%- for token in deposit_assets %}
+              - "{{ aliases.tokens[token] }}"
+              {%- endfor %}
+            value_type: "address"
+          - name: amount
+            param_type: "static"
+            operator: "pass"
+          - name: onBehalfOf
+            param_type: "static"
+            operator: "equal_to_avatar"
+          - name: referralCode
+            param_type: "static"
+            operator: "pass"
+
+      - signature: "function withdraw(address asset, uint256 amount, address onBehalfOf)"
+        execution_options: "none"
+        params:
+          - name: asset
+            param_type: "static"
+            operator: "oneOf"
+            values:
+              {%- for token in deposit_assets %}
+              - "{{ aliases.tokens[token] }}"
+              {%- endfor %}
+            value_type: "address"
+          - name: amount
+            param_type: "static"
+            operator: "pass"
+          - name: onBehalfOf
+            param_type: "static"
+            operator: "equal_to_avatar"

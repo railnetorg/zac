@@ -1,0 +1,156 @@
+{#-
+  Ondo Global Markets — mintWithAttestation / redeemWithAttestation.
+
+  The GM Router is canonical-per-chain, resolved from aliases.ondo_gm.router
+  inside the template (NOT a param). GM token addresses live in
+  aliases.ondo_gm.tokens (Ondo-specific, namespace-scoped). Payment
+  assets use the standard token registry.
+
+  Required template params:
+    gm_tokens      — list of GM token alias keys (e.g.
+                     ["HYGon", "TLTon", "SHYon", "IEFon"]). Each entry
+                     resolved via aliases.ondo_gm.tokens[<key>] with no
+                     existence guard ⇒ render-time error if missing.
+    payment_assets — list of token alias keys used as paymentAsset
+                     (e.g. ["USDC"]). Each resolved via
+                     aliases.tokens[<key>], same loud-fail behaviour.
+
+  Resolved from aliases (NOT params):
+    aliases.ondo_gm.router        — GM Router contract
+    aliases.ondo_gm.tokens[<key>] — each gm_tokens entry
+    aliases.tokens[<key>]         — each payment_assets entry
+
+  Scoping:
+    - Attestation order tuple (9 fields): only `recipient` (index 3) is
+      pinned. The tuple is wrapped in an `or` of per-recipient `matches`
+      so the role can mint into any enumerated GM token but no others.
+      When gm_tokens has EXACTLY 1 entry, the `or` wrapper is dropped
+      and a bare `matches` is emitted — `or` with <2 conditions is
+      degenerate and rejected at apply time
+      (action/apply/toSdkTargets.ts:67).
+    - paymentAsset is pinned to `oneOf(payment_assets)` (`equal_to` is
+      semantically equivalent for length 1; we keep oneOf for uniformity).
+    - signature is left as `dynamic` `pass` (Ondo verifies it server-side).
+
+  NOTE — Order tuple field NAMES below are best-effort guesses; the GM
+  router exposes the struct positionally. Only `recipient` matters for
+  scoping; renaming the other fields does not affect codegen as long as
+  the order and types match the on-chain ABI.
+-#}
+{%- from "_macros/common.tmpl" import approve -%}
+{%- set router = aliases.ondo_gm.router -%}
+roles:
+{%- for asset in payment_assets %}
+  {{ approve(aliases.tokens[asset], router) | indent(2) }}
+{%- endfor %}
+{%- for key in gm_tokens %}
+  {{ approve(aliases.ondo_gm.tokens[key], router) | indent(2) }}
+{%- endfor %}
+
+  - address: "{{ router }}"
+    functions:
+      - signature: "function mintWithAttestation((uint256 amount, uint256 deadline, bytes32 hashedNonce, address recipient, uint256 amountIn, uint256 expectedAmountOut, uint256 maxAmountOut, uint8 v, bytes32 r) order, bytes signature, address paymentAsset, uint256 minPaymentReceived)"
+        execution_options: "none"
+        params:
+          - name: order
+            param_type: "tuple"
+{%- if gm_tokens | length == 1 %}
+            operator: "matches"
+            conditions:
+              - operator: "pass"
+              - operator: "pass"
+              - operator: "pass"
+              - operator: "equal_to"
+                value: "{{ aliases.ondo_gm.tokens[gm_tokens[0]] }}"
+                value_type: "address"
+              - operator: "pass"
+              - operator: "pass"
+              - operator: "pass"
+              - operator: "pass"
+              - operator: "pass"
+{%- else %}
+            operator: "or"
+            conditions:
+              {%- for key in gm_tokens %}
+              - operator: "matches"
+                conditions:
+                  - operator: "pass"
+                  - operator: "pass"
+                  - operator: "pass"
+                  - operator: "equal_to"
+                    value: "{{ aliases.ondo_gm.tokens[key] }}"
+                    value_type: "address"
+                  - operator: "pass"
+                  - operator: "pass"
+                  - operator: "pass"
+                  - operator: "pass"
+                  - operator: "pass"
+              {%- endfor %}
+{%- endif %}
+          - name: signature
+            param_type: "dynamic"
+            operator: "pass"
+          - name: paymentAsset
+            param_type: "static"
+            operator: "oneOf"
+            values:
+              {%- for asset in payment_assets %}
+              - "{{ aliases.tokens[asset] }}"
+              {%- endfor %}
+            value_type: "address"
+          - name: minPaymentReceived
+            param_type: "static"
+            operator: "pass"
+
+      - signature: "function redeemWithAttestation((uint256 amount, uint256 deadline, bytes32 hashedNonce, address recipient, uint256 amountIn, uint256 expectedAmountOut, uint256 maxAmountOut, uint8 v, bytes32 r) order, bytes signature, address paymentAsset, uint256 minPaymentReceived)"
+        execution_options: "none"
+        params:
+          - name: order
+            param_type: "tuple"
+{%- if gm_tokens | length == 1 %}
+            operator: "matches"
+            conditions:
+              - operator: "pass"
+              - operator: "pass"
+              - operator: "pass"
+              - operator: "equal_to"
+                value: "{{ aliases.ondo_gm.tokens[gm_tokens[0]] }}"
+                value_type: "address"
+              - operator: "pass"
+              - operator: "pass"
+              - operator: "pass"
+              - operator: "pass"
+              - operator: "pass"
+{%- else %}
+            operator: "or"
+            conditions:
+              {%- for key in gm_tokens %}
+              - operator: "matches"
+                conditions:
+                  - operator: "pass"
+                  - operator: "pass"
+                  - operator: "pass"
+                  - operator: "equal_to"
+                    value: "{{ aliases.ondo_gm.tokens[key] }}"
+                    value_type: "address"
+                  - operator: "pass"
+                  - operator: "pass"
+                  - operator: "pass"
+                  - operator: "pass"
+                  - operator: "pass"
+              {%- endfor %}
+{%- endif %}
+          - name: signature
+            param_type: "dynamic"
+            operator: "pass"
+          - name: paymentAsset
+            param_type: "static"
+            operator: "oneOf"
+            values:
+              {%- for asset in payment_assets %}
+              - "{{ aliases.tokens[asset] }}"
+              {%- endfor %}
+            value_type: "address"
+          - name: minPaymentReceived
+            param_type: "static"
+            operator: "pass"

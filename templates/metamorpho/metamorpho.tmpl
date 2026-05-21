@@ -1,0 +1,103 @@
+{#-
+  MetaMorpho — ERC-4626 vault LP (deposit / mint / withdraw / redeem).
+
+  Each entry in `vaults` is a vault alias KEY. The template resolves it
+  via aliases.metamorpho[<key>] with NO existence guard. If the alias is
+  missing on the active chain, rendering throws — there is no silent
+  fall-through. To grant the Safe access to a vault, add the key to
+  `vaults` AND ensure the matching entry exists in
+  aliases/<chain>/metamorpho.yaml.
+
+  Each resolved alias entry must declare:
+    address — the MetaMorpho vault contract
+    asset   — the TOKEN ALIAS KEY of the vault's underlying (e.g. "USDC");
+              resolved via aliases.tokens[<asset>], also with no guard.
+
+  Required template params:
+    vaults — list of vault alias keys, e.g.
+             ["steakhouse_usdc", "gauntlet_usdc_core", "gauntlet_weth_core"].
+             - aliases.metamorpho[<key>]              must exist
+             - aliases.tokens[<resolved asset>]       must exist
+             Either lookup missing ⇒ render-time error.
+
+  Output shape:
+    - One approve role per UNIQUE underlying. Multiple vaults sharing an
+      underlying are aggregated into a single
+      approve(spender = oneOf(vault_addresses)) role. This is required —
+      the emit-phase merger rejects duplicate (address, signature) pairs
+      within a role key.
+    - One ERC-4626 role per vault, with receiver/owner pinned to the
+      avatar so shares and assets can never be routed off the Safe.
+-#}
+{%- from "_macros/common.tmpl" import approve -%}
+{#- Pass 1: build the unique list of underlying token alias keys -#}
+{%- set assets = [] -%}
+{%- for key in vaults -%}
+  {%- set vault = aliases.metamorpho[key] -%}
+  {%- if vault.asset not in assets -%}
+    {%- set _ = assets.push(vault.asset) -%}
+  {%- endif -%}
+{%- endfor -%}
+roles:
+{%- for asset in assets %}
+  {#- Pass 2: gather every vault address whose underlying == asset -#}
+  {%- set spenders = [] -%}
+  {%- for k in vaults -%}
+    {%- set v = aliases.metamorpho[k] -%}
+    {%- if v.asset == asset -%}
+      {%- set _ = spenders.push(v.address) -%}
+    {%- endif -%}
+  {%- endfor %}
+  {{ approve(aliases.tokens[asset], spenders) | indent(2) }}
+{%- endfor %}
+{%- for key in vaults %}
+{%- set vault = aliases.metamorpho[key] %}
+
+  - address: "{{ vault.address }}"
+    functions:
+      - signature: "function deposit(uint256 assets, address receiver)"
+        execution_options: "none"
+        params:
+          - name: assets
+            param_type: "static"
+            operator: "pass"
+          - name: receiver
+            param_type: "static"
+            operator: "equal_to_avatar"
+
+      - signature: "function mint(uint256 shares, address receiver)"
+        execution_options: "none"
+        params:
+          - name: shares
+            param_type: "static"
+            operator: "pass"
+          - name: receiver
+            param_type: "static"
+            operator: "equal_to_avatar"
+
+      - signature: "function withdraw(uint256 assets, address receiver, address owner)"
+        execution_options: "none"
+        params:
+          - name: assets
+            param_type: "static"
+            operator: "pass"
+          - name: receiver
+            param_type: "static"
+            operator: "equal_to_avatar"
+          - name: owner
+            param_type: "static"
+            operator: "equal_to_avatar"
+
+      - signature: "function redeem(uint256 shares, address receiver, address owner)"
+        execution_options: "none"
+        params:
+          - name: shares
+            param_type: "static"
+            operator: "pass"
+          - name: receiver
+            param_type: "static"
+            operator: "equal_to_avatar"
+          - name: owner
+            param_type: "static"
+            operator: "equal_to_avatar"
+{%- endfor %}

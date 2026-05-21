@@ -1,0 +1,16 @@
+roles_modifier_address: "{{ aliases.modifiers.my_modifier }}"
+safe_address: "{{ aliases.safes.my_safe }}"
+chain_id: 1
+name: My Safe MetaMorpho LP
+description: Deposit and withdraw on curated MetaMorpho vaults; receiver/owner pinned to avatar
+configs:
+  - template: "../../../templates/metamorpho/metamorpho.tmpl"
+    key: METAMORPHO_LP
+    members:
+      - "{{ aliases.signers.alice }}"
+      - "{{ aliases.signers.bob }}"
+    params:
+      vaults:
+        - "steakhouse_usdc"
+        - "gauntlet_usdc_core"
+        - "gauntlet_weth_core"

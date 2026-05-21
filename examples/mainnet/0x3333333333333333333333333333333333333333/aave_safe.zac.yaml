@@ -1,0 +1,21 @@
+roles_modifier_address: "{{ aliases.modifiers.my_modifier }}"
+safe_address: "{{ aliases.safes.my_safe }}"
+chain_id: 1
+name: My Safe AAVE V3 Manager
+description: Supply and withdraw on Aave V3
+configs:
+  - template: "../../../templates/aave_v3/aave_v3.tmpl"
+    key: AAVE_V3
+    members:
+      - "{{ aliases.signers.alice }}"
+      - "{{ aliases.signers.bob }}"
+    params:
+      deposit_assets:
+        - "USDC"
+        - "USDT"
+        - "DAI"
+        - "WETH"
+        - "wstETH"
+        - "cbETH"
+        - "WBTC"
+        - "LINK"

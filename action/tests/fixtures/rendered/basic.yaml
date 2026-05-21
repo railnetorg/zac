@@ -1,0 +1,8 @@
+parent:
+  child: x
+items:
+  - foo
+  - bar
+anchored: &a
+  k: 1
+ref: *a

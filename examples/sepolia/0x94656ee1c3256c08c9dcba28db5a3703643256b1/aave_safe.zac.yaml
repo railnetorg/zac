@@ -1,0 +1,13 @@
+roles_modifier_address: "{{ aliases.modifiers.my_modifier }}"
+safe_address: "{{ aliases.safes.my_safe }}"
+chain_id: 11155111
+name: Sepolia Test Safe AAVE V3 Manager
+description: AAVE V3 supply/withdraw on Sepolia, single-member test config
+configs:
+  - template: "../../../templates/aave_v3/aave_v3.tmpl"
+    key: AAVE_V3
+    members:
+      - "{{ aliases.signers.sepolia_member }}"
+    params:
+      deposit_assets:
+        - "DAI"

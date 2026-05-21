@@ -1,13 +1,17 @@
-name: "Zac"
-description: "Sets up uv and prints Hello from the zac Python package"
-
+name: zac
+description: Generate Zodiac Roles V2 configs from `*.zac.yaml` sources
+inputs:
+  config-path:
+    description: Path to a `.zac.yaml` source file or a directory of sources (walked recursively). Generated `.yaml` files are written alongside each source.
+    required: true
 runs:
-  using: "composite"
+  using: composite
   steps:
-    - name: Setup uv
-      uses: astral-sh/setup-uv@v5
-
-    - name: Say Hello
-      shell: bash
-      working-directory: ${{ github.action_path }}
-      run: uv run zac
+    - uses: oven-sh/setup-bun@v2
+    - shell: bash
+      env:
+        ZAC_CONFIG_PATH: ${{ inputs.config-path }}
+      run: |
+        cd "${{ github.action_path }}/.."
+        bun install --cwd action
+        bun ./action/cli.ts generate "$ZAC_CONFIG_PATH"

@@ -13,4 +13,14 @@ docs/
 # Dotenv file
 .env
 
+# bun / typescript
+action/node_modules/
+action/.bun-cache/
+action/dist/
+action/coverage/
+action/tests/.tmp-*
 
+# Legion plugin artifacts (scrolls, plans, run markers)
+.legion/
+**/.legion/
+.plans/

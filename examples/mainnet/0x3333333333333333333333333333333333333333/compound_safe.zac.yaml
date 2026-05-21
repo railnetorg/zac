@@ -1,0 +1,16 @@
+roles_modifier_address: "{{ aliases.modifiers.my_modifier }}"
+safe_address: "{{ aliases.safes.my_safe }}"
+chain_id: 1
+name: My Safe Compound V3 Manager
+description: Supply and withdraw base assets across all Compound V3 markets on mainnet
+configs:
+  - template: "../../../templates/compound_v3/compound_v3.tmpl"
+    key: COMPOUND_V3
+    members:
+      - "{{ aliases.signers.alice }}"
+      - "{{ aliases.signers.bob }}"
+    params:
+      deposit_assets:
+        - "USDC"
+        - "USDT"
+        - "WETH"

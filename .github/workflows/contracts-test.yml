@@ -1,6 +1,6 @@
 name: contracts-test
 
-on: [push, pull_request]
+on: [push]
 
 jobs:
   contracts-test:

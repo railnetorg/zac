@@ -1,0 +1,192 @@
+{#-
+  Ethena — Institutional Mint & Redeem (USDe) + sUSDe stake / unstake.
+
+  ────────────────────────────────────────────────────────────────────────────
+  USDe institutional RFQ flow
+  ────────────────────────────────────────────────────────────────────────────
+  Enables a Safe to participate in Ethena's institutional RFQ flow for
+  both directions (mint USDC/USDT → USDe, redeem USDe → USDC/USDT)
+  without ever exposing a signing key on the Safe and without owners
+  signing per order.
+
+  How the flow works:
+    1. Safe registers an off-chain delegated signer (an `operator` EOA)
+       on EthenaMinting via setDelegatedSigner(operator). The operator
+       confirms from its own address (confirmDelegatedSigner is NOT
+       called via Roles — it must come from the delegate EOA itself).
+    2. Safe approves EthenaMinting to pull collateral and/or USDe.
+    3. Operator EOA signs Order EIP-712 payloads off-chain and POSTs
+       them to Ethena's /order endpoint. Ethena's MINTER role submits
+       mint() / redeem() on-chain — the Safe never calls those
+       functions directly, so they are NOT scoped here.
+
+  Per-order on-chain calls (mint / redeem) are made by Ethena, not the
+  Safe, so this template scopes only what the Safe itself must call:
+    - approve on the relevant ERC20s, with spender pinned to EthenaMinting
+    - setDelegatedSigner pinned to the exact operator EOA
+    - removeDelegatedSigner so the operator can self-revoke if compromised
+
+  Beneficiary binding:
+    EthenaMinting uses a per-benefactor approved-beneficiary set
+    (_approvedBeneficiariesPerBenefactor, written by msg.sender via
+    setApprovedBeneficiary). verifyOrder short-circuits the whitelist
+    check when benefactor == beneficiary. Therefore, if the Safe never
+    calls setApprovedBeneficiary, the on-chain contract enforces that
+    any Order signed by the delegate MUST have beneficiary == safe —
+    otherwise the call reverts with InvalidBeneficiaryAddress. This
+    template intentionally does NOT grant setApprovedBeneficiary;
+    Owners must also never call it directly, or the guarantee is lost.
+
+  ────────────────────────────────────────────────────────────────────────────
+  sUSDe stake / unstake (ERC-4626 vault: StakedUSDe)
+  ────────────────────────────────────────────────────────────────────────────
+  The Safe can stake USDe → sUSDe and exit via either path:
+
+    Entry (USDe → sUSDe):
+      - deposit(assets, receiver=safe)
+      - mint(shares,    receiver=safe)
+
+    Exit, cooldown-gated (current mainnet mode, cooldownDuration > 0):
+      - cooldownAssets(assets)  or  cooldownShares(shares)
+      - …wait cooldownDuration…
+      - unstake(receiver=safe)  → claims USDe from the silo to the Safe
+
+    Exit, instant (only when cooldownDuration == 0; reverts otherwise):
+      - withdraw(assets, receiver=safe, owner=safe)
+      - redeem(shares,   receiver=safe, owner=safe)
+
+  All receivers / owners are pinned to the avatar so funds always return
+  to the Safe. cooldownAssets / cooldownShares have no address parameter;
+  the cooldown is bound to msg.sender (the Safe) inside the contract, so
+  amounts are free to vary.
+
+  ────────────────────────────────────────────────────────────────────────────
+  Required template params
+  ────────────────────────────────────────────────────────────────────────────
+    operator           — delegated signer EOA (off-chain order signer).
+                         Pass it explicitly, typically via
+                         `{{ aliases.signers.<name> }}`. Missing alias ⇒
+                         render-time error.
+    collateral_assets  — list of token alias keys accepted for the MINT
+                         direction (e.g. ["USDC", "USDT"]). Each entry
+                         resolved via aliases.tokens[<key>].
+
+  Resolved from aliases (NOT params):
+    aliases.ethena.minting  — EthenaMinting contract
+    aliases.ethena.susde    — StakedUSDe (sUSDe) ERC-4626 vault
+    aliases.tokens.USDe     — USDe ERC-20 (USDe lives in the standard
+                              token registry because other protocols use
+                              it as collateral)
+    aliases.tokens[<key>]   — each collateral_assets entry
+-#}
+{%- from "_macros/common.tmpl" import approve -%}
+{%- set minting = aliases.ethena.minting -%}
+{%- set susde   = aliases.ethena.susde -%}
+{%- set usde    = aliases.tokens.USDe -%}
+roles:
+  {{ approve(usde, [minting, susde]) | indent(2) }}
+{%- for asset in collateral_assets %}
+  {{ approve(aliases.tokens[asset], minting) | indent(2) }}
+{%- endfor %}
+
+  - address: "{{ minting }}"
+    functions:
+      # setDelegatedSigner(delegateTo): pin to the exact, pre-agreed
+      # operator EOA — without this, a Roles member could register any
+      # arbitrary address as a delegated signer for the Safe on Ethena.
+      - signature: "function setDelegatedSigner(address delegateTo)"
+        execution_options: "none"
+        params:
+          - name: delegateTo
+            param_type: "static"
+            operator: "equal_to"
+            value: "{{ operator }}"
+            value_type: "address"
+
+      # removeDelegatedSigner(removedSigner): same pin so a rogue Roles
+      # member can't grief by removing a different delegate that may
+      # belong to a future flow.
+      - signature: "function removeDelegatedSigner(address removedSigner)"
+        execution_options: "none"
+        params:
+          - name: removedSigner
+            param_type: "static"
+            operator: "equal_to"
+            value: "{{ operator }}"
+            value_type: "address"
+
+  - address: "{{ susde }}"
+    functions:
+      # Entry — USDe → sUSDe.
+      - signature: "function deposit(uint256 assets, address receiver)"
+        execution_options: "none"
+        params:
+          - name: assets
+            param_type: "static"
+            operator: "pass"
+          - name: receiver
+            param_type: "static"
+            operator: "equal_to_avatar"
+
+      - signature: "function mint(uint256 shares, address receiver)"
+        execution_options: "none"
+        params:
+          - name: shares
+            param_type: "static"
+            operator: "pass"
+          - name: receiver
+            param_type: "static"
+            operator: "equal_to_avatar"
+
+      # Instant exit (only succeeds while cooldownDuration == 0; reverts
+      # otherwise — kept so the same template works in both modes).
+      - signature: "function withdraw(uint256 assets, address receiver, address owner)"
+        execution_options: "none"
+        params:
+          - name: assets
+            param_type: "static"
+            operator: "pass"
+          - name: receiver
+            param_type: "static"
+            operator: "equal_to_avatar"
+          - name: owner
+            param_type: "static"
+            operator: "equal_to_avatar"
+
+      - signature: "function redeem(uint256 shares, address receiver, address owner)"
+        execution_options: "none"
+        params:
+          - name: shares
+            param_type: "static"
+            operator: "pass"
+          - name: receiver
+            param_type: "static"
+            operator: "equal_to_avatar"
+          - name: owner
+            param_type: "static"
+            operator: "equal_to_avatar"
+
+      # Cooldown-gated exit (current mainnet mode). Cooldown is bound to
+      # msg.sender (the Safe) inside the contract — no address param to pin.
+      - signature: "function cooldownAssets(uint256 assets)"
+        execution_options: "none"
+        params:
+          - name: assets
+            param_type: "static"
+            operator: "pass"
+
+      - signature: "function cooldownShares(uint256 shares)"
+        execution_options: "none"
+        params:
+          - name: shares
+            param_type: "static"
+            operator: "pass"
+
+      # After cooldownDuration has elapsed, claim USDe from the silo to
+      # the Safe. Receiver pinned to the avatar so funds can't be diverted.
+      - signature: "function unstake(address receiver)"
+        execution_options: "none"
+        params:
+          - name: receiver
+            param_type: "static"
+            operator: "equal_to_avatar"
