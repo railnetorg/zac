@@ -42,14 +42,18 @@ describe('buildSelectorMap', () => {
   it('TBS-3: aggregates across multiple generated configs', () => {
     const m = buildSelectorMap([
       gen(['function approve(address spender, uint256 amount)']),
-      gen(['function supply(address asset, uint256 amount, address onBehalfOf, uint16 referralCode)']),
+      gen([
+        'function supply(address asset, uint256 amount, address onBehalfOf, uint16 referralCode)',
+      ]),
     ]);
     expect(m['0x095ea7b3']).toBe('approve');
     expect(Object.values(m)).toContain('supply');
   });
 
   it('TBS-4: malformed signatures are silently skipped (do not throw)', () => {
-    const m = buildSelectorMap([gen(['not a real signature', 'function approve(address,uint256)'])]);
+    const m = buildSelectorMap([
+      gen(['not a real signature', 'function approve(address,uint256)']),
+    ]);
     expect(m['0x095ea7b3']).toBe('approve');
   });
 
