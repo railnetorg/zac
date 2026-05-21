@@ -1,32 +1,50 @@
 {#-
-  Compound V3 (Comet) — supply / withdraw
+  Compound V3 — supply / withdraw, base-asset only.
+
+  Every entry in deposit_assets is treated as a Compound V3 BASE asset:
+  the template resolves its market via aliases.compound[<asset_lower>_market]
+  with NO existence guard. If the alias is missing on the active chain,
+  rendering throws (`throwOnUndefined: true`) — there is no silent
+  fall-through and no collateral-only path. To grant the Safe access to a
+  market, add the asset to deposit_assets AND make sure the matching
+  market alias exists in aliases/<chain>/compound.yaml.
 
   Required template params:
-    comet_address       — address of the Comet pool contract
-    deposit_assets[]    — list of { address, symbol } describing the assets
-                          this role is allowed to supply / withdraw
+    deposit_assets — list of token alias keys, each of which must be the
+                     base asset of a Compound V3 market on the active
+                     chain. Example: ["USDC", "USDT", "WETH"].
+                     - aliases.tokens[<key>]            must exist
+                     - aliases.compound[<key_lower>_market] must exist
+                     Either lookup missing ⇒ render-time error naming the
+                     undefined key.
 
-  Mirrors the policy intent of railnet's `compound_v3.yaml`: the role can
-  approve the Comet for each deposit asset and supply/withdraw any of them.
+  Output shape:
+    - One approve role per asset; spender = oneOf(all resolved markets),
+      so the Safe can approve any in-scope market to spend any in-scope
+      base asset (covers same-market and cross-market approvals — handy
+      if Compound later adds collateral support for a base asset).
+    - One supply/withdraw role per resolved market; asset = oneOf(all
+      deposit_assets). Over-permissioning across (market, asset) pairs is
+      harmless: Compound reverts on unsupported pairs at the contract
+      layer.
+
+  Not supported by this template:
+    - Posting non-base-asset collateral (e.g. WBTC, wstETH, LINK). Those
+      assets have no `<asset>_market` alias and listing them throws.
+      A future variant can split into base / collateral lists if needed.
 -#}
+{%- from "_macros/common.tmpl" import approve -%}
+{%- set markets = [] -%}
+{%- for token in deposit_assets -%}
+  {%- set _ = markets.push(aliases.compound[(token | lower) + "_market"]) -%}
+{%- endfor -%}
 roles:
-{%- for asset in deposit_assets %}
-  - address: "{{ asset.address }}" # approval for {{ asset.symbol }}
-    functions:
-      - signature: "function approve(address spender, uint256 amount)"
-        execution_options: "none"
-        params:
-          - name: spender
-            param_type: "static"
-            operator: "equal_to"
-            value: "{{ comet_address }}"
-            value_type: "address"
-          - name: amount
-            param_type: "static"
-            operator: "pass"
+{%- for token in deposit_assets %}
+  {{ approve(aliases.tokens[token], markets) | indent(2) }}
 {%- endfor %}
+{%- for comet in markets %}
 
-  - address: "{{ comet_address }}"
+  - address: "{{ comet }}"
     functions:
       - signature: "function supply(address asset, uint256 amount)"
         execution_options: "none"
@@ -35,8 +53,8 @@ roles:
             param_type: "static"
             operator: "oneOf"
             values:
-              {%- for asset in deposit_assets %}
-              - "{{ asset.address }}"
+              {%- for token in deposit_assets %}
+              - "{{ aliases.tokens[token] }}"
               {%- endfor %}
             value_type: "address"
           - name: amount
@@ -50,10 +68,11 @@ roles:
             param_type: "static"
             operator: "oneOf"
             values:
-              {%- for asset in deposit_assets %}
-              - "{{ asset.address }}"
+              {%- for token in deposit_assets %}
+              - "{{ aliases.tokens[token] }}"
               {%- endfor %}
             value_type: "address"
           - name: amount
             param_type: "static"
             operator: "pass"
+{%- endfor %}

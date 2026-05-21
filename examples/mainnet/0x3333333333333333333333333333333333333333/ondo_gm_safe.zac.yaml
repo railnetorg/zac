@@ -1,0 +1,19 @@
+roles_modifier_address: "{{ aliases.modifiers.my_modifier }}"
+safe_address: "{{ aliases.safes.my_safe }}"
+chain_id: 1
+name: My Safe Ondo GM Manager
+description: Mint and redeem Ondo Global Markets tokens via the GM Router
+configs:
+  - template: "../../../templates/ondo_gm/ondo_gm.tmpl"
+    key: ONDO_GM
+    members:
+      - "{{ aliases.signers.alice }}"
+      - "{{ aliases.signers.bob }}"
+    params:
+      gm_tokens:
+        - "HYGon"
+        - "TLTon"
+        - "SHYon"
+        - "IEFon"
+      payment_assets:
+        - "USDC"

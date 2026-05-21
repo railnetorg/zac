@@ -1,3 +1,41 @@
-{%- macro addr_with_comment(addr, label) -%}
-"{{ addr }}" # {{ label }}
+{#-
+  approve(token_address, spender)
+
+  Emit a Roles V2 role that grants ONLY erc20.approve(spender, *) on
+  `token_address`, with the spender pinned. Pass `spender` as a string for
+  a single-spender `equal_to`, or as a list of strings for a `oneOf` over
+  multiple spenders.
+
+  Output starts at column 0 with `- address: …`. Callers should indent it
+  to the appropriate depth under `roles:`, e.g.:
+
+      roles:
+      {%- for token in deposit_assets %}
+        {{ approve(aliases.tokens[token], aliases.aave.pool) | indent(2) }}
+      {%- endfor %}
+-#}
+{%- macro approve(token_address, spender) -%}
+- address: "{{ token_address }}"
+  functions:
+    - signature: "function approve(address spender, uint256 amount)"
+      execution_options: "none"
+      params:
+        - name: spender
+{%- if spender is string %}
+          param_type: "static"
+          operator: "equal_to"
+          value: "{{ spender }}"
+          value_type: "address"
+{%- else %}
+          param_type: "static"
+          operator: "oneOf"
+          values:
+{%- for s in spender %}
+            - "{{ s }}"
+{%- endfor %}
+          value_type: "address"
+{%- endif %}
+        - name: amount
+          param_type: "static"
+          operator: "pass"
 {%- endmacro -%}

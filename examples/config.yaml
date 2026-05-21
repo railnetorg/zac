@@ -3,9 +3,14 @@ aliases:
     signers: ./aliases/signers.yaml
   mainnet:
     aave: ../aliases/mainnet/aave.yaml
+    compound: ../aliases/mainnet/compound.yaml
+    ethena: ../aliases/mainnet/ethena.yaml
+    maple: ../aliases/mainnet/maple.yaml
     tokens: ../aliases/mainnet/tokens.yaml
     metamorpho: ../aliases/mainnet/metamorpho.yaml
     morpho_blue: ../aliases/mainnet/morpho_blue.yaml
+    ondo_gm: ../aliases/mainnet/ondo_gm.yaml
+    ondo_ousg: ../aliases/mainnet/ondo_ousg.yaml
     safes: ./aliases/mainnet/safes.yaml
     modifiers: ./aliases/mainnet/modifiers.yaml
   sepolia:

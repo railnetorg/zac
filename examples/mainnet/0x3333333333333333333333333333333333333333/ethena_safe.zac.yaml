@@ -1,0 +1,16 @@
+roles_modifier_address: "{{ aliases.modifiers.my_modifier }}"
+safe_address: "{{ aliases.safes.my_safe }}"
+chain_id: 1
+name: My Safe Ethena Manager
+description: USDe institutional mint/redeem + sUSDe stake/unstake
+configs:
+  - template: "../../../templates/ethena/ethena.tmpl"
+    key: ETHENA
+    members:
+      - "{{ aliases.signers.alice }}"
+      - "{{ aliases.signers.bob }}"
+    params:
+      operator: "{{ aliases.signers.ethena_operator }}"
+      collateral_assets:
+        - "USDC"
+        - "USDT"

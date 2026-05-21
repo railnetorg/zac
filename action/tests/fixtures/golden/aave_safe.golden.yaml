@@ -21,7 +21,85 @@ roles:
               - name: amount
                 param_type: static
                 operator: pass
+      - address: "0xdAC17F958D2ee523a2206206994597C13D831ec7"
+        functions:
+          - signature: function approve(address spender, uint256 amount)
+            execution_options: none
+            params:
+              - name: spender
+                param_type: static
+                operator: equal_to
+                value: "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"
+                value_type: address
+              - name: amount
+                param_type: static
+                operator: pass
       - address: "0x6B175474E89094C44Da98b954EedeAC495271d0F"
+        functions:
+          - signature: function approve(address spender, uint256 amount)
+            execution_options: none
+            params:
+              - name: spender
+                param_type: static
+                operator: equal_to
+                value: "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"
+                value_type: address
+              - name: amount
+                param_type: static
+                operator: pass
+      - address: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+        functions:
+          - signature: function approve(address spender, uint256 amount)
+            execution_options: none
+            params:
+              - name: spender
+                param_type: static
+                operator: equal_to
+                value: "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"
+                value_type: address
+              - name: amount
+                param_type: static
+                operator: pass
+      - address: "0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0"
+        functions:
+          - signature: function approve(address spender, uint256 amount)
+            execution_options: none
+            params:
+              - name: spender
+                param_type: static
+                operator: equal_to
+                value: "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"
+                value_type: address
+              - name: amount
+                param_type: static
+                operator: pass
+      - address: "0xBe9895146f7AF43049ca1c1AE358B0541Ea49704"
+        functions:
+          - signature: function approve(address spender, uint256 amount)
+            execution_options: none
+            params:
+              - name: spender
+                param_type: static
+                operator: equal_to
+                value: "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"
+                value_type: address
+              - name: amount
+                param_type: static
+                operator: pass
+      - address: "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"
+        functions:
+          - signature: function approve(address spender, uint256 amount)
+            execution_options: none
+            params:
+              - name: spender
+                param_type: static
+                operator: equal_to
+                value: "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"
+                value_type: address
+              - name: amount
+                param_type: static
+                operator: pass
+      - address: "0x514910771AF9Ca656af840dff83E8264EcF986CA"
         functions:
           - signature: function approve(address spender, uint256 amount)
             execution_options: none
@@ -44,7 +122,13 @@ roles:
                 operator: oneOf
                 values:
                   - "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+                  - "0xdAC17F958D2ee523a2206206994597C13D831ec7"
                   - "0x6B175474E89094C44Da98b954EedeAC495271d0F"
+                  - "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+                  - "0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0"
+                  - "0xBe9895146f7AF43049ca1c1AE358B0541Ea49704"
+                  - "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"
+                  - "0x514910771AF9Ca656af840dff83E8264EcF986CA"
                 value_type: address
               - name: amount
                 param_type: static
@@ -63,7 +147,13 @@ roles:
                 operator: oneOf
                 values:
                   - "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+                  - "0xdAC17F958D2ee523a2206206994597C13D831ec7"
                   - "0x6B175474E89094C44Da98b954EedeAC495271d0F"
+                  - "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+                  - "0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0"
+                  - "0xBe9895146f7AF43049ca1c1AE358B0541Ea49704"
+                  - "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"
+                  - "0x514910771AF9Ca656af840dff83E8264EcF986CA"
                 value_type: address
               - name: amount
                 param_type: static

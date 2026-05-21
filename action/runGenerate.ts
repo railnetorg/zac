@@ -100,7 +100,14 @@ export async function runGenerate(opts: RunGenerateOpts): Promise<void> {
       ? cfg.template
       : resolve(deploymentDir, cfg.template);
     const env2 = makeConfigEnv({
-      searchPaths: [dirname(templatePath), deploymentDir, dirname(configYamlPath)],
+      // Add the template's parent-of-parent so any template can `import` shared
+      // macros from `_macros/` (which sits alongside the template's own dir).
+      searchPaths: [
+        dirname(templatePath),
+        dirname(dirname(templatePath)),
+        deploymentDir,
+        dirname(configYamlPath),
+      ],
       aliases: aliases.merged,
     });
     // renderTemplate uses the loader. Use the basename so the loader resolves

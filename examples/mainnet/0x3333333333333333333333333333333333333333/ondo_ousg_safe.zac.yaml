@@ -1,0 +1,14 @@
+roles_modifier_address: "{{ aliases.modifiers.my_modifier }}"
+safe_address: "{{ aliases.safes.my_safe }}"
+chain_id: 1
+name: My Safe Ondo OUSG Manager
+description: Subscribe / redeem OUSG via the Ondo Instant Manager
+configs:
+  - template: "../../../templates/ondo_ousg/ondo_ousg.tmpl"
+    key: ONDO_OUSG
+    members:
+      - "{{ aliases.signers.alice }}"
+      - "{{ aliases.signers.bob }}"
+    params:
+      payment_assets:
+        - "USDC"

@@ -9,13 +9,5 @@ configs:
     members:
       - "{{ aliases.signers.sepolia_member }}"
     params:
-      morpho_address: "{{ aliases.morpho_blue.singleton }}"
-      deposit_assets:
-        - address: "{{ aliases.tokens.USDC }}"
-          symbol: "USDC"
       markets:
-        - loan_token: "{{ aliases.morpho_blue.markets.usdc_weth_915.loan_token }}"
-          collateral_token: "{{ aliases.morpho_blue.markets.usdc_weth_915.collateral_token }}"
-          oracle: "{{ aliases.morpho_blue.markets.usdc_weth_915.oracle }}"
-          irm: "{{ aliases.morpho_blue.markets.usdc_weth_915.irm }}"
-          lltv: "{{ aliases.morpho_blue.markets.usdc_weth_915.lltv }}"
+        - "usdc_weth_915"

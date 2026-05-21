@@ -17,11 +17,15 @@ describe('metamorpho/metamorpho.tmpl', () => {
     { throwOnUndefined: true },
   );
   env.addFilter('keccak', keccak);
+  env.addGlobal('aliases', {
+    metamorpho: {
+      steakhouse_usdc: { address: VAULT_A, asset: 'USDC' },
+    },
+    tokens: { USDC: UNDERLYING_A },
+  });
 
   const params = {
-    vaults: [
-      { address: VAULT_A, underlying: UNDERLYING_A, name: 'Steakhouse USDC', symbol: 'steakUSDC' },
-    ],
+    vaults: ['steakhouse_usdc'],
   };
 
   it('TM-1: renders without error', () => {

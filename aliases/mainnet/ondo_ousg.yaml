@@ -1,2 +1,3 @@
-subscriber: "0x93358db73B6cd4b98D89c8F5f230E81a95c2643a"
-ousg_token: "0x1B19C19393e2d034D8Ff31ff34c81252FcBbee92"
+subscriber:
+  address:     "0x93358db73B6cd4b98D89c8F5f230E81a95c2643a"
+  share_token: "0x1B19C19393e2d034D8Ff31ff34c81252FcBbee92"

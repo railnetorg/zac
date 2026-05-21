@@ -10,4 +10,4 @@ configs:
       - "{{ aliases.signers.sepolia_member }}"
     params:
       deposit_assets:
-        - address: "{{ aliases.tokens.DAI }}"
+        - "DAI"

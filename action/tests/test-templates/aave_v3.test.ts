@@ -16,13 +16,14 @@ describe('aave_v3/aave_v3.tmpl', () => {
   env.addFilter('keccak', keccak);
   env.addGlobal('aliases', {
     aave: { pool: '0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2' },
+    tokens: {
+      USDC: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+      DAI: '0x6B175474E89094C44Da98b954EedeAC495271d0F',
+    },
   });
 
   const params = {
-    deposit_assets: [
-      { address: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', symbol: 'USDC' },
-      { address: '0x6B175474E89094C44Da98b954EedeAC495271d0F', symbol: 'DAI' },
-    ],
+    deposit_assets: ['USDC', 'DAI'],
   };
 
   it('T9-1: renders without error', () => {
@@ -40,15 +41,32 @@ describe('aave_v3/aave_v3.tmpl', () => {
     expect(out).toContain('function withdraw(address asset, uint256 amount, address onBehalfOf)');
   });
 
-  it('T9-3: _macros/common.tmpl is importable + macro produces expected output', () => {
+  it('T9-3: _macros/common.tmpl exposes approve(spender) for equal_to single spender', () => {
     const macroEnv = new nunjucks.Environment(new nunjucks.FileSystemLoader([TEMPLATES_DIR]), {
       throwOnUndefined: true,
     });
     const out = macroEnv.renderString(
-      `{%- from "_macros/common.tmpl" import addr_with_comment -%}\n{{ addr_with_comment("0xabc", "Alice") }}`,
+      `{%- from "_macros/common.tmpl" import approve -%}\n{{ approve("0xToken", "0xSpender") }}`,
       {},
     );
-    expect(out).toContain('"0xabc"');
-    expect(out).toContain('# Alice');
+    expect(out).toContain('- address: "0xToken"');
+    expect(out).toContain('function approve(address spender, uint256 amount)');
+    expect(out).toContain('operator: "equal_to"');
+    expect(out).toContain('value: "0xSpender"');
+    expect(out).not.toContain('oneOf');
+  });
+
+  it('T9-4: approve(spenders[]) emits oneOf over the list', () => {
+    const macroEnv = new nunjucks.Environment(new nunjucks.FileSystemLoader([TEMPLATES_DIR]), {
+      throwOnUndefined: true,
+    });
+    const out = macroEnv.renderString(
+      `{%- from "_macros/common.tmpl" import approve -%}\n{{ approve("0xToken", ["0xA", "0xB"]) }}`,
+      {},
+    );
+    expect(out).toContain('operator: "oneOf"');
+    expect(out).toContain('- "0xA"');
+    expect(out).toContain('- "0xB"');
+    expect(out).not.toContain('operator: "equal_to"');
   });
 });
