@@ -88,6 +88,7 @@ function classify(decoded: DecodedCall[]): Groups {
       case 'scopeTarget':
       case 'scopeFunction':
       case 'allowTarget':
+      case 'allowFunction':
       case 'unscopeFunction':
         pushTo(scopesByRole, call.roleKey, call);
         addCount += 1;
@@ -126,6 +127,7 @@ function sortCallsForGroup(calls: DecodedCall[]): DecodedCall[] {
       case 'allowTarget':
         return 0;
       case 'scopeFunction':
+      case 'allowFunction':
       case 'revokeFunction':
       case 'unscopeFunction':
         return 1;
@@ -154,7 +156,12 @@ function summarizeGroup(calls: DecodedCall[]): { targets: number; functions: num
   let functions = 0;
   for (const c of calls) {
     if ('target' in c) targets.add(c.target.toLowerCase());
-    if (c.kind === 'revokeFunction' || c.kind === 'scopeFunction' || c.kind === 'unscopeFunction') {
+    if (
+      c.kind === 'revokeFunction' ||
+      c.kind === 'scopeFunction' ||
+      c.kind === 'allowFunction' ||
+      c.kind === 'unscopeFunction'
+    ) {
       functions += 1;
     }
   }
@@ -169,6 +176,7 @@ function formatCallLine(call: DecodedCall): string {
     case 'allowTarget':
       return `    ${call.kind.padEnd(15)}target=${shortAddr(call.target)}`;
     case 'scopeFunction':
+    case 'allowFunction':
     case 'revokeFunction':
     case 'unscopeFunction':
       return `    ${call.kind.padEnd(15)}target=${shortAddr(call.target)}  ${fnSuffix(

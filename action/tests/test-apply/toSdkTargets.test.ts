@@ -335,7 +335,48 @@ describe('toSdkTargets', () => {
     expect(inner.scoping).toEqual([{ kind: 'eq', value: '0xtok' }, { kind: 'pass' }]);
   });
 
-  it('TC-9: unsupported operator (`and`) still throws', () => {
+  it('TC-9: all-pass params block produces the same on-chain shape as omitting the params block', () => {
+    // Optimization documented in toSdkTargets.ts buildPositionalScoping:
+    // an all-pass params block is semantically equivalent to no scoping at
+    // all (both produce a permission with no `condition` / calldataMatches).
+    // Asserts the two YAML forms collapse to identical processPermissions input.
+    const signature = 'function f(address a, uint256 b, bool c)';
+    const address = '0xtarget';
+
+    const rAllPass = recordingC();
+    toSdkTargets(
+      makeGenerated({
+        address,
+        functions: [
+          {
+            signature,
+            params: [
+              { name: 'a', operator: 'pass' },
+              { name: 'b', operator: 'pass' },
+              { name: 'c', operator: 'pass' },
+            ],
+          },
+        ],
+      }),
+      'ROLE',
+      rAllPass,
+    );
+
+    const rOmitted = recordingC();
+    toSdkTargets(makeGenerated({ address, functions: [{ signature }] }), 'ROLE', rOmitted);
+
+    const allPassPerms = rAllPass.getProcessPermissionsArg() as Array<Record<string, unknown>>;
+    const omittedPerms = rOmitted.getProcessPermissionsArg() as Array<Record<string, unknown>>;
+
+    // Same permission shape — and neither carries a `condition` field, so the
+    // function is allowed unconditionally on-chain.
+    expect(allPassPerms).toEqual(omittedPerms);
+    expect(allPassPerms).toHaveLength(1);
+    expect(allPassPerms[0]).toEqual({ targetAddress: address, signature });
+    expect(allPassPerms[0]).not.toHaveProperty('condition');
+  });
+
+  it('TC-10: unsupported operator (`and`) still throws', () => {
     const r = recordingC();
     const gen = makeGenerated({
       address: '0xtarget',

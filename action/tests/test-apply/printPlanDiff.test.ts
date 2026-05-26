@@ -49,6 +49,17 @@ const FIX_SCOPE_FUNCTION_ONDO_GM_445DF08B: PlanCall = {
   data: '0x7508dd984f4e444f5f474d000000000000000000000000000000000000000000000000000000000000000000000000002c158bc456e027b2affccadf1bdbd9f5fc4c5c8c445df08b0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000a000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000',
 };
 
+// Fixture from the all-pass repro plan. SDK emits `allowFunction`
+// (selector `0xb3dd25c7`) for functions with no calldata condition —
+// the optimization in `buildPositionalScoping` (`if (allPass) return null`)
+// that maps "all params are pass" to "no scoping at all" on-chain. Role
+// `ALL_PASS`, target USDC, selector `0x1bca4f52` = `tag(bytes32,uint256)`.
+const FIX_ALLOW_FUNCTION_ALL_PASS_TAG: PlanCall = {
+  to: MODIFIER,
+  value: '0',
+  data: '0xb3dd25c7414c4c5f50415353000000000000000000000000000000000000000000000000000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb481bca4f52000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000',
+};
+
 const FIX_UNKNOWN: PlanCall = {
   to: MODIFIER,
   value: '0',
@@ -156,6 +167,29 @@ describe('printPlanDiff', () => {
     expect(out).toContain('ONDO_GM');
     expect(out).toContain('scopeFunction');
     expect(out).toContain('fn=0x445df08b');
+  });
+
+  it('plan with only allowFunction → grouped under its role like scopeFunction (regression: previously rendered as `unknown`)', async () => {
+    const sdk = await loadSdk();
+    const plan = makePlan([FIX_ALLOW_FUNCTION_ALL_PASS_TAG]);
+    const { sink, text } = captureSink();
+    printPlanDiff(plan, {
+      planPath: 'safe.plan.json',
+      out: sink,
+      sdk,
+      selectorMap: { '0x1bca4f52': 'tag' },
+    });
+    const out = text();
+    expect(out).toContain('── adds / changes (1)');
+    expect(out).not.toContain('── revokes');
+    // Grouped under its role key — not punted to the `unknown` bucket.
+    expect(out).toContain('ALL_PASS');
+    expect(out).toContain('allowFunction');
+    expect(out).toContain('fn=0x1bca4f52 (tag)');
+    expect(out).not.toMatch(/^\s*unknown\s*$/m);
+    // Belt-and-braces: `unknown` only acceptable as part of the call line if
+    // we ever introduce one — for this fixture it must be absent entirely.
+    expect(out).not.toContain('selector=0xb3dd25c7');
   });
 
   it('plan with assignRoles (all true) → appears in "adds / changes"', async () => {
