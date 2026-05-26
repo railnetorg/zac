@@ -32,7 +32,9 @@ forge-test-fork upstream:
           http://127.0.0.1:8546; then break; fi; \
         sleep 1; \
       done; \
-      cd foundry && FOUNDRY_PROFILE=fork RPC_URL=http://127.0.0.1:8546 forge test -vvv \
+      cd foundry && \
+        FOUNDRY_PROFILE=fork RPC_URL=http://127.0.0.1:8546 forge test -vvv && \
+        FOUNDRY_PROFILE=contracts-fork RPC_URL=http://127.0.0.1:8546 forge test -vvv \
     '
 
 # run action ts tests
