@@ -246,6 +246,65 @@ describe('printPlanDiff', () => {
     expect(out).toContain('LAGOON');
   });
 
+  it('addressLabelMap: known target address renders as `target=<short> (<label>)`; unknown stays bare', async () => {
+    const sdk = await loadSdk();
+    // Lagoon target `0x30A3699E0DCea6Bdc8BB2c13E74A2324e0B20116` is mapped
+    // to `lagoon.vault`; the Ondo GM target is left unmapped so we can
+    // assert the unknown path stays untouched in the same plan.
+    const labelMap = {
+      '0x30a3699e0dcea6bdc8bb2c13e74a2324e0b20116': 'lagoon.vault',
+    };
+    const plan = makePlan([FIX_REVOKE_TARGET_LAGOON, FIX_SCOPE_FUNCTION_ONDO_GM_445DF08B]);
+    const { sink, text } = captureSink();
+    printPlanDiff(plan, {
+      planPath: 'safe.plan.json',
+      out: sink,
+      sdk,
+      addressLabelMap: labelMap,
+    });
+    const out = text();
+    expect(out).toMatch(/target=0x30[Aa]3…0116 \(lagoon\.vault\)/);
+    // Unmapped target stays bare — no spurious parenthetical suffix.
+    expect(out).toMatch(/target=0x2[Cc]15…5[Cc]8[Cc]\b/);
+    expect(out).not.toMatch(/target=0x2[Cc]15…5[Cc]8[Cc] \(/);
+  });
+
+  it('addressLabelMap: function-permission lines also annotate target before the fn= suffix', async () => {
+    const sdk = await loadSdk();
+    // Same scopeFunction fixture (target = Ondo GM Manager); label it and
+    // verify the rendering of the call line preserves both label and fn=.
+    const labelMap = { '0x2c158bc456e027b2affccadf1bdbd9f5fc4c5c8c': 'ondo_gm.manager' };
+    const plan = makePlan([FIX_SCOPE_FUNCTION_ONDO_GM_445DF08B]);
+    const { sink, text } = captureSink();
+    printPlanDiff(plan, {
+      planPath: 'safe.plan.json',
+      out: sink,
+      sdk,
+      addressLabelMap: labelMap,
+    });
+    const out = text();
+    // Single line with both annotations and the existing fn= suffix.
+    expect(out).toMatch(
+      /scopeFunction\s+target=0x2[Cc]15…5[Cc]8[Cc] \(ondo_gm\.manager\)\s+fn=0x445df08b/,
+    );
+  });
+
+  it('addressLabelMap lookup is case-insensitive against checksummed addresses (map is lowercase, plan addresses are checksummed)', async () => {
+    const sdk = await loadSdk();
+    // Lookup key is lowercase but the decoded `call.target` viem returns is
+    // checksum-cased. Asserts targetSuffix lowercases before lookup.
+    const labelMap = { '0x30a3699e0dcea6bdc8bb2c13e74a2324e0b20116': 'lagoon.vault' };
+    const plan = makePlan([FIX_REVOKE_TARGET_LAGOON]);
+    const { sink, text } = captureSink();
+    printPlanDiff(plan, {
+      planPath: 'safe.plan.json',
+      out: sink,
+      sdk,
+      addressLabelMap: labelMap,
+    });
+    expect(text()).toContain('(lagoon.vault)');
+  });
+
   it('shortens addresses to first4…last4 format', async () => {
     const sdk = await loadSdk();
     const plan = makePlan([FIX_REVOKE_TARGET_LAGOON]);
