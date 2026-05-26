@@ -49,6 +49,17 @@ const FIX_SCOPE_FUNCTION_ONDO_GM_445DF08B: PlanCall = {
   data: '0x7508dd984f4e444f5f474d000000000000000000000000000000000000000000000000000000000000000000000000002c158bc456e027b2affccadf1bdbd9f5fc4c5c8c445df08b0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000a000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000',
 };
 
+// Fixture from the all-pass repro plan. SDK emits `allowFunction`
+// (selector `0xb3dd25c7`) for functions with no calldata condition —
+// the optimization in `buildPositionalScoping` (`if (allPass) return null`)
+// that maps "all params are pass" to "no scoping at all" on-chain. Role
+// `ALL_PASS`, target USDC, selector `0x1bca4f52` = `tag(bytes32,uint256)`.
+const FIX_ALLOW_FUNCTION_ALL_PASS_TAG: PlanCall = {
+  to: MODIFIER,
+  value: '0',
+  data: '0xb3dd25c7414c4c5f50415353000000000000000000000000000000000000000000000000000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb481bca4f52000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000',
+};
+
 const FIX_UNKNOWN: PlanCall = {
   to: MODIFIER,
   value: '0',
@@ -158,6 +169,29 @@ describe('printPlanDiff', () => {
     expect(out).toContain('fn=0x445df08b');
   });
 
+  it('plan with only allowFunction → grouped under its role like scopeFunction (regression: previously rendered as `unknown`)', async () => {
+    const sdk = await loadSdk();
+    const plan = makePlan([FIX_ALLOW_FUNCTION_ALL_PASS_TAG]);
+    const { sink, text } = captureSink();
+    printPlanDiff(plan, {
+      planPath: 'safe.plan.json',
+      out: sink,
+      sdk,
+      selectorMap: { '0x1bca4f52': 'tag' },
+    });
+    const out = text();
+    expect(out).toContain('── adds / changes (1)');
+    expect(out).not.toContain('── revokes');
+    // Grouped under its role key — not punted to the `unknown` bucket.
+    expect(out).toContain('ALL_PASS');
+    expect(out).toContain('allowFunction');
+    expect(out).toContain('fn=0x1bca4f52 (tag)');
+    expect(out).not.toMatch(/^\s*unknown\s*$/m);
+    // Belt-and-braces: `unknown` only acceptable as part of the call line if
+    // we ever introduce one — for this fixture it must be absent entirely.
+    expect(out).not.toContain('selector=0xb3dd25c7');
+  });
+
   it('plan with assignRoles (all true) → appears in "adds / changes"', async () => {
     const sdk = await loadSdk();
     const plan = makePlan([FIX_ASSIGN_ROLES_ETHENA]);
@@ -210,6 +244,65 @@ describe('printPlanDiff', () => {
     // Both unmentioned role keys flagged.
     expect(out).toContain('ETHENA_INSTITUTIONAL');
     expect(out).toContain('LAGOON');
+  });
+
+  it('addressLabelMap: known target address renders as `target=<short> (<label>)`; unknown stays bare', async () => {
+    const sdk = await loadSdk();
+    // Lagoon target `0x30A3699E0DCea6Bdc8BB2c13E74A2324e0B20116` is mapped
+    // to `lagoon.vault`; the Ondo GM target is left unmapped so we can
+    // assert the unknown path stays untouched in the same plan.
+    const labelMap = {
+      '0x30a3699e0dcea6bdc8bb2c13e74a2324e0b20116': 'lagoon.vault',
+    };
+    const plan = makePlan([FIX_REVOKE_TARGET_LAGOON, FIX_SCOPE_FUNCTION_ONDO_GM_445DF08B]);
+    const { sink, text } = captureSink();
+    printPlanDiff(plan, {
+      planPath: 'safe.plan.json',
+      out: sink,
+      sdk,
+      addressLabelMap: labelMap,
+    });
+    const out = text();
+    expect(out).toMatch(/target=0x30[Aa]3…0116 \(lagoon\.vault\)/);
+    // Unmapped target stays bare — no spurious parenthetical suffix.
+    expect(out).toMatch(/target=0x2[Cc]15…5[Cc]8[Cc]\b/);
+    expect(out).not.toMatch(/target=0x2[Cc]15…5[Cc]8[Cc] \(/);
+  });
+
+  it('addressLabelMap: function-permission lines also annotate target before the fn= suffix', async () => {
+    const sdk = await loadSdk();
+    // Same scopeFunction fixture (target = Ondo GM Manager); label it and
+    // verify the rendering of the call line preserves both label and fn=.
+    const labelMap = { '0x2c158bc456e027b2affccadf1bdbd9f5fc4c5c8c': 'ondo_gm.manager' };
+    const plan = makePlan([FIX_SCOPE_FUNCTION_ONDO_GM_445DF08B]);
+    const { sink, text } = captureSink();
+    printPlanDiff(plan, {
+      planPath: 'safe.plan.json',
+      out: sink,
+      sdk,
+      addressLabelMap: labelMap,
+    });
+    const out = text();
+    // Single line with both annotations and the existing fn= suffix.
+    expect(out).toMatch(
+      /scopeFunction\s+target=0x2[Cc]15…5[Cc]8[Cc] \(ondo_gm\.manager\)\s+fn=0x445df08b/,
+    );
+  });
+
+  it('addressLabelMap lookup is case-insensitive against checksummed addresses (map is lowercase, plan addresses are checksummed)', async () => {
+    const sdk = await loadSdk();
+    // Lookup key is lowercase but the decoded `call.target` viem returns is
+    // checksum-cased. Asserts targetSuffix lowercases before lookup.
+    const labelMap = { '0x30a3699e0dcea6bdc8bb2c13e74a2324e0b20116': 'lagoon.vault' };
+    const plan = makePlan([FIX_REVOKE_TARGET_LAGOON]);
+    const { sink, text } = captureSink();
+    printPlanDiff(plan, {
+      planPath: 'safe.plan.json',
+      out: sink,
+      sdk,
+      addressLabelMap: labelMap,
+    });
+    expect(text()).toContain('(lagoon.vault)');
   });
 
   it('shortens addresses to first4…last4 format', async () => {

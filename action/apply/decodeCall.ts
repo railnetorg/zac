@@ -38,7 +38,7 @@ export type DecodedCall =
       target: `0x${string}`;
     }
   | {
-      kind: 'scopeFunction' | 'revokeFunction' | 'unscopeFunction';
+      kind: 'scopeFunction' | 'allowFunction' | 'revokeFunction' | 'unscopeFunction';
       roleKey: string;
       target: `0x${string}`;
       fnSelector: `0x${string}`;
@@ -130,6 +130,7 @@ export function decodeCall(
       return { kind: name, roleKey, target };
     }
     case 'scopeFunction':
+    case 'allowFunction':
     case 'revokeFunction':
     case 'unscopeFunction': {
       const roleKey = safeDecodeKey(sdk, args[0] as `0x${string}`);

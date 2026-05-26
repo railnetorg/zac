@@ -27,6 +27,13 @@ export interface PrintPlanDiffOpts {
    * fall through to raw hex.
    */
   selectorMap?: Record<string, string>;
+  /**
+   * Optional lowercase-address → dotted-path label map (built from the
+   * alias registry via `buildAddressLabelMap`). When set, a known target
+   * address renders as `target=0xA0b8…eB48 (tokens.USDC)`; unknown
+   * addresses keep the bare shortened form.
+   */
+  addressLabelMap?: Record<string, string>;
 }
 
 /** Section dividers — fixed width 56 chars including header text. */
@@ -42,6 +49,17 @@ const ADDS_HEADER_PAD = '─'.repeat(18);
 function shortAddr(addr: string): string {
   if (!/^0x[0-9a-fA-F]{40}$/.test(addr)) return addr;
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
+}
+
+/**
+ * Render `target=<addr>`, appending `(<label>)` when the address is in
+ * the alias registry. Mirrors `fn=<selector> (<name>)` for symmetry.
+ */
+function targetSuffix(addr: string, addressLabelMap: Record<string, string> | undefined): string {
+  const short = shortAddr(addr);
+  const label = addressLabelMap?.[addr.toLowerCase()];
+  if (label === undefined) return `target=${short}`;
+  return `target=${short} (${label})`;
 }
 
 /** Pretty-print an `fn=<selector>` suffix, adding `(<name>)` when known. */
@@ -88,6 +106,7 @@ function classify(decoded: DecodedCall[]): Groups {
       case 'scopeTarget':
       case 'scopeFunction':
       case 'allowTarget':
+      case 'allowFunction':
       case 'unscopeFunction':
         pushTo(scopesByRole, call.roleKey, call);
         addCount += 1;
@@ -126,6 +145,7 @@ function sortCallsForGroup(calls: DecodedCall[]): DecodedCall[] {
       case 'allowTarget':
         return 0;
       case 'scopeFunction':
+      case 'allowFunction':
       case 'revokeFunction':
       case 'unscopeFunction':
         return 1;
@@ -154,7 +174,12 @@ function summarizeGroup(calls: DecodedCall[]): { targets: number; functions: num
   let functions = 0;
   for (const c of calls) {
     if ('target' in c) targets.add(c.target.toLowerCase());
-    if (c.kind === 'revokeFunction' || c.kind === 'scopeFunction' || c.kind === 'unscopeFunction') {
+    if (
+      c.kind === 'revokeFunction' ||
+      c.kind === 'scopeFunction' ||
+      c.kind === 'allowFunction' ||
+      c.kind === 'unscopeFunction'
+    ) {
       functions += 1;
     }
   }
@@ -162,16 +187,20 @@ function summarizeGroup(calls: DecodedCall[]): { targets: number; functions: num
 }
 
 /** Format one decoded call as a single indented line. */
-function formatCallLine(call: DecodedCall): string {
+function formatCallLine(
+  call: DecodedCall,
+  addressLabelMap: Record<string, string> | undefined,
+): string {
   switch (call.kind) {
     case 'scopeTarget':
     case 'revokeTarget':
     case 'allowTarget':
-      return `    ${call.kind.padEnd(15)}target=${shortAddr(call.target)}`;
+      return `    ${call.kind.padEnd(15)}${targetSuffix(call.target, addressLabelMap)}`;
     case 'scopeFunction':
+    case 'allowFunction':
     case 'revokeFunction':
     case 'unscopeFunction':
-      return `    ${call.kind.padEnd(15)}target=${shortAddr(call.target)}  ${fnSuffix(
+      return `    ${call.kind.padEnd(15)}${targetSuffix(call.target, addressLabelMap)}  ${fnSuffix(
         call.fnSelector,
         call.fnName,
       )}`;
@@ -216,7 +245,7 @@ export function printPlanDiff(plan: Plan, opts: PrintPlanDiffOpts): void {
           ? '1 function permission'
           : `${summary.functions} function permissions`;
       lines.push(`  ${roleKey}  (${targetsLabel}, ${fnsLabel})`);
-      for (const c of calls) lines.push(formatCallLine(c));
+      for (const c of calls) lines.push(formatCallLine(c, opts.addressLabelMap));
     }
     lines.push('');
   }
@@ -227,7 +256,7 @@ export function printPlanDiff(plan: Plan, opts: PrintPlanDiffOpts): void {
     for (const roleKey of roleKeys) {
       const calls = sortCallsForGroup(groups.scopesByRole.get(roleKey) ?? []);
       lines.push(`  ${roleKey}`);
-      for (const c of calls) lines.push(formatCallLine(c));
+      for (const c of calls) lines.push(formatCallLine(c, opts.addressLabelMap));
     }
     if (groups.assignRoles.length > 0) {
       lines.push(`  assignRoles`);
@@ -235,7 +264,7 @@ export function printPlanDiff(plan: Plan, opts: PrintPlanDiffOpts): void {
     }
     if (groups.unknowns.length > 0) {
       lines.push(`  unknown`);
-      for (const c of groups.unknowns) lines.push(formatCallLine(c));
+      for (const c of groups.unknowns) lines.push(formatCallLine(c, undefined));
     }
     lines.push('');
   }

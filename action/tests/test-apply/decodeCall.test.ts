@@ -83,6 +83,37 @@ describe('decodeCall', () => {
     expect(decoded.fnName).toBeUndefined();
   });
 
+  // Fixture from the all-pass repro plan
+  // (examples/mainnet/0x40FF…DE58/allpass_safe.plan.json) — the SDK emits
+  // `allowFunction` (selector `0xb3dd25c7`) for functions with no calldata
+  // condition, i.e. the `if (allPass) return null` optimization in
+  // buildPositionalScoping. Role `ALL_PASS`, target USDC, selector
+  // `0x1bca4f52` = `tag(bytes32 id, uint256 nonce)`.
+  const FIX_ALLOW_FUNCTION_ALL_PASS_TAG: PlanCall = {
+    to: MODIFIER,
+    value: '0',
+    data: '0xb3dd25c7414c4c5f50415353000000000000000000000000000000000000000000000000000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb481bca4f52000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000',
+  };
+
+  it('decodes allowFunction (no-condition function permission) into roleKey + target + fnSelector', async () => {
+    const sdk = await loadSdk();
+    const decoded = decodeCall(FIX_ALLOW_FUNCTION_ALL_PASS_TAG, sdk);
+    expect(decoded.kind).toBe('allowFunction');
+    if (decoded.kind !== 'allowFunction') return;
+    expect(decoded.roleKey).toBe('ALL_PASS');
+    expect(decoded.target.toLowerCase()).toBe('0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48');
+    expect(decoded.fnSelector).toBe('0x1bca4f52');
+    expect(decoded.fnName).toBeUndefined();
+  });
+
+  it('honors caller-provided selectorMap for allowFunction (fnName resolves to the source-defined signature)', async () => {
+    const sdk = await loadSdk();
+    const decoded = decodeCall(FIX_ALLOW_FUNCTION_ALL_PASS_TAG, sdk, { '0x1bca4f52': 'tag' });
+    expect(decoded.kind).toBe('allowFunction');
+    if (decoded.kind !== 'allowFunction') return;
+    expect(decoded.fnName).toBe('tag');
+  });
+
   it('unknown selector → kind=unknown with raw selector + dataLen', async () => {
     const sdk = await loadSdk();
     // `0xdeadbeef` is not in `rolesAbi` → decodeFunctionData throws → fallback.
