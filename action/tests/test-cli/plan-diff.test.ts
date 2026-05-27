@@ -164,10 +164,10 @@ describe('cli plan diff wiring', () => {
     }
     // Header line.
     expect(out).toMatch(/plan: .*\.plan\.json \(1 calls\)/);
-    // Decoded scopeTarget for ALPHA shows up in the adds / changes section.
-    expect(out).toContain('── adds / changes (1)');
+    // Decoded scopeTarget for ALPHA shows up in the adds tree section.
+    expect(out).toMatch(/[├└]─ adds \(1\)/);
     expect(out).toContain('ALPHA');
-    expect(out).toContain('scopeTarget');
+    expect(out).toMatch(/scopeTarget\(/);
     // Final per-file status line is still emitted.
     expect(out).toMatch(/planned: .*\.plan\.json/);
   });

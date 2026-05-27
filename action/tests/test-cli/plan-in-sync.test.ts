@@ -135,7 +135,7 @@ describe('cli plan — in-sync (0 calls)', () => {
     // No plan.json written.
     expect(existsSync(planPath)).toBe(false);
     // No diff was printed.
-    expect(out).not.toContain('── adds / changes');
+    expect(out).not.toMatch(/[├└]─ adds \(/);
     expect(out).not.toMatch(/plan: .*\.plan\.json/);
     expect(out).not.toContain('planned:');
   });
@@ -181,7 +181,7 @@ describe('cli plan — in-sync (0 calls)', () => {
     expect(out).toContain('in sync:');
     expect(out).toContain('nothing to plan');
     expect(existsSync(planPath)).toBe(false);
-    expect(out).not.toContain('── adds / changes');
+    expect(out).not.toMatch(/[├└]─ adds \(/);
     expect(out).not.toContain('planned:');
   });
 
