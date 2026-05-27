@@ -98,6 +98,27 @@ function buildSelectorMapForSources(
 }
 
 /**
+ * Build a `<target>:<selector>` → source-side function-params map from
+ * the generated sibling(s) of the given source paths. Used by
+ * `printPlanDiff` to expand each planned `scopeFunction` into a foundry-
+ * style subtree showing each arg's type, name, and constraint.
+ */
+function buildFunctionParamMapForSources(
+  sources: string[],
+  buildMap: typeof import('./apply/buildFunctionParamMap').buildFunctionParamMap,
+): Record<string, import('./apply/buildFunctionParamMap').FunctionParams> {
+  const generatedList = [];
+  for (const src of sources) {
+    try {
+      generatedList.push(parseGenerated(generatedPathFor(src)));
+    } catch {
+      // best-effort
+    }
+  }
+  return buildMap(generatedList);
+}
+
+/**
  * Build an address → alias-label map for the given source paths. Resolves
  * `config.yaml` from each source's safe-dir and loads the alias registry
  * for the inferred network (`<network>/<safe>/*.zac.yaml`). Sources from
@@ -411,6 +432,7 @@ export function buildProgram(): Command {
         const { serializePlan } = await import('./apply/planSchema');
         const { printPlanDiff } = await import('./apply/printPlanDiff');
         const { buildSelectorMap } = await import('./apply/buildSelectorMap');
+        const { buildFunctionParamMap } = await import('./apply/buildFunctionParamMap');
         const { buildAddressLabelMap } = await import('./apply/buildAddressLabelMap');
         const { loadAllAliases } = await import('./load/loadAllAliases');
         const { findConfig } = await import('./load/findConfig');
@@ -450,6 +472,7 @@ export function buildProgram(): Command {
                 loadAllAliases,
                 findConfig,
               ),
+              functionParamMap: buildFunctionParamMapForSources(sd.sources, buildFunctionParamMap),
               sdk,
             });
             process.stdout.write(`planned: ${displayPath(outPath)}\n`);
@@ -485,6 +508,10 @@ export function buildProgram(): Command {
               buildAddressLabelMap,
               loadAllAliases,
               findConfig,
+            ),
+            functionParamMap: buildFunctionParamMapForSources(
+              [sourcePathFor(genPath)],
+              buildFunctionParamMap,
             ),
             sdk,
           });
@@ -601,6 +628,7 @@ export function buildProgram(): Command {
         const { runSubmit } = await import('./apply/runSubmit');
         const { printPlanDiff } = await import('./apply/printPlanDiff');
         const { buildSelectorMap } = await import('./apply/buildSelectorMap');
+        const { buildFunctionParamMap } = await import('./apply/buildFunctionParamMap');
         const { buildAddressLabelMap } = await import('./apply/buildAddressLabelMap');
         const { loadAllAliases } = await import('./load/loadAllAliases');
         const { findConfig } = await import('./load/findConfig');
@@ -650,6 +678,7 @@ export function buildProgram(): Command {
                 loadAllAliases,
                 findConfig,
               ),
+              functionParamMap: buildFunctionParamMapForSources(sd.sources, buildFunctionParamMap),
               sdk,
             });
             const submitArgs: Parameters<typeof runSubmit>[0] = {
@@ -688,6 +717,10 @@ export function buildProgram(): Command {
               buildAddressLabelMap,
               loadAllAliases,
               findConfig,
+            ),
+            functionParamMap: buildFunctionParamMapForSources(
+              [sourcePathFor(genPath)],
+              buildFunctionParamMap,
             ),
             sdk,
           });

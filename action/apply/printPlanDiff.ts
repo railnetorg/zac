@@ -1,5 +1,7 @@
 import { decodeCall, type DecodeSdk, type DecodedCall } from './decodeCall';
 import type { Plan } from './planSchema';
+import type { FunctionParams } from './buildFunctionParamMap';
+import { renderParamTree, type TreeNode } from './renderParamTree';
 
 export interface PrintPlanDiffOpts {
   /** Human-friendly path for the header line — caller should pre-apply `displayPath`. */
@@ -7,8 +9,9 @@ export interface PrintPlanDiffOpts {
   /**
    * Role keys declared in the safe-dir's sources (decoded string form).
    * Present ONLY in per-safe-dir mode. When set, revokes targeting role
-   * keys NOT in this set trigger an "unmentioned" warning at the bottom.
-   * When undefined (legacy per-file mode), no warning is printed.
+   * keys NOT in this set are annotated inline `⚠ not declared in any
+   * source` next to the role-key tree node. When undefined (legacy
+   * per-file mode), no annotation is emitted.
    */
   declaredRoleKeys?: Set<string>;
   /** Defaults to `process.stdout`. */
@@ -23,22 +26,29 @@ export interface PrintPlanDiffOpts {
    * Optional selector → function-name map, typically built from the
    * sources being planned (via `buildSelectorMap`). Looked up BEFORE the
    * built-in ERC20 catalog, so user-defined function signatures decode
-   * to their human name in the `fn=…` suffix. Unknown selectors still
-   * fall through to raw hex.
+   * to their human name in the call header. Unknown selectors still fall
+   * through to raw hex.
    */
   selectorMap?: Record<string, string>;
   /**
    * Optional lowercase-address → dotted-path label map (built from the
    * alias registry via `buildAddressLabelMap`). When set, a known target
-   * address renders as `target=0xA0b8…eB48 (tokens.USDC)`; unknown
-   * addresses keep the bare shortened form.
+   * address renders as `0xA0b8…eB48 (tokens.USDC)`; unknown addresses
+   * keep the bare shortened form. Also consulted for address-typed
+   * param values inside the constraint subtree.
    */
   addressLabelMap?: Record<string, string>;
+  /**
+   * Optional `<target_lower>:<selector_lower>` → source-side function
+   * data (built via `buildFunctionParamMap`). When present, every matching
+   * `scopeFunction` planned call expands into a foundry-style subtree
+   * showing each scoped argument's type, name, and constraint. Missing
+   * entries fall back to a leaf call node.
+   */
+  functionParamMap?: Record<string, FunctionParams>;
 }
 
-/** Section dividers — fixed width 56 chars including header text. */
-const REVOKES_HEADER_PAD = '─'.repeat(20);
-const ADDS_HEADER_PAD = '─'.repeat(18);
+const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
 
 /**
  * Shorten an Ethereum address to `0xABCD…1234` (first 4 hex after `0x` +
@@ -47,25 +57,91 @@ const ADDS_HEADER_PAD = '─'.repeat(18);
  * fell back to raw hex) are passed through unchanged.
  */
 function shortAddr(addr: string): string {
-  if (!/^0x[0-9a-fA-F]{40}$/.test(addr)) return addr;
+  if (!ADDRESS_RE.test(addr)) return addr;
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
 }
 
-/**
- * Render `target=<addr>`, appending `(<label>)` when the address is in
- * the alias registry. Mirrors `fn=<selector> (<name>)` for symmetry.
- */
-function targetSuffix(addr: string, addressLabelMap: Record<string, string> | undefined): string {
+/** Address with optional `(label)` suffix from the alias registry. */
+function addrWithLabel(addr: string, addressLabelMap: Record<string, string> | undefined): string {
   const short = shortAddr(addr);
   const label = addressLabelMap?.[addr.toLowerCase()];
-  if (label === undefined) return `target=${short}`;
-  return `target=${short} (${label})`;
+  return label === undefined ? short : `${short} (${label})`;
 }
 
-/** Pretty-print an `fn=<selector>` suffix, adding `(<name>)` when known. */
-function fnSuffix(selector: string, name: string | undefined): string {
-  if (name === undefined) return `fn=${selector}`;
-  return `fn=${selector} (${name})`;
+/** Function identifier for call headers — name when known, raw selector otherwise. */
+function fnIdent(selector: string, name: string | undefined): string {
+  return name === undefined ? selector : name;
+}
+
+/**
+ * Render a list of tree nodes as `├─`/`└─`-connected lines. `prefix` is
+ * the indentation accumulated by the caller — at the root it's the
+ * leading spaces inside the section; recursion appends `│   ` for
+ * non-last siblings, `    ` for the last.
+ */
+function renderTreeLines(nodes: readonly TreeNode[], prefix: string): string[] {
+  const lines: string[] = [];
+  nodes.forEach((node, i) => {
+    const isLast = i === nodes.length - 1;
+    const connector = isLast ? '└─ ' : '├─ ';
+    lines.push(`${prefix}${connector}${node.label}`);
+    if (node.children && node.children.length > 0) {
+      const childPrefix = prefix + (isLast ? '    ' : '│   ');
+      lines.push(...renderTreeLines(node.children, childPrefix));
+    }
+  });
+  return lines;
+}
+
+/**
+ * Build a single decoded call's tree node. `scopeFunction` calls with a
+ * matching `functionParamMap` entry get a children subtree from
+ * `renderParamTree`; everything else is a leaf.
+ */
+function callNode(
+  call: DecodedCall,
+  opts: {
+    addressLabelMap?: Record<string, string>;
+    functionParamMap?: Record<string, FunctionParams>;
+  },
+): TreeNode {
+  switch (call.kind) {
+    case 'scopeTarget':
+    case 'revokeTarget':
+    case 'allowTarget':
+      return { label: `${call.kind}(${addrWithLabel(call.target, opts.addressLabelMap)})` };
+    case 'scopeFunction': {
+      const fn =
+        opts.functionParamMap?.[`${call.target.toLowerCase()}:${call.fnSelector.toLowerCase()}`];
+      // Source-side fnName fills in when the selectorMap didn't cover it —
+      // both maps originate from the same generated YAMLs, so falling back
+      // is consistent (and avoids showing the raw selector when we just
+      // expanded the params underneath it).
+      const fnNameDisplay = call.fnName ?? fn?.fnName;
+      const head = `${call.kind}(${addrWithLabel(call.target, opts.addressLabelMap)}, ${fnIdent(call.fnSelector, fnNameDisplay)})`;
+      if (fn === undefined) return { label: head };
+      const children = renderParamTree(fn, opts.addressLabelMap);
+      if (children.length === 0) return { label: head };
+      return { label: head, children };
+    }
+    case 'allowFunction':
+    case 'revokeFunction':
+    case 'unscopeFunction': {
+      const fn =
+        opts.functionParamMap?.[`${call.target.toLowerCase()}:${call.fnSelector.toLowerCase()}`];
+      const fnNameDisplay = call.fnName ?? fn?.fnName;
+      return {
+        label: `${call.kind}(${addrWithLabel(call.target, opts.addressLabelMap)}, ${fnIdent(call.fnSelector, fnNameDisplay)})`,
+      };
+    }
+    case 'assignRoles': {
+      const roles = `[${call.roleKeys.join(', ')}]`;
+      const flags = `[${call.assigned.map((b) => String(b)).join(', ')}]`;
+      return { label: `member=${shortAddr(call.member)} roles=${roles} assigned=${flags}` };
+    }
+    case 'unknown':
+      return { label: `unknown(selector=${call.selector}, dataLen=${call.dataLen})` };
+  }
 }
 
 interface Groups {
@@ -112,9 +188,6 @@ function classify(decoded: DecodedCall[]): Groups {
         addCount += 1;
         break;
       case 'assignRoles':
-        // assignRoles is shown in the "adds / changes" section regardless of
-        // direction — the `assigned=[...]` line makes direction explicit so
-        // the user sees grants and removals together for one member.
         assignRoles.push(call);
         addCount += 1;
         break;
@@ -131,13 +204,8 @@ function classify(decoded: DecodedCall[]): Groups {
 /**
  * Sort decoded calls inside a role-key group: targets before their
  * functions, and functions for the same target stay adjacent.
- *
- * The original SDK call order already groups by `(target, fn)` for the
- * revoke path, so we just enforce the conventional ordering here for
- * stability across input orderings.
  */
 function sortCallsForGroup(calls: DecodedCall[]): DecodedCall[] {
-  // Stable sort by (target, kind-priority).
   const priority = (k: DecodedCall['kind']): number => {
     switch (k) {
       case 'scopeTarget':
@@ -166,123 +234,70 @@ function sortCallsForGroup(calls: DecodedCall[]): DecodedCall[] {
 }
 
 /**
- * Count distinct targets and functions in a group — used for the role-key
- * sub-header `(N targets, M function permissions)`.
- */
-function summarizeGroup(calls: DecodedCall[]): { targets: number; functions: number } {
-  const targets = new Set<string>();
-  let functions = 0;
-  for (const c of calls) {
-    if ('target' in c) targets.add(c.target.toLowerCase());
-    if (
-      c.kind === 'revokeFunction' ||
-      c.kind === 'scopeFunction' ||
-      c.kind === 'allowFunction' ||
-      c.kind === 'unscopeFunction'
-    ) {
-      functions += 1;
-    }
-  }
-  return { targets: targets.size, functions };
-}
-
-/** Format one decoded call as a single indented line. */
-function formatCallLine(
-  call: DecodedCall,
-  addressLabelMap: Record<string, string> | undefined,
-): string {
-  switch (call.kind) {
-    case 'scopeTarget':
-    case 'revokeTarget':
-    case 'allowTarget':
-      return `    ${call.kind.padEnd(15)}${targetSuffix(call.target, addressLabelMap)}`;
-    case 'scopeFunction':
-    case 'allowFunction':
-    case 'revokeFunction':
-    case 'unscopeFunction':
-      return `    ${call.kind.padEnd(15)}${targetSuffix(call.target, addressLabelMap)}  ${fnSuffix(
-        call.fnSelector,
-        call.fnName,
-      )}`;
-    case 'unknown':
-      return `    unknown        selector=${call.selector}  dataLen=${call.dataLen}`;
-    case 'assignRoles':
-      // assignRoles is rendered as its own block; this branch is unused.
-      return '';
-  }
-}
-
-function formatAssignRolesLine(call: Extract<DecodedCall, { kind: 'assignRoles' }>): string {
-  const roles = `[${call.roleKeys.join(', ')}]`;
-  const flags = `[${call.assigned.map((b) => String(b)).join(', ')}]`;
-  return `    member=${shortAddr(call.member)}  roles=${roles}      assigned=${flags}`;
-}
-
-/**
- * Print the diff for one Plan to `opts.out`. Header is always emitted
- * (caller guards against empty plans — `runPlan` / `runPlanForSafeDir`
- * throw before reaching the printer when zero calls were computed).
+ * Print the diff for one Plan to `opts.out` as a single foundry-style
+ * tree rooted at the plan header. Header is always emitted (caller
+ * guards against empty plans — `runPlan` / `runPlanForSafeDir` throw
+ * before reaching the printer when zero calls were computed).
  */
 export function printPlanDiff(plan: Plan, opts: PrintPlanDiffOpts): void {
   const out = opts.out ?? process.stdout;
   const decoded = plan.calls.map((c) => decodeCall(c, opts.sdk, opts.selectorMap));
   const groups = classify(decoded);
 
+  const callOpts = {
+    ...(opts.addressLabelMap !== undefined ? { addressLabelMap: opts.addressLabelMap } : {}),
+    ...(opts.functionParamMap !== undefined ? { functionParamMap: opts.functionParamMap } : {}),
+  };
+
+  // Section: revokes.
+  const revokeSection: TreeNode | undefined =
+    groups.revokeCount > 0
+      ? {
+          label: `revokes (${groups.revokeCount})`,
+          children: [...groups.revokesByRole.keys()].sort().map((roleKey) => {
+            const calls = sortCallsForGroup(groups.revokesByRole.get(roleKey) ?? []);
+            const unmentioned =
+              opts.declaredRoleKeys !== undefined && !opts.declaredRoleKeys.has(roleKey);
+            const label = unmentioned ? `${roleKey}  ⚠ not declared in any source` : roleKey;
+            return { label, children: calls.map((c) => callNode(c, callOpts)) };
+          }),
+        }
+      : undefined;
+
+  // Section: adds.
+  const addSection: TreeNode | undefined =
+    groups.addCount > 0
+      ? {
+          label: `adds (${groups.addCount})`,
+          children: (() => {
+            const children: TreeNode[] = [];
+            for (const roleKey of [...groups.scopesByRole.keys()].sort()) {
+              const calls = sortCallsForGroup(groups.scopesByRole.get(roleKey) ?? []);
+              children.push({ label: roleKey, children: calls.map((c) => callNode(c, callOpts)) });
+            }
+            if (groups.assignRoles.length > 0) {
+              children.push({
+                label: 'assignRoles',
+                children: groups.assignRoles.map((c) => callNode(c, callOpts)),
+              });
+            }
+            if (groups.unknowns.length > 0) {
+              children.push({
+                label: 'unknown',
+                children: groups.unknowns.map((c) => callNode(c, callOpts)),
+              });
+            }
+            return children;
+          })(),
+        }
+      : undefined;
+
+  const topNodes: TreeNode[] = [];
+  if (revokeSection) topNodes.push(revokeSection);
+  if (addSection) topNodes.push(addSection);
+
   const lines: string[] = [];
   lines.push(`plan: ${opts.planPath} (${plan.calls.length} calls)`);
-  lines.push('');
-
-  if (groups.revokeCount > 0) {
-    lines.push(`  ── revokes (${groups.revokeCount}) ${REVOKES_HEADER_PAD}`);
-    // Stable role-key order: alphabetical (decoded form).
-    const roleKeys = [...groups.revokesByRole.keys()].sort();
-    for (const roleKey of roleKeys) {
-      const calls = sortCallsForGroup(groups.revokesByRole.get(roleKey) ?? []);
-      const summary = summarizeGroup(calls);
-      const targetsLabel = summary.targets === 1 ? '1 target' : `${summary.targets} targets`;
-      const fnsLabel =
-        summary.functions === 1
-          ? '1 function permission'
-          : `${summary.functions} function permissions`;
-      lines.push(`  ${roleKey}  (${targetsLabel}, ${fnsLabel})`);
-      for (const c of calls) lines.push(formatCallLine(c, opts.addressLabelMap));
-    }
-    lines.push('');
-  }
-
-  if (groups.addCount > 0) {
-    lines.push(`  ── adds / changes (${groups.addCount}) ${ADDS_HEADER_PAD}`);
-    const roleKeys = [...groups.scopesByRole.keys()].sort();
-    for (const roleKey of roleKeys) {
-      const calls = sortCallsForGroup(groups.scopesByRole.get(roleKey) ?? []);
-      lines.push(`  ${roleKey}`);
-      for (const c of calls) lines.push(formatCallLine(c, opts.addressLabelMap));
-    }
-    if (groups.assignRoles.length > 0) {
-      lines.push(`  assignRoles`);
-      for (const c of groups.assignRoles) lines.push(formatAssignRolesLine(c));
-    }
-    if (groups.unknowns.length > 0) {
-      lines.push(`  unknown`);
-      for (const c of groups.unknowns) lines.push(formatCallLine(c, undefined));
-    }
-    lines.push('');
-  }
-
-  // Unmentioned-revokes warning — per-safe-dir mode only.
-  if (opts.declaredRoleKeys !== undefined && groups.revokeCount > 0) {
-    const unmentioned = new Set<string>();
-    for (const roleKey of groups.revokesByRole.keys()) {
-      if (!opts.declaredRoleKeys.has(roleKey)) unmentioned.add(roleKey);
-    }
-    if (unmentioned.size > 0) {
-      const list = [...unmentioned].sort().join(', ');
-      const n = unmentioned.size;
-      lines.push(`  ⚠ revoking ${n} role(s) not declared in any source: ${list}`);
-      lines.push(`     pass --revoke-unmentioned=false to preserve them, or add .zac.yaml entries`);
-      lines.push('');
-    }
-  }
-
+  lines.push(...renderTreeLines(topNodes, ''));
   out.write(lines.join('\n') + '\n');
 }

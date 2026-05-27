@@ -53,15 +53,51 @@ describe('buildAddressLabelMap', () => {
     expect(m).toEqual({});
   });
 
-  it('first-seen wins on collision (same address aliased twice)', () => {
+  it('`tokens` namespace wins collisions even when a deeper protocol path is seen first', () => {
+    // Reproduces the real bug: USDC also appears as a Morpho market field.
+    // Iteration hits the deep protocol path BEFORE `tokens`, but the
+    // priority rule must still resolve the address to `tokens.USDC`.
     const m = buildAddressLabelMap(
       reg({
+        morpho_blue: {
+          markets: {
+            usdc_cbbtc_86: {
+              loan_token: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+              collateral_token: '0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf',
+            },
+          },
+        },
         tokens: { USDC: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48' },
-        // Alias whose value collides with tokens.USDC — first-seen wins.
-        legacy: { stablecoin: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48' },
       }),
     );
     expect(m['0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48']).toBe('tokens.USDC');
+    // The non-token address has no priority alias — keeps its deep path.
+    expect(m['0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf']).toBe(
+      'morpho_blue.markets.usdc_cbbtc_86.collateral_token',
+    );
+  });
+
+  it('among non-priority namespaces, the shallowest path wins the collision', () => {
+    const m = buildAddressLabelMap(
+      reg({
+        // Deep path seen first…
+        chains: { mainnet: { aave: { pool: '0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2' } } },
+        // …shallower path for the same address wins.
+        aave: { pool: '0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2' },
+      }),
+    );
+    expect(m['0x87870bca3f3fd6335c3f4ce8392d69350b4fa4e2']).toBe('aave.pool');
+  });
+
+  it('first-seen breaks ties when priority + depth are equal', () => {
+    const m = buildAddressLabelMap(
+      reg({
+        aave: { pool: '0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2' },
+        // Same depth (2), same (non-priority) tier — first-seen keeps aave.pool.
+        compound: { comptroller: '0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2' },
+      }),
+    );
+    expect(m['0x87870bca3f3fd6335c3f4ce8392d69350b4fa4e2']).toBe('aave.pool');
   });
 
   it('nested namespace objects without an `address` field recurse', () => {

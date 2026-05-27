@@ -107,23 +107,24 @@ function makePlan(calls: PlanCall[]): Plan {
 }
 
 describe('printPlanDiff', () => {
-  it('plan with only revokes → "revokes" section + no "adds / changes" + no warning when declaredRoleKeys is undefined', async () => {
+  it('plan with only revokes → "revokes (N)" tree section + no "adds" + no unmentioned annotation when declaredRoleKeys is undefined', async () => {
     const sdk = await loadSdk();
     const plan = makePlan([FIX_REVOKE_TARGET_ETHENA, FIX_REVOKE_FUNCTION_ETHENA_APPROVE]);
     const { sink, text } = captureSink();
     printPlanDiff(plan, { planPath: 'configs/m/safe.plan.json', out: sink, sdk });
     const out = text();
     expect(out).toContain('plan: configs/m/safe.plan.json (2 calls)');
-    expect(out).toContain('── revokes (2)');
-    expect(out).not.toContain('── adds / changes');
+    // Tree section header (└─ because revokes is the only section).
+    expect(out).toMatch(/[├└]─ revokes \(2\)/);
+    expect(out).not.toContain('adds (');
     expect(out).not.toContain('not declared in any source');
     expect(out).toContain('ETHENA_INSTITUTIONAL');
-    expect(out).toContain('revokeTarget');
-    expect(out).toContain('revokeFunction');
-    expect(out).toContain('fn=0x095ea7b3 (approve)');
+    // Call lines render as `<kind>(<target>, <fn-or-selector>)`.
+    expect(out).toMatch(/revokeTarget\(/);
+    expect(out).toMatch(/revokeFunction\(.*approve\)/);
   });
 
-  it('plan with revokes + declaredRoleKeys covering some → warning fires for the unmentioned ones only', async () => {
+  it('plan with revokes + declaredRoleKeys covering some → role-key gets inline `⚠ not declared in any source` annotation', async () => {
     const sdk = await loadSdk();
     const plan = makePlan([
       FIX_REVOKE_TARGET_ETHENA,
@@ -139,11 +140,12 @@ describe('printPlanDiff', () => {
       sdk,
     });
     const out = text();
-    expect(out).toContain('⚠ revoking 1 role(s) not declared in any source: ETHENA_INSTITUTIONAL');
-    expect(out).toContain('pass --revoke-unmentioned=false to preserve them');
+    // ETHENA_INSTITUTIONAL flagged inline; LAGOON not.
+    expect(out).toContain('ETHENA_INSTITUTIONAL  ⚠ not declared in any source');
+    expect(out).not.toMatch(/LAGOON\s+⚠/);
   });
 
-  it('plan with revokes only of declared roles → no unmentioned warning', async () => {
+  it('plan with revokes only of declared roles → no unmentioned annotation', async () => {
     const sdk = await loadSdk();
     const plan = makePlan([FIX_REVOKE_TARGET_LAGOON]);
     const { sink, text } = captureSink();
@@ -156,17 +158,17 @@ describe('printPlanDiff', () => {
     expect(text()).not.toContain('not declared in any source');
   });
 
-  it('plan with only scopeFunction → "adds / changes" section + no "revokes"', async () => {
+  it('plan with only scopeFunction → "adds (N)" tree section + no "revokes"; call leaf renders raw selector when no fn-name map', async () => {
     const sdk = await loadSdk();
     const plan = makePlan([FIX_SCOPE_FUNCTION_ONDO_GM_445DF08B]);
     const { sink, text } = captureSink();
     printPlanDiff(plan, { planPath: 'safe.plan.json', out: sink, sdk });
     const out = text();
-    expect(out).toContain('── adds / changes (1)');
-    expect(out).not.toContain('── revokes');
+    expect(out).toMatch(/[├└]─ adds \(1\)/);
+    expect(out).not.toContain('revokes (');
     expect(out).toContain('ONDO_GM');
-    expect(out).toContain('scopeFunction');
-    expect(out).toContain('fn=0x445df08b');
+    // Raw selector in the leaf (no selectorMap provided, no built-in entry).
+    expect(out).toMatch(/scopeFunction\(.*, 0x445df08b\)/);
   });
 
   it('plan with only allowFunction → grouped under its role like scopeFunction (regression: previously rendered as `unknown`)', async () => {
@@ -180,42 +182,39 @@ describe('printPlanDiff', () => {
       selectorMap: { '0x1bca4f52': 'tag' },
     });
     const out = text();
-    expect(out).toContain('── adds / changes (1)');
-    expect(out).not.toContain('── revokes');
+    expect(out).toMatch(/[├└]─ adds \(1\)/);
+    expect(out).not.toContain('revokes (');
     // Grouped under its role key — not punted to the `unknown` bucket.
     expect(out).toContain('ALL_PASS');
-    expect(out).toContain('allowFunction');
-    expect(out).toContain('fn=0x1bca4f52 (tag)');
-    expect(out).not.toMatch(/^\s*unknown\s*$/m);
-    // Belt-and-braces: `unknown` only acceptable as part of the call line if
-    // we ever introduce one — for this fixture it must be absent entirely.
-    expect(out).not.toContain('selector=0xb3dd25c7');
+    // fn-name from selectorMap shows up in place of the raw selector.
+    expect(out).toMatch(/allowFunction\(.*, tag\)/);
+    // `unknown` section absent entirely.
+    expect(out).not.toMatch(/unknown\(selector=0xb3dd25c7/);
   });
 
-  it('plan with assignRoles (all true) → appears in "adds / changes"', async () => {
+  it('plan with assignRoles (all true) → appears in "adds" section under an `assignRoles` group', async () => {
     const sdk = await loadSdk();
     const plan = makePlan([FIX_ASSIGN_ROLES_ETHENA]);
     const { sink, text } = captureSink();
     printPlanDiff(plan, { planPath: 'safe.plan.json', out: sink, sdk });
     const out = text();
-    expect(out).toContain('── adds / changes (1)');
+    expect(out).toMatch(/[├└]─ adds \(1\)/);
     expect(out).toContain('assignRoles');
     expect(out).toContain('roles=[ETHENA_INSTITUTIONAL]');
     expect(out).toContain('assigned=[false]');
   });
 
-  it('plan with unknown selector → `fn=0xXXXXXXXX` with no decoded name', async () => {
+  it('plan with unknown selector → grouped under `unknown` in adds; raw selector + dataLen shown', async () => {
     const sdk = await loadSdk();
     const plan = makePlan([FIX_UNKNOWN]);
     const { sink, text } = captureSink();
     printPlanDiff(plan, { planPath: 'safe.plan.json', out: sink, sdk });
     const out = text();
-    expect(out).toContain('── adds / changes (1)');
-    expect(out).toContain('unknown');
-    expect(out).toContain('selector=0xdeadbeef');
+    expect(out).toMatch(/[├└]─ adds \(1\)/);
+    expect(out).toMatch(/unknown\(selector=0xdeadbeef, dataLen=\d+\)/);
   });
 
-  it('plan that mixes everything → all sections in correct order (revokes, then adds / changes, then warning)', async () => {
+  it('plan that mixes revokes + adds + unmentioned annotation → both sections present, revokes before adds, annotation inline', async () => {
     const sdk = await loadSdk();
     const plan = makePlan([
       FIX_REVOKE_TARGET_ETHENA,
@@ -233,20 +232,18 @@ describe('printPlanDiff', () => {
       sdk,
     });
     const out = text();
-    const idxRevokes = out.indexOf('── revokes');
-    const idxAdds = out.indexOf('── adds / changes');
-    const idxWarn = out.indexOf('not declared in any source');
+    const idxRevokes = out.search(/[├└]─ revokes \(/);
+    const idxAdds = out.search(/[├└]─ adds \(/);
     expect(idxRevokes).toBeGreaterThan(-1);
     expect(idxAdds).toBeGreaterThan(-1);
-    expect(idxWarn).toBeGreaterThan(-1);
     expect(idxRevokes).toBeLessThan(idxAdds);
-    expect(idxAdds).toBeLessThan(idxWarn);
-    // Both unmentioned role keys flagged.
-    expect(out).toContain('ETHENA_INSTITUTIONAL');
-    expect(out).toContain('LAGOON');
+    // Both unmentioned role keys flagged inline (ONDO_GM is declared, not flagged).
+    expect(out).toContain('ETHENA_INSTITUTIONAL  ⚠ not declared in any source');
+    expect(out).toContain('LAGOON  ⚠ not declared in any source');
+    expect(out).not.toMatch(/ONDO_GM\s+⚠/);
   });
 
-  it('addressLabelMap: known target address renders as `target=<short> (<label>)`; unknown stays bare', async () => {
+  it('addressLabelMap: known target address renders as `<short> (<label>)`; unknown stays bare', async () => {
     const sdk = await loadSdk();
     // Lagoon target `0x30A3699E0DCea6Bdc8BB2c13E74A2324e0B20116` is mapped
     // to `lagoon.vault`; the Ondo GM target is left unmapped so we can
@@ -263,16 +260,14 @@ describe('printPlanDiff', () => {
       addressLabelMap: labelMap,
     });
     const out = text();
-    expect(out).toMatch(/target=0x30[Aa]3…0116 \(lagoon\.vault\)/);
+    expect(out).toMatch(/revokeTarget\(0x30[Aa]3…0116 \(lagoon\.vault\)\)/);
     // Unmapped target stays bare — no spurious parenthetical suffix.
-    expect(out).toMatch(/target=0x2[Cc]15…5[Cc]8[Cc]\b/);
-    expect(out).not.toMatch(/target=0x2[Cc]15…5[Cc]8[Cc] \(/);
+    expect(out).toMatch(/scopeFunction\(0x2[Cc]15…5[Cc]8[Cc], /);
+    expect(out).not.toMatch(/scopeFunction\(0x2[Cc]15…5[Cc]8[Cc] \(/);
   });
 
-  it('addressLabelMap: function-permission lines also annotate target before the fn= suffix', async () => {
+  it('addressLabelMap: function-permission lines also annotate the target inside the call header', async () => {
     const sdk = await loadSdk();
-    // Same scopeFunction fixture (target = Ondo GM Manager); label it and
-    // verify the rendering of the call line preserves both label and fn=.
     const labelMap = { '0x2c158bc456e027b2affccadf1bdbd9f5fc4c5c8c': 'ondo_gm.manager' };
     const plan = makePlan([FIX_SCOPE_FUNCTION_ONDO_GM_445DF08B]);
     const { sink, text } = captureSink();
@@ -283,16 +278,12 @@ describe('printPlanDiff', () => {
       addressLabelMap: labelMap,
     });
     const out = text();
-    // Single line with both annotations and the existing fn= suffix.
-    expect(out).toMatch(
-      /scopeFunction\s+target=0x2[Cc]15…5[Cc]8[Cc] \(ondo_gm\.manager\)\s+fn=0x445df08b/,
-    );
+    // Single tree line carrying both target-label and the selector/fn-name.
+    expect(out).toMatch(/scopeFunction\(0x2[Cc]15…5[Cc]8[Cc] \(ondo_gm\.manager\), 0x445df08b\)/);
   });
 
   it('addressLabelMap lookup is case-insensitive against checksummed addresses (map is lowercase, plan addresses are checksummed)', async () => {
     const sdk = await loadSdk();
-    // Lookup key is lowercase but the decoded `call.target` viem returns is
-    // checksum-cased. Asserts targetSuffix lowercases before lookup.
     const labelMap = { '0x30a3699e0dcea6bdc8bb2c13e74a2324e0b20116': 'lagoon.vault' };
     const plan = makePlan([FIX_REVOKE_TARGET_LAGOON]);
     const { sink, text } = captureSink();
@@ -305,14 +296,87 @@ describe('printPlanDiff', () => {
     expect(text()).toContain('(lagoon.vault)');
   });
 
-  it('shortens addresses to first4…last4 format', async () => {
+  it('functionParamMap: scopeFunction call expands into a param-subtree with column-aligned <type> <name> constraint lines', async () => {
+    const sdk = await loadSdk();
+    // ONDO_GM scopeFunction fixture targets 0x2c15…5C8C with selector
+    // 0x445df08b. Wire up a source-side entry simulating what
+    // buildFunctionParamMap would have produced from the generated YAML.
+    const paramMap = {
+      '0x2c158bc456e027b2affccadf1bdbd9f5fc4c5c8c:0x445df08b': {
+        signature: 'function subscribe(address asset, uint256 amount, address receiver)',
+        fnName: 'subscribe',
+        inputs: [
+          { type: 'address', name: 'asset' },
+          { type: 'uint256', name: 'amount' },
+          { type: 'address', name: 'receiver' },
+        ],
+        params: [
+          {
+            name: 'asset',
+            operator: 'equal_to',
+            value: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+            value_type: 'address',
+          },
+          { name: 'amount', operator: 'pass' },
+          { name: 'receiver', operator: 'equal_to_avatar' },
+        ],
+      },
+    };
+    const labelMap = { '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48': 'tokens.USDC' };
+    const plan = makePlan([FIX_SCOPE_FUNCTION_ONDO_GM_445DF08B]);
+    const { sink, text } = captureSink();
+    printPlanDiff(plan, {
+      planPath: 'safe.plan.json',
+      out: sink,
+      sdk,
+      functionParamMap: paramMap,
+      addressLabelMap: labelMap,
+    });
+    const out = text();
+    // Call header carries the function name from the map.
+    expect(out).toMatch(/scopeFunction\(0x2[Cc]15…5[Cc]8[Cc], subscribe\)/);
+    // Three param leaves under the call, in declared order.
+    expect(out).toMatch(/├─ address asset\s+= 0xA0b8…eB48 \(tokens\.USDC\)/);
+    expect(out).toMatch(/├─ uint256 amount\s+\*/);
+    expect(out).toMatch(/└─ address receiver\s+= <avatar>/);
+  });
+
+  it('functionParamMap: scopeFunction with no matching entry falls back to leaf rendering (no param subtree)', async () => {
+    const sdk = await loadSdk();
+    // Empty paramMap — same fixture, but no source-side entry to expand into.
+    const plan = makePlan([FIX_SCOPE_FUNCTION_ONDO_GM_445DF08B]);
+    const { sink, text } = captureSink();
+    printPlanDiff(plan, {
+      planPath: 'safe.plan.json',
+      out: sink,
+      sdk,
+      functionParamMap: {},
+    });
+    const out = text();
+    // No tree children under the scopeFunction line — verified by checking
+    // the next non-empty line after `scopeFunction(...)` doesn't start with
+    // a `├─`/`└─` connector at deeper indent.
+    const lines = out.trimEnd().split('\n');
+    const scopeIdx = lines.findIndex((l) => l.includes('scopeFunction('));
+    expect(scopeIdx).toBeGreaterThan(-1);
+    // Either the scopeFunction line is the last call line, or what follows
+    // continues the same indent depth — no descent into a param subtree.
+    const next = lines[scopeIdx + 1];
+    if (next !== undefined) {
+      // A child of scopeFunction would start with at least one more 4-char
+      // indent level than the scopeFunction connector itself.
+      expect(next).not.toMatch(/^\s{8,}[├└]─ \w+ \w+\s+[=*]/);
+    }
+  });
+
+  it('shortens addresses to first4…last4 format inside call headers', async () => {
     const sdk = await loadSdk();
     const plan = makePlan([FIX_REVOKE_TARGET_LAGOON]);
     const { sink, text } = captureSink();
     printPlanDiff(plan, { planPath: 'safe.plan.json', out: sink, sdk });
     const out = text();
     // 0x30A3699E0DCea6Bdc8BB2c13E74A2324e0B20116 → 0x30A3…0116
-    expect(out).toMatch(/target=0x30[Aa]3…0116/);
+    expect(out).toMatch(/revokeTarget\(0x30[Aa]3…0116\)/);
   });
 
   it('header uses `planPath` as-is (caller has already applied displayPath)', async () => {
