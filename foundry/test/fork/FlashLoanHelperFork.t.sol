@@ -8,6 +8,7 @@ import {ISafe} from "@safe/interfaces/ISafe.sol";
 import {Enum} from "@safe/interfaces/Enum.sol";
 import {IPool} from "@aave-v3-origin/interfaces/IPool.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SAFE_SINGLETON_V1_4_1, SAFE_PROXY_FACTORY_V1_4_1, AAVE_V3_POOL, MORPHO, USDC} from "./MainnetAddresses.sol";
 
 /// Minimal subset of the Safe v1.4.1 ProxyFactory ABI used here.
 interface ISafeProxyFactory {
@@ -26,13 +27,6 @@ interface ISafeProxyFactory {
 ///         contract as the sole owner so it can sign txns via the pre-validated-signature
 ///         path (v=1).
 contract FlashLoanHelperForkTest is Test {
-    // ---- Mainnet addresses ----
-    address constant SAFE_SINGLETON_V1_4_1 = 0x41675C099F32341bf84BFc5382aF534df5C7461a;
-    address constant SAFE_PROXY_FACTORY_V1_4_1 = 0x4e1DCf7AD4e460CfD30791CCC4F9c8a4f820ec67;
-    address constant AAVE_V3_POOL = 0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2;
-    address constant MORPHO = 0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb;
-    address constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
-
     bytes32 constant FALLBACK_HANDLER_SLOT = 0x6c9a6c4a39284e37ed1cf53d337577d14212a4870fb976a4366c693b939918d5;
 
     // USDC has 6 decimals.
