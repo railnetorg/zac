@@ -97,6 +97,43 @@ function buildSelectorMapForSources(
   return buildMap(generatedList);
 }
 
+/**
+ * Build an address → alias-label map for the given source paths. Resolves
+ * `config.yaml` from each source's safe-dir and loads the alias registry
+ * for the inferred network (`<network>/<safe>/*.zac.yaml`). Sources from
+ * different networks merge into one map; per-network labels never clash
+ * because addresses are globally unique. Failures (no config, parse
+ * error) degrade silently to no labels — never block the diff print.
+ */
+async function buildAddressLabelMapForSources(
+  sources: string[],
+  buildMap: typeof import('./apply/buildAddressLabelMap').buildAddressLabelMap,
+  loadAllAliases: typeof import('./load/loadAllAliases').loadAllAliases,
+  findConfig: typeof import('./load/findConfig').findConfig,
+): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  const seenConfigs = new Set<string>();
+  for (const src of sources) {
+    try {
+      const safeDir = dirname(src);
+      const network = basename(dirname(safeDir));
+      const configPath = findConfig({ startDir: safeDir });
+      // Dedupe — multiple sources in the same safe-dir share one config.
+      const key = `${configPath}::${network}`;
+      if (seenConfigs.has(key)) continue;
+      seenConfigs.add(key);
+      const aliases = loadAllAliases({ configPath, network });
+      const map = buildMap(aliases);
+      for (const [addr, label] of Object.entries(map)) {
+        if (out[addr] === undefined) out[addr] = label;
+      }
+    } catch {
+      // best-effort
+    }
+  }
+  return out;
+}
+
 interface BatchOutcome {
   ok: boolean;
 }
@@ -374,6 +411,9 @@ export function buildProgram(): Command {
         const { serializePlan } = await import('./apply/planSchema');
         const { printPlanDiff } = await import('./apply/printPlanDiff');
         const { buildSelectorMap } = await import('./apply/buildSelectorMap');
+        const { buildAddressLabelMap } = await import('./apply/buildAddressLabelMap');
+        const { loadAllAliases } = await import('./load/loadAllAliases');
+        const { findConfig } = await import('./load/findConfig');
         const sdk = await loadDiffSdk();
 
         const absInput = isAbsolute(inputPath) ? inputPath : resolve(inputPath);
@@ -404,6 +444,12 @@ export function buildProgram(): Command {
               planPath: displayPath(outPath),
               declaredRoleKeys: declaredRoleKeysForSafeDir(sd),
               selectorMap: buildSelectorMapForSources(sd.sources, buildSelectorMap),
+              addressLabelMap: await buildAddressLabelMapForSources(
+                sd.sources,
+                buildAddressLabelMap,
+                loadAllAliases,
+                findConfig,
+              ),
               sdk,
             });
             process.stdout.write(`planned: ${displayPath(outPath)}\n`);
@@ -434,6 +480,12 @@ export function buildProgram(): Command {
           printPlanDiff(plan, {
             planPath: displayPath(outPath),
             selectorMap: buildSelectorMapForSources([sourcePathFor(genPath)], buildSelectorMap),
+            addressLabelMap: await buildAddressLabelMapForSources(
+              [sourcePathFor(genPath)],
+              buildAddressLabelMap,
+              loadAllAliases,
+              findConfig,
+            ),
             sdk,
           });
           process.stdout.write(`planned: ${displayPath(outPath)}\n`);
@@ -549,6 +601,9 @@ export function buildProgram(): Command {
         const { runSubmit } = await import('./apply/runSubmit');
         const { printPlanDiff } = await import('./apply/printPlanDiff');
         const { buildSelectorMap } = await import('./apply/buildSelectorMap');
+        const { buildAddressLabelMap } = await import('./apply/buildAddressLabelMap');
+        const { loadAllAliases } = await import('./load/loadAllAliases');
+        const { findConfig } = await import('./load/findConfig');
         const sdk = await loadDiffSdk();
 
         // Pre-validate the proposer key once, before any batch starts.
@@ -589,6 +644,12 @@ export function buildProgram(): Command {
               planPath: displayPath(safeDirPlanPathFor(sd)),
               declaredRoleKeys: declaredRoleKeysForSafeDir(sd),
               selectorMap: buildSelectorMapForSources(sd.sources, buildSelectorMap),
+              addressLabelMap: await buildAddressLabelMapForSources(
+                sd.sources,
+                buildAddressLabelMap,
+                loadAllAliases,
+                findConfig,
+              ),
               sdk,
             });
             const submitArgs: Parameters<typeof runSubmit>[0] = {
@@ -622,6 +683,12 @@ export function buildProgram(): Command {
           printPlanDiff(plan, {
             planPath: displayPath(planPathFor(genPath)),
             selectorMap: buildSelectorMapForSources([sourcePathFor(genPath)], buildSelectorMap),
+            addressLabelMap: await buildAddressLabelMapForSources(
+              [sourcePathFor(genPath)],
+              buildAddressLabelMap,
+              loadAllAliases,
+              findConfig,
+            ),
             sdk,
           });
           const submitArgs: Parameters<typeof runSubmit>[0] = {
