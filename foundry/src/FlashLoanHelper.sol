@@ -80,6 +80,25 @@ contract FlashLoanHelper is IFlashLoanHelper {
     ///         we only ever use variable (2).
     uint256 private constant AAVE_VARIABLE_RATE = 2;
 
+    /// @notice Helper's own address (immutable → bytecode, not storage, so invariant 1 holds).
+    ///         Under DELEGATECALL `address(this)` is the Safe, so `SELF` is the Helper's identity
+    ///         for the direct-call check and self-install as Module / fallback handler.
+    address private immutable SELF = address(this);
+
+    // ---- Types ----
+
+    /// @notice Snapshot of the Safe configuration that `executeLoop` must leave untouched
+    ///         (invariant 8). Captured before the bracket, re-checked after. The fallback
+    ///         handler and Helper's own Module membership are deliberately toggled by the
+    ///         bracket and verified separately (invariant 3 teardown) — they are not here.
+    struct SafeSnapshot {
+        uint256 threshold;
+        bytes32 ownersHash;
+        bytes32 modulesHash;
+        address guard;
+        address moduleGuard;
+    }
+
     // ---- Errors ----
 
     error MustDelegateCall();
@@ -90,7 +109,6 @@ contract FlashLoanHelper is IFlashLoanHelper {
     error SafeStateTampered();
     error UnsupportedFlashVenueKind();
     error WrongCallbackForKind();
-    error WrongHelper(address expected, address actual);
     error NotMidLoop(address safe);
     error WrongTrailer(address expected, address actual);
     error AmountMismatch(uint256 expected, uint256 actual);
@@ -112,12 +130,11 @@ contract FlashLoanHelper is IFlashLoanHelper {
         // defence-in-depth.
         if (p.flashAmount == 0) revert ZeroFlashAmount();
 
-        // Reject direct CALL on the Helper deployment. Under DELEGATECALL `address(this) == Safe`,
-        // so `address(this) != p.helperAddress` (which is the canonical Helper, Roles-pinned).
-        // `p.helperAddress` is also the identity reference we'll use for all install / uninstall
-        // operations below — under DELEGATECALL the Helper cannot recover its own address
-        // otherwise.
-        if (address(this) == p.helperAddress) revert MustDelegateCall();
+        // Reject direct CALL on the Helper deployment. `SELF` is the Helper's own address (fixed
+        // at construction); under DELEGATECALL `address(this)` is the Safe, so `address(this) ==
+        // SELF` means we're being called directly rather than delegatecalled. `SELF` is also the
+        // identity used for all install / uninstall operations below.
+        if (address(this) == SELF) revert MustDelegateCall();
 
         ISafe safe = ISafe(payable(address(this)));
 
@@ -127,23 +144,13 @@ contract FlashLoanHelper is IFlashLoanHelper {
         if (fallbackPre != address(0)) revert FallbackHandlerAlreadySet(fallbackPre);
 
         // Outside an active executeLoop the Helper MUST NOT already be a Module of this Safe.
-        if (safe.isModuleEnabled(p.helperAddress)) revert ModuleAlreadyEnabled(p.helperAddress);
+        if (safe.isModuleEnabled(SELF)) revert ModuleAlreadyEnabled(SELF);
 
         // ==== Snapshot Safe critical state (invariant 8) ====
-
-        uint256 thresholdPre = safe.getThreshold();
-        bytes32 ownersHashPre = keccak256(abi.encode(safe.getOwners()));
-
-        // Hash the modules list AND assert it fits in one page — if the Safe has more than
-        // `MODULES_PAGE_SIZE` modules, only the first page would be hashed and tampering
-        // beyond the page would go undetected. Better to fail loudly than silently miss it.
-        (bytes32 modulesHashPre, address modulesNextPre) = _modulesPage(safe);
-        if (modulesNextPre != SENTINEL_MODULES) revert TooManyModules();
-
-        address guardPre = _sloadAddress(GUARD_STORAGE_SLOT);
-        address moduleGuardPre = _sloadAddress(MODULE_GUARD_STORAGE_SLOT);
+        //
+        // (Fallback handler pre = address(0), verified above; Helper not yet a Module either.)
+        SafeSnapshot memory snapshotPre = _snapshotSafe(safe);
         uint256 assetBalancePre = IERC20(p.asset).balanceOf(address(this));
-        // (fallback handler pre = address(0), verified above)
 
         // ==== Install transient state (invariant 3 — atomic bracket entry) ====
         //
@@ -153,8 +160,8 @@ contract FlashLoanHelper is IFlashLoanHelper {
         //
         // Both self-calls satisfy Safe's `authorized` modifier (`msg.sender == address(this)`)
         // because we are running in the Safe's frame under DELEGATECALL.
-        safe.enableModule(p.helperAddress);
-        safe.setFallbackHandler(p.helperAddress);
+        safe.enableModule(SELF);
+        safe.setFallbackHandler(SELF);
 
         // ==== Flash-loan dispatch ====
         //
@@ -173,7 +180,7 @@ contract FlashLoanHelper is IFlashLoanHelper {
         // ==== Uninstall transient state (invariant 3 — atomic bracket exit) ====
 
         safe.setFallbackHandler(address(0));
-        safe.disableModule(SENTINEL_MODULES, p.helperAddress);
+        safe.disableModule(SENTINEL_MODULES, SELF);
 
         // ==== Post-loop checks ====
         //
@@ -198,19 +205,14 @@ contract FlashLoanHelper is IFlashLoanHelper {
             revert DustResidual(assetBalancePre, assetBalancePost);
         }
 
-        // ==== Validate critical state (invariant 8) ====
+        // ==== Validate teardown + critical state (invariants 3 + 8) ====
         //
-        // Catch any execution path inside the bracket that altered Safe configuration.
-
+        // Invariant 3 teardown: the bracket must have removed both the fallback handler and
+        // Helper's Module membership. Invariant 8: every other critical Safe field unchanged.
         address fallbackPost = _currentFallbackHandler();
         if (fallbackPost != address(0)) revert FallbackHandlerLeaked(fallbackPost);
-        if (safe.isModuleEnabled(p.helperAddress)) revert ModuleLeaked(p.helperAddress);
-        if (safe.getThreshold() != thresholdPre) revert SafeStateTampered();
-        if (keccak256(abi.encode(safe.getOwners())) != ownersHashPre) revert SafeStateTampered();
-        (bytes32 modulesHashPost,) = _modulesPage(safe);
-        if (modulesHashPost != modulesHashPre) revert SafeStateTampered();
-        if (_sloadAddress(GUARD_STORAGE_SLOT) != guardPre) revert SafeStateTampered();
-        if (_sloadAddress(MODULE_GUARD_STORAGE_SLOT) != moduleGuardPre) revert SafeStateTampered();
+        if (safe.isModuleEnabled(SELF)) revert ModuleLeaked(SELF);
+        _assertSafeUnchanged(safe, snapshotPre);
     }
 
     /// @inheritdoc IFlashLoanHelper
@@ -219,7 +221,6 @@ contract FlashLoanHelper is IFlashLoanHelper {
 
         // (Invariant 4 — callback authentication.)
         if (p.flashVenueKind != FlashVenueKind.Morpho) revert WrongCallbackForKind();
-        if (p.helperAddress != address(this)) revert WrongHelper(p.helperAddress, address(this));
 
         address safeAddr = msg.sender;
         address midLoopFallback = _safeFallbackHandler(safeAddr);
@@ -248,7 +249,6 @@ contract FlashLoanHelper is IFlashLoanHelper {
 
         // (Invariant 4 — callback authentication.)
         if (p.flashVenueKind != FlashVenueKind.Aave) revert WrongCallbackForKind();
-        if (p.helperAddress != address(this)) revert WrongHelper(p.helperAddress, address(this));
 
         address safeAddr = msg.sender;
         address midLoopFallback = _safeFallbackHandler(safeAddr);
@@ -352,6 +352,30 @@ contract FlashLoanHelper is IFlashLoanHelper {
         address[] memory mods;
         (mods, next) = safe.getModulesPaginated(SENTINEL_MODULES, MODULES_PAGE_SIZE);
         hash = keccak256(abi.encode(mods));
+    }
+
+    /// @dev Snapshots the Safe's critical configuration (invariant 8). Also asserts the modules
+    ///      list fits in one `getModulesPaginated` page — beyond that, tampering past the page
+    ///      boundary would be invisible to the hash, so we fail loudly (`TooManyModules`).
+    function _snapshotSafe(ISafe safe) internal view returns (SafeSnapshot memory snapshot) {
+        snapshot.threshold = safe.getThreshold();
+        snapshot.ownersHash = keccak256(abi.encode(safe.getOwners()));
+        (bytes32 modulesHash, address next) = _modulesPage(safe);
+        if (next != SENTINEL_MODULES) revert TooManyModules();
+        snapshot.modulesHash = modulesHash;
+        snapshot.guard = _sloadAddress(GUARD_STORAGE_SLOT);
+        snapshot.moduleGuard = _sloadAddress(MODULE_GUARD_STORAGE_SLOT);
+    }
+
+    /// @dev Re-reads the Safe's critical configuration and reverts unless every field matches
+    ///      the pre-loop snapshot.
+    function _assertSafeUnchanged(ISafe safe, SafeSnapshot memory pre) internal view {
+        if (safe.getThreshold() != pre.threshold) revert SafeStateTampered();
+        if (keccak256(abi.encode(safe.getOwners())) != pre.ownersHash) revert SafeStateTampered();
+        (bytes32 modulesHash,) = _modulesPage(safe);
+        if (modulesHash != pre.modulesHash) revert SafeStateTampered();
+        if (_sloadAddress(GUARD_STORAGE_SLOT) != pre.guard) revert SafeStateTampered();
+        if (_sloadAddress(MODULE_GUARD_STORAGE_SLOT) != pre.moduleGuard) revert SafeStateTampered();
     }
 
     /// @dev Extracts the trailing 20-byte original-caller address that Safe's FallbackManager
