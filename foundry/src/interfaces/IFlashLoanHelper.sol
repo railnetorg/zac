@@ -20,11 +20,6 @@ interface IFlashLoanHelper {
 
     /// @notice Per-call configuration. Same-asset semantics: collateral and debt are the same token.
     /// @param  direction       Boost = leverage up, Repay = deleverage.
-    /// @param  helperAddress   Canonical Helper deployment address on the current chain. Roles
-    ///                         policy pins this via `equal_to`. Used by the Helper to install
-    ///                         itself as Safe Module and fallback handler — under DELEGATECALL
-    ///                         `address(this) == Safe`, so the Helper cannot recover its own
-    ///                         address otherwise.
     /// @param  lendingVenue    Aave V3 Pool. Roles policy pins this to the Aave Pool address.
     /// @param  asset           ERC-20 used as both collateral and debt.
     /// @param  flashAmount     Flash-loan principal.
@@ -33,7 +28,6 @@ interface IFlashLoanHelper {
     /// @param  minHealthFactor Post-loop HF floor (1e18 base). Roles enforces a per-vehicle minimum.
     struct LoopParams {
         LoopDirection direction;
-        address helperAddress;
         address lendingVenue;
         address asset;
         uint256 flashAmount;

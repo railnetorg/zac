@@ -191,10 +191,9 @@ contract FlashLoanHelperForkTest is Test {
 
     // ==================== LoopParams builders ====================
 
-    function _morphoBoostParams() internal view returns (IFlashLoanHelper.LoopParams memory) {
+    function _morphoBoostParams() internal pure returns (IFlashLoanHelper.LoopParams memory) {
         return IFlashLoanHelper.LoopParams({
             direction: IFlashLoanHelper.LoopDirection.Boost,
-            helperAddress: address(helper),
             lendingVenue: AAVE_V3_POOL,
             asset: USDC,
             flashAmount: FLASH_AMOUNT,
@@ -204,10 +203,9 @@ contract FlashLoanHelperForkTest is Test {
         });
     }
 
-    function _aaveBoostParams() internal view returns (IFlashLoanHelper.LoopParams memory) {
+    function _aaveBoostParams() internal pure returns (IFlashLoanHelper.LoopParams memory) {
         return IFlashLoanHelper.LoopParams({
             direction: IFlashLoanHelper.LoopDirection.Boost,
-            helperAddress: address(helper),
             lendingVenue: AAVE_V3_POOL,
             asset: USDC,
             flashAmount: FLASH_AMOUNT,
@@ -217,10 +215,9 @@ contract FlashLoanHelperForkTest is Test {
         });
     }
 
-    function _morphoRepayParams() internal view returns (IFlashLoanHelper.LoopParams memory) {
+    function _morphoRepayParams() internal pure returns (IFlashLoanHelper.LoopParams memory) {
         return IFlashLoanHelper.LoopParams({
             direction: IFlashLoanHelper.LoopDirection.Repay,
-            helperAddress: address(helper),
             lendingVenue: AAVE_V3_POOL,
             asset: USDC,
             flashAmount: FLASH_AMOUNT,

@@ -64,11 +64,10 @@ contract FlashLoanHelperTest is Test {
     // ==================== Invariant 7 — Direct-call rejection on executeLoop ====================
 
     /// A direct CALL on the Helper deployment (i.e., not DELEGATECALL from a Safe) is rejected.
-    /// Detection: `address(this) == p.helperAddress` only when we're running directly on the
-    /// Helper contract; under DELEGATECALL `address(this)` would be the Safe.
+    /// Detection: `address(this) == SELF` only when running directly on the Helper contract;
+    /// under DELEGATECALL `address(this)` would be the Safe.
     function test_executeLoop_revertsOnDirectCall() public {
         IFlashLoanHelper.LoopParams memory p = _defaultMorphoParams();
-        p.helperAddress = address(helper);
 
         vm.expectRevert(FlashLoanHelper.MustDelegateCall.selector);
         helper.executeLoop(p);
@@ -86,16 +85,6 @@ contract FlashLoanHelperTest is Test {
         p.flashVenueKind = IFlashLoanHelper.FlashVenueKind.Aave;
 
         vm.expectRevert(FlashLoanHelper.WrongCallbackForKind.selector);
-        helper.onMorphoFlashLoan(FLASH_AMOUNT, abi.encode(p));
-    }
-
-    /// `helperAddress` in the payload doesn't match this Helper. The Helper would otherwise
-    /// trust a payload that asks it to operate on behalf of a different Helper deployment.
-    function test_onMorphoFlashLoan_revertsOnWrongHelper() public {
-        IFlashLoanHelper.LoopParams memory p = _defaultMorphoParams();
-        p.helperAddress = address(0xBAD);
-
-        vm.expectRevert(abi.encodeWithSelector(FlashLoanHelper.WrongHelper.selector, address(0xBAD), address(helper)));
         helper.onMorphoFlashLoan(FLASH_AMOUNT, abi.encode(p));
     }
 
@@ -147,14 +136,6 @@ contract FlashLoanHelperTest is Test {
         p.flashVenueKind = IFlashLoanHelper.FlashVenueKind.Morpho;
 
         vm.expectRevert(FlashLoanHelper.WrongCallbackForKind.selector);
-        helper.executeOperation(ASSET, FLASH_AMOUNT, 0, address(this), abi.encode(p));
-    }
-
-    function test_executeOperation_revertsOnWrongHelper() public {
-        IFlashLoanHelper.LoopParams memory p = _defaultAaveParams();
-        p.helperAddress = address(0xBAD);
-
-        vm.expectRevert(abi.encodeWithSelector(FlashLoanHelper.WrongHelper.selector, address(0xBAD), address(helper)));
         helper.executeOperation(ASSET, FLASH_AMOUNT, 0, address(this), abi.encode(p));
     }
 
@@ -224,10 +205,9 @@ contract FlashLoanHelperTest is Test {
 
     // ==================== Helpers ====================
 
-    function _defaultMorphoParams() internal view returns (IFlashLoanHelper.LoopParams memory) {
+    function _defaultMorphoParams() internal pure returns (IFlashLoanHelper.LoopParams memory) {
         return IFlashLoanHelper.LoopParams({
             direction: IFlashLoanHelper.LoopDirection.Boost,
-            helperAddress: address(helper),
             lendingVenue: LENDING_VENUE,
             asset: ASSET,
             flashAmount: FLASH_AMOUNT,
@@ -237,10 +217,9 @@ contract FlashLoanHelperTest is Test {
         });
     }
 
-    function _defaultAaveParams() internal view returns (IFlashLoanHelper.LoopParams memory) {
+    function _defaultAaveParams() internal pure returns (IFlashLoanHelper.LoopParams memory) {
         return IFlashLoanHelper.LoopParams({
             direction: IFlashLoanHelper.LoopDirection.Boost,
-            helperAddress: address(helper),
             lendingVenue: LENDING_VENUE,
             asset: ASSET,
             flashAmount: FLASH_AMOUNT,
