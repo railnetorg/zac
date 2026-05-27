@@ -2,8 +2,8 @@
 pragma solidity 0.8.34;
 
 import {Test} from "forge-std/Test.sol";
-import {FlashLoanHelper} from "../src/FlashLoanHelper.sol";
-import {IFlashLoanHelper} from "../src/interfaces/IFlashLoanHelper.sol";
+import {FlashLoanHelper} from "src/FlashLoanHelper.sol";
+import {IFlashLoanHelper} from "src/interfaces/IFlashLoanHelper.sol";
 
 /// @dev Minimal Safe stand-in. Implements just enough of `ISafe` for the unit tests:
 ///      a configurable fallback-handler slot reader, plus a fallback-handler simulator that
