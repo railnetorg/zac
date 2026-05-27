@@ -13,6 +13,9 @@ docs/
 # Dotenv file
 .env
 
+# Editor
+.vscode/
+
 # bun / typescript
 action/node_modules/
 action/.bun-cache/
