@@ -11,6 +11,7 @@ aliases:
     morpho_blue: ../aliases/mainnet/morpho_blue.yaml
     ondo_gm: ../aliases/mainnet/ondo_gm.yaml
     ondo_ousg: ../aliases/mainnet/ondo_ousg.yaml
+    helper: ../aliases/mainnet/helper.yaml
     safes: ./aliases/mainnet/safes.yaml
     modifiers: ./aliases/mainnet/modifiers.yaml
   sepolia:

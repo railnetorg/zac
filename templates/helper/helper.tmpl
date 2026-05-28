@@ -1,0 +1,84 @@
+{#-
+  Flash-loan Helper — `executeLoop` policy.
+
+  Scopes the singleton Helper for same-asset leveraged loops on Aave V3
+  (see foundry/src/FlashLoanHelper.sol). The single param `p` is the
+  `LoopParams` tuple; field constraints are positionally matched.
+
+  Required template params:
+    assets — list of token alias keys (e.g. ["USDC"]) the vehicle is
+             allowed to loop on. Each must resolve via
+             aliases.tokens[<key>] on the active chain. Same-asset
+             semantics: each entry is both collateral and debt.
+    allowed_flash_venues — list of named flash-loan venue keys. Supported:
+             "aave"   → aliases.aave.pool        (FlashVenueKind.Aave = 0)
+             "morpho" → aliases.morpho_blue.singleton (FlashVenueKind.Morpho = 1)
+             Each authorised key also pins the matching `flashVenueKind`
+             enum value, so policy and contract agree on the venue↔kind pair.
+    min_health_factor_floor — exclusive lower bound on `p.minHealthFactor`
+             (the parser supports `greater_than` but not
+             `greater_than_or_equal`). For a vehicle floor of 1.1e18, pass
+             "1099999999999999999".
+
+  Resolved from aliases (NOT params):
+    aliases.helper.singleton      — Helper singleton on the chain.
+    aliases.aave.pool             — Aave V3 Pool on the chain.
+    aliases.morpho_blue.singleton — Morpho Blue singleton on the chain.
+    aliases.tokens[<key>]         — per-token address for each entry in `assets`.
+
+  Output: a single role permission scoping `executeLoop` on the Helper, opted
+  into DELEGATECALL via `execution_options: "delegatecall"`. CALL on the
+  Helper is rejected at the Roles layer (matches the contract's
+  `MustDelegateCall` revert).
+-#}
+{%- set _venue_addr = {
+  "aave":   aliases.aave.pool,
+  "morpho": aliases.morpho_blue.singleton
+} -%}
+{%- set _venue_kind = {
+  "aave":   0,
+  "morpho": 1
+} -%}
+roles:
+  - address: "{{ aliases.helper.singleton }}"
+    functions:
+      - signature: "function executeLoop((uint8 direction, address lendingVenue, address asset, uint256 flashAmount, address flashVenue, uint8 flashVenueKind, uint256 minHealthFactor) p)"
+        execution_options: "delegatecall"
+        params:
+          - name: p
+            param_type: "tuple"
+            operator: "matches"
+            conditions:
+              # p.direction (LoopDirection enum): Boost (0) or Repay (1) both allowed.
+              - operator: "pass"
+              # p.lendingVenue: pinned to Aave V3 Pool.
+              - operator: "equal_to"
+                value: "{{ aliases.aave.pool }}"
+                value_type: "address"
+              # p.asset: per-vehicle whitelist of same-asset loop tokens.
+              - operator: "oneOf"
+                values:
+                  {%- for token in assets %}
+                  - "{{ aliases.tokens[token] }}"
+                  {%- endfor %}
+                value_type: "address"
+              # p.flashAmount: keepers size flash off-chain to hit HF target.
+              - operator: "pass"
+              # p.flashVenue: whitelist resolved from allowed_flash_venues.
+              - operator: "oneOf"
+                values:
+                  {%- for v in allowed_flash_venues %}
+                  - "{{ _venue_addr[v] }}"
+                  {%- endfor %}
+                value_type: "address"
+              # p.flashVenueKind: pinned to match allowed_flash_venues entry-by-entry.
+              - operator: "oneOf"
+                values:
+                  {%- for v in allowed_flash_venues %}
+                  - {{ _venue_kind[v] }}
+                  {%- endfor %}
+                value_type: "uint8"
+              # p.minHealthFactor: STRICT lower bound (gte is not yet supported by the parser).
+              - operator: "greater_than"
+                value: "{{ min_health_factor_floor }}"
+                value_type: "uint256"
