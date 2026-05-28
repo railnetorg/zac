@@ -126,4 +126,27 @@ describe('buildAddressLabelMap', () => {
     // surface a labeled address from a non-leaf node.
     expect(m).toEqual({});
   });
+
+  it('zero address is suppressed regardless of registry shape (flat string)', () => {
+    const m = buildAddressLabelMap(
+      reg({
+        misc: { zero: '0x0000000000000000000000000000000000000000' },
+        ZERO: '0x0000000000000000000000000000000000000000',
+      }),
+    );
+    // No entry — diff output should never render `setGuard(0x0…0 (ZERO))`.
+    expect(m['0x0000000000000000000000000000000000000000']).toBeUndefined();
+    expect(m).toEqual({});
+  });
+
+  it('zero address is suppressed even inside an `address` object', () => {
+    const m = buildAddressLabelMap(
+      reg({
+        modules: {
+          unset: { address: '0x0000000000000000000000000000000000000000', label: 'none' },
+        },
+      }),
+    );
+    expect(m['0x0000000000000000000000000000000000000000']).toBeUndefined();
+  });
 });

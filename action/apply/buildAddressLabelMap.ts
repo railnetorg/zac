@@ -1,6 +1,17 @@
 import type { AliasRegistry } from '../load/loadAllAliases';
 
 const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
+
+/**
+ * The zero address is never a meaningful label target. `loadAllAliases`
+ * auto-injects `aliases.ZERO = 0x0…0` (so `{{ aliases.ZERO }}` works in
+ * templates like `safe.yaml: guard: {{ aliases.ZERO }}`); without this
+ * filter, diff output would carry `setGuard(0x0000…0000 (ZERO))` noise.
+ */
+function isZeroAddr(a: string): boolean {
+  return a.toLowerCase() === ZERO_ADDRESS;
+}
 
 /**
  * Namespaces whose labels win collisions outright, in priority order.
@@ -75,7 +86,7 @@ function record(key: string, path: string[], out: Map<string, Candidate>): void 
 function flatten(node: unknown, path: string[], out: Map<string, Candidate>): void {
   if (node === null || node === undefined) return;
   if (typeof node === 'string') {
-    if (ADDRESS_RE.test(node)) record(node.toLowerCase(), path, out);
+    if (ADDRESS_RE.test(node) && !isZeroAddr(node)) record(node.toLowerCase(), path, out);
     return;
   }
   if (typeof node !== 'object' || Array.isArray(node)) return;
@@ -85,7 +96,7 @@ function flatten(node: unknown, path: string[], out: Map<string, Candidate>): vo
   // so dropping the rest of the descent loses nothing.
   const obj = node as Record<string, unknown>;
   if (typeof obj['address'] === 'string' && ADDRESS_RE.test(obj['address'])) {
-    record(obj['address'].toLowerCase(), path, out);
+    if (!isZeroAddr(obj['address'])) record(obj['address'].toLowerCase(), path, out);
     return;
   }
   for (const [k, v] of Object.entries(obj)) {

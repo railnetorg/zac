@@ -47,7 +47,9 @@ describe('runSubmit', () => {
       expect(cfg.signer).toBe(TEST_KEY);
       expect(cfg.safeAddress).toBe(PLAN.safeAddress);
       return {
-        createTransaction: async () => ({ data: {} }),
+        createTransaction: async () => ({
+          data: { to: PLAN.safeAddress, value: '0', data: '0x', operation: 0 },
+        }),
         getTransactionHash: async () => '0xunused',
         signHash: async (hash: string) => ({ data: '0xsig:' + hash.slice(2, 10) }),
       };

@@ -111,7 +111,12 @@ describe('printPlanDiff', () => {
     const sdk = await loadSdk();
     const plan = makePlan([FIX_REVOKE_TARGET_ETHENA, FIX_REVOKE_FUNCTION_ETHENA_APPROVE]);
     const { sink, text } = captureSink();
-    printPlanDiff(plan, { planPath: 'configs/m/safe.plan.json', out: sink, sdk });
+    printPlanDiff(plan, {
+      planPath: 'configs/m/safe.plan.json',
+      safeAddress: plan.safeAddress,
+      out: sink,
+      sdk,
+    });
     const out = text();
     expect(out).toContain('plan: configs/m/safe.plan.json (2 calls)');
     // Tree section header (└─ because revokes is the only section).
@@ -135,6 +140,7 @@ describe('printPlanDiff', () => {
     // Declare only LAGOON; ETHENA_INSTITUTIONAL is unmentioned.
     printPlanDiff(plan, {
       planPath: 'safe.plan.json',
+      safeAddress: plan.safeAddress,
       declaredRoleKeys: new Set(['LAGOON']),
       out: sink,
       sdk,
@@ -151,6 +157,7 @@ describe('printPlanDiff', () => {
     const { sink, text } = captureSink();
     printPlanDiff(plan, {
       planPath: 'safe.plan.json',
+      safeAddress: plan.safeAddress,
       declaredRoleKeys: new Set(['LAGOON', 'ETHENA_INSTITUTIONAL']),
       out: sink,
       sdk,
@@ -162,7 +169,12 @@ describe('printPlanDiff', () => {
     const sdk = await loadSdk();
     const plan = makePlan([FIX_SCOPE_FUNCTION_ONDO_GM_445DF08B]);
     const { sink, text } = captureSink();
-    printPlanDiff(plan, { planPath: 'safe.plan.json', out: sink, sdk });
+    printPlanDiff(plan, {
+      planPath: 'safe.plan.json',
+      safeAddress: plan.safeAddress,
+      out: sink,
+      sdk,
+    });
     const out = text();
     expect(out).toMatch(/[├└]─ adds \(1\)/);
     expect(out).not.toContain('revokes (');
@@ -177,6 +189,7 @@ describe('printPlanDiff', () => {
     const { sink, text } = captureSink();
     printPlanDiff(plan, {
       planPath: 'safe.plan.json',
+      safeAddress: plan.safeAddress,
       out: sink,
       sdk,
       selectorMap: { '0x1bca4f52': 'tag' },
@@ -196,7 +209,12 @@ describe('printPlanDiff', () => {
     const sdk = await loadSdk();
     const plan = makePlan([FIX_ASSIGN_ROLES_ETHENA]);
     const { sink, text } = captureSink();
-    printPlanDiff(plan, { planPath: 'safe.plan.json', out: sink, sdk });
+    printPlanDiff(plan, {
+      planPath: 'safe.plan.json',
+      safeAddress: plan.safeAddress,
+      out: sink,
+      sdk,
+    });
     const out = text();
     expect(out).toMatch(/[├└]─ adds \(1\)/);
     expect(out).toContain('assignRoles');
@@ -208,7 +226,12 @@ describe('printPlanDiff', () => {
     const sdk = await loadSdk();
     const plan = makePlan([FIX_UNKNOWN]);
     const { sink, text } = captureSink();
-    printPlanDiff(plan, { planPath: 'safe.plan.json', out: sink, sdk });
+    printPlanDiff(plan, {
+      planPath: 'safe.plan.json',
+      safeAddress: plan.safeAddress,
+      out: sink,
+      sdk,
+    });
     const out = text();
     expect(out).toMatch(/[├└]─ adds \(1\)/);
     expect(out).toMatch(/unknown\(selector=0xdeadbeef, dataLen=\d+\)/);
@@ -227,6 +250,7 @@ describe('printPlanDiff', () => {
     const { sink, text } = captureSink();
     printPlanDiff(plan, {
       planPath: 'safe.plan.json',
+      safeAddress: plan.safeAddress,
       declaredRoleKeys: new Set(['ONDO_GM']),
       out: sink,
       sdk,
@@ -255,6 +279,7 @@ describe('printPlanDiff', () => {
     const { sink, text } = captureSink();
     printPlanDiff(plan, {
       planPath: 'safe.plan.json',
+      safeAddress: plan.safeAddress,
       out: sink,
       sdk,
       addressLabelMap: labelMap,
@@ -273,6 +298,7 @@ describe('printPlanDiff', () => {
     const { sink, text } = captureSink();
     printPlanDiff(plan, {
       planPath: 'safe.plan.json',
+      safeAddress: plan.safeAddress,
       out: sink,
       sdk,
       addressLabelMap: labelMap,
@@ -289,6 +315,7 @@ describe('printPlanDiff', () => {
     const { sink, text } = captureSink();
     printPlanDiff(plan, {
       planPath: 'safe.plan.json',
+      safeAddress: plan.safeAddress,
       out: sink,
       sdk,
       addressLabelMap: labelMap,
@@ -327,6 +354,7 @@ describe('printPlanDiff', () => {
     const { sink, text } = captureSink();
     printPlanDiff(plan, {
       planPath: 'safe.plan.json',
+      safeAddress: plan.safeAddress,
       out: sink,
       sdk,
       functionParamMap: paramMap,
@@ -348,6 +376,7 @@ describe('printPlanDiff', () => {
     const { sink, text } = captureSink();
     printPlanDiff(plan, {
       planPath: 'safe.plan.json',
+      safeAddress: plan.safeAddress,
       out: sink,
       sdk,
       functionParamMap: {},
@@ -373,7 +402,12 @@ describe('printPlanDiff', () => {
     const sdk = await loadSdk();
     const plan = makePlan([FIX_REVOKE_TARGET_LAGOON]);
     const { sink, text } = captureSink();
-    printPlanDiff(plan, { planPath: 'safe.plan.json', out: sink, sdk });
+    printPlanDiff(plan, {
+      planPath: 'safe.plan.json',
+      safeAddress: plan.safeAddress,
+      out: sink,
+      sdk,
+    });
     const out = text();
     // 0x30A3699E0DCea6Bdc8BB2c13E74A2324e0B20116 → 0x30A3…0116
     expect(out).toMatch(/revokeTarget\(0x30[Aa]3…0116\)/);
@@ -383,7 +417,160 @@ describe('printPlanDiff', () => {
     const sdk = await loadSdk();
     const plan = makePlan([FIX_REVOKE_TARGET_LAGOON]);
     const { sink, text } = captureSink();
-    printPlanDiff(plan, { planPath: 'foo/bar/baz.plan.json', out: sink, sdk });
+    printPlanDiff(plan, {
+      planPath: 'foo/bar/baz.plan.json',
+      safeAddress: plan.safeAddress,
+      out: sink,
+      sdk,
+    });
     expect(text()).toContain('plan: foo/bar/baz.plan.json (1 calls)');
+  });
+
+  // --- Safe-level `safe (N)` section ---
+
+  it('plan with only Safe-level calls → `safe (4)` section, no `revokes` / `adds`', async () => {
+    const sdk = await loadSdk();
+    const safeAddress = '0x40FF9A84a5Da941A060E2925DA228aab328DDe58';
+    // Encode 4 Safe-level calldatas using the Safe-ABI signatures.
+    const { encodeFunctionData } = await import('viem');
+    const SAFE_ABI = [
+      {
+        type: 'function',
+        name: 'setGuard',
+        inputs: [{ type: 'address', name: 'guard' }],
+        outputs: [],
+      },
+      {
+        type: 'function',
+        name: 'setFallbackHandler',
+        inputs: [{ type: 'address', name: 'handler' }],
+        outputs: [],
+      },
+      {
+        type: 'function',
+        name: 'enableModule',
+        inputs: [{ type: 'address', name: 'module' }],
+        outputs: [],
+      },
+      {
+        type: 'function',
+        name: 'disableModule',
+        inputs: [
+          { type: 'address', name: 'prevModule' },
+          { type: 'address', name: 'module' },
+        ],
+        outputs: [],
+      },
+    ] as const;
+    const GUARD = '0x1234567890123456789012345678901234567890';
+    const FALLBACK = '0x2345678901234567890123456789012345678901';
+    const MOD_A = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const MOD_B = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+    const PREV = '0xcccccccccccccccccccccccccccccccccccccccc';
+    const mk = (
+      fn: 'setGuard' | 'setFallbackHandler' | 'enableModule' | 'disableModule',
+      a: string,
+      b?: string,
+    ): PlanCall => {
+      const args =
+        b === undefined ? [a as `0x${string}`] : [a as `0x${string}`, b as `0x${string}`];
+      const data = encodeFunctionData({ abi: SAFE_ABI, functionName: fn, args: args as never });
+      return { to: safeAddress, value: '0', data };
+    };
+    const plan = makePlan([
+      mk('setGuard', GUARD),
+      mk('setFallbackHandler', FALLBACK),
+      mk('enableModule', MOD_A),
+      mk('disableModule', PREV, MOD_B),
+    ]);
+    const { sink, text } = captureSink();
+    printPlanDiff(plan, { planPath: 'safe.plan.json', safeAddress, out: sink, sdk });
+    const out = text();
+    expect(out).toMatch(/[├└]─ safe \(4\)/);
+    expect(out).not.toContain('revokes (');
+    expect(out).not.toContain('adds (');
+    expect(out).toMatch(/setGuard\(/);
+    expect(out).toMatch(/setFallbackHandler\(/);
+    expect(out).toMatch(/enableModule\(/);
+    expect(out).toMatch(/disableModule\(/);
+    // `prevModule` must NOT be rendered — only `moduleAddress`. viem
+    // checksums the address; match case-insensitively. Also assert PREV
+    // does not appear in the disableModule line.
+    expect(out).toMatch(/disableModule\(0x[bB]{4}…[bB]{4}\)/);
+    const disableLine = out.split('\n').find((l) => l.includes('disableModule'))!;
+    expect(disableLine.toLowerCase()).not.toContain(PREV.slice(2, 6).toLowerCase());
+  });
+
+  it('combined plan (safe + revokes + adds) → section order: safe → revokes → adds', async () => {
+    const sdk = await loadSdk();
+    const safeAddress = '0x40FF9A84a5Da941A060E2925DA228aab328DDe58';
+    const { encodeFunctionData } = await import('viem');
+    const SAFE_ABI = [
+      {
+        type: 'function',
+        name: 'setGuard',
+        inputs: [{ type: 'address', name: 'guard' }],
+        outputs: [],
+      },
+    ] as const;
+    const setGuardCall: PlanCall = {
+      to: safeAddress,
+      value: '0',
+      data: encodeFunctionData({
+        abi: SAFE_ABI,
+        functionName: 'setGuard',
+        args: ['0x1234567890123456789012345678901234567890' as `0x${string}`],
+      }),
+    };
+    const plan = makePlan([
+      setGuardCall,
+      FIX_REVOKE_TARGET_ETHENA,
+      FIX_SCOPE_FUNCTION_ONDO_GM_445DF08B,
+    ]);
+    const { sink, text } = captureSink();
+    printPlanDiff(plan, { planPath: 'p.json', safeAddress, out: sink, sdk });
+    const out = text();
+    const iSafe = out.search(/[├└]─ safe \(/);
+    const iRevokes = out.search(/[├└]─ revokes \(/);
+    const iAdds = out.search(/[├└]─ adds \(/);
+    expect(iSafe).toBeGreaterThan(-1);
+    expect(iRevokes).toBeGreaterThan(-1);
+    expect(iAdds).toBeGreaterThan(-1);
+    expect(iSafe).toBeLessThan(iRevokes);
+    expect(iRevokes).toBeLessThan(iAdds);
+  });
+
+  it('Safe-level args get the address-label-map annotation', async () => {
+    const sdk = await loadSdk();
+    const safeAddress = '0x40FF9A84a5Da941A060E2925DA228aab328DDe58';
+    const { encodeFunctionData } = await import('viem');
+    const SAFE_ABI = [
+      {
+        type: 'function',
+        name: 'setGuard',
+        inputs: [{ type: 'address', name: 'guard' }],
+        outputs: [],
+      },
+    ] as const;
+    const GUARD = '0x1234567890123456789012345678901234567890';
+    const call: PlanCall = {
+      to: safeAddress,
+      value: '0',
+      data: encodeFunctionData({
+        abi: SAFE_ABI,
+        functionName: 'setGuard',
+        args: [GUARD as `0x${string}`],
+      }),
+    };
+    const plan = makePlan([call]);
+    const { sink, text } = captureSink();
+    printPlanDiff(plan, {
+      planPath: 'p.json',
+      safeAddress,
+      out: sink,
+      sdk,
+      addressLabelMap: { [GUARD.toLowerCase()]: 'security.guard' },
+    });
+    expect(text()).toMatch(/setGuard\(0x1234…7890 \(security\.guard\)\)/);
   });
 });

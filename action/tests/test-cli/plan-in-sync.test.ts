@@ -99,18 +99,49 @@ vi.mock('zodiac-roles-sdk', async () => {
   };
 });
 
-// Even though the 0-calls path skips Safe SDK use, we mock it to guarantee
-// no accidental network access if the implementation regresses.
+// Per-safe-dir test with NO safe.yaml: Safe SDK must NOT be initialized.
+// Per-safe-dir test WITH safe.yaml all-~: Safe.init IS called (planSafeConfig
+// reads guard/fallback/modules to confirm in-sync) but createTransaction
+// must NOT be called. We special-case via a boolean flag the test toggles.
+let safeInitMustNotBeCalled = true;
+let createTransactionCalled = false;
 vi.mock('@safe-global/protocol-kit', () => ({
   default: {
     init: async () => {
-      throw new Error('Safe SDK must not be initialized when the role state is in sync');
+      if (safeInitMustNotBeCalled) {
+        throw new Error('Safe SDK must not be initialized when the role state is in sync');
+      }
+      return {
+        createTransaction: async () => {
+          createTransactionCalled = true;
+          return { data: { to: '0x0', value: '0', data: '0x', operation: 0 } };
+        },
+        getTransactionHash: async () => '0x' + 'f'.repeat(64),
+        signHash: async () => ({ data: '0xsig' }),
+        getGuard: async () => '0x0000000000000000000000000000000000000000',
+        getFallbackHandler: async () => '0x0000000000000000000000000000000000000000',
+        getModules: async () => [],
+        createEnableGuardTx: async () => ({
+          data: { to: '0x0', value: '0', data: '0xsetGuard', operation: 0 },
+        }),
+        createEnableFallbackHandlerTx: async () => ({
+          data: { to: '0x0', value: '0', data: '0xsetFallback', operation: 0 },
+        }),
+        createEnableModuleTx: async () => ({
+          data: { to: '0x0', value: '0', data: '0xenableModule', operation: 0 },
+        }),
+        createDisableModuleTx: async () => ({
+          data: { to: '0x0', value: '0', data: '0xdisableModule', operation: 0 },
+        }),
+      };
     },
   },
 }));
 
 beforeEach(() => {
   vi.clearAllMocks();
+  safeInitMustNotBeCalled = true;
+  createTransactionCalled = false;
 });
 
 describe('cli plan — in-sync (0 calls)', () => {
@@ -183,6 +214,40 @@ describe('cli plan — in-sync (0 calls)', () => {
     expect(existsSync(planPath)).toBe(false);
     expect(out).not.toMatch(/[├└]─ adds \(/);
     expect(out).not.toContain('planned:');
+  });
+
+  it('per-safe-dir with safe.yaml all-~: Safe.init IS called (live-state reads) but createTransaction is NOT', async () => {
+    const { root } = plantSource();
+    // Add a safe.yaml alongside foo.zac.yaml. Need a config.yaml at root
+    // (loadAllAliases walks up from safe-dir).
+    writeFileSync(join(root, 'config.yaml'), 'aliases: {}\n');
+    writeFileSync(
+      join(root, 'mainnet', SAFE, 'safe.yaml'),
+      `guard: ~
+fallback: ~
+modules: ~
+`,
+    );
+    // Allow Safe.init — planSafeConfig MUST be reachable here.
+    safeInitMustNotBeCalled = false;
+    const prevRpc = process.env['MAINNET_RPC_URL'];
+    process.env['MAINNET_RPC_URL'] = 'http://stub.invalid';
+    const program = buildProgram();
+    let out: string;
+    try {
+      out = await captureStdout(async () => {
+        await program.parseAsync(['plan', '--revoke-unmentioned', 'true', root], {
+          from: 'user',
+        });
+      });
+    } finally {
+      if (prevRpc === undefined) delete process.env['MAINNET_RPC_URL'];
+      else process.env['MAINNET_RPC_URL'] = prevRpc;
+    }
+    expect(out).toContain('in sync:');
+    // createTransaction MUST NOT have been called — the in-sync short-circuit
+    // returns null before the Safe transaction is built.
+    expect(createTransactionCalled).toBe(false);
   });
 
   it('overall exit is 0 (no error thrown) when every source is in sync', async () => {

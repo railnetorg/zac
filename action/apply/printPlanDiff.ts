@@ -7,6 +7,13 @@ export interface PrintPlanDiffOpts {
   /** Human-friendly path for the header line — caller should pre-apply `displayPath`. */
   planPath: string;
   /**
+   * Plain-string Safe address (matches `Plan.safeAddress: z.string()`).
+   * Threaded into `decodeCall` to gate the Safe-ABI dispatch path —
+   * without it, the `enableModule` / `disableModule` selectors (shared
+   * with Roles modifier ABI) would misclassify between sections.
+   */
+  safeAddress: string;
+  /**
    * Role keys declared in the safe-dir's sources (decoded string form).
    * Present ONLY in per-safe-dir mode. When set, revokes targeting role
    * keys NOT in this set are annotated inline `⚠ not declared in any
@@ -139,12 +146,28 @@ function callNode(
       const flags = `[${call.assigned.map((b) => String(b)).join(', ')}]`;
       return { label: `member=${shortAddr(call.member)} roles=${roles} assigned=${flags}` };
     }
+    case 'setGuard':
+      return { label: `setGuard(${addrWithLabel(call.guardAddress, opts.addressLabelMap)})` };
+    case 'setFallbackHandler':
+      return {
+        label: `setFallbackHandler(${addrWithLabel(call.fallbackAddress, opts.addressLabelMap)})`,
+      };
+    case 'enableModule':
+      return { label: `enableModule(${addrWithLabel(call.moduleAddress, opts.addressLabelMap)})` };
+    case 'disableModule':
+      // Render ONLY `moduleAddress` — `prevModule` is an on-chain
+      // linked-list implementation detail that adds no signal to the diff.
+      return {
+        label: `disableModule(${addrWithLabel(call.moduleAddress, opts.addressLabelMap)})`,
+      };
     case 'unknown':
       return { label: `unknown(selector=${call.selector}, dataLen=${call.dataLen})` };
   }
 }
 
 interface Groups {
+  /** Safe-level calls (setGuard / setFallbackHandler / enable / disable Module). */
+  safeCalls: DecodedCall[];
   /** Revoke calls grouped by decoded role key. */
   revokesByRole: Map<string, DecodedCall[]>;
   /** Scope/allow/unscope calls grouped by decoded role key. */
@@ -154,15 +177,18 @@ interface Groups {
   /** Unknown calls, in input order. */
   unknowns: Array<Extract<DecodedCall, { kind: 'unknown' }>>;
   /** Total counts per section (for the section headers). */
+  safeCount: number;
   revokeCount: number;
   addCount: number;
 }
 
 function classify(decoded: DecodedCall[]): Groups {
+  const safeCalls: DecodedCall[] = [];
   const revokesByRole = new Map<string, DecodedCall[]>();
   const scopesByRole = new Map<string, DecodedCall[]>();
   const assignRoles: Groups['assignRoles'] = [];
   const unknowns: Groups['unknowns'] = [];
+  let safeCount = 0;
   let revokeCount = 0;
   let addCount = 0;
 
@@ -174,6 +200,13 @@ function classify(decoded: DecodedCall[]): Groups {
 
   for (const call of decoded) {
     switch (call.kind) {
+      case 'setGuard':
+      case 'setFallbackHandler':
+      case 'enableModule':
+      case 'disableModule':
+        safeCalls.push(call);
+        safeCount += 1;
+        break;
       case 'revokeTarget':
       case 'revokeFunction':
         pushTo(revokesByRole, call.roleKey, call);
@@ -198,7 +231,16 @@ function classify(decoded: DecodedCall[]): Groups {
     }
   }
 
-  return { revokesByRole, scopesByRole, assignRoles, unknowns, revokeCount, addCount };
+  return {
+    safeCalls,
+    revokesByRole,
+    scopesByRole,
+    assignRoles,
+    unknowns,
+    safeCount,
+    revokeCount,
+    addCount,
+  };
 }
 
 /**
@@ -241,13 +283,25 @@ function sortCallsForGroup(calls: DecodedCall[]): DecodedCall[] {
  */
 export function printPlanDiff(plan: Plan, opts: PrintPlanDiffOpts): void {
   const out = opts.out ?? process.stdout;
-  const decoded = plan.calls.map((c) => decodeCall(c, opts.sdk, opts.selectorMap));
+  const decoded = plan.calls.map((c) =>
+    decodeCall(c, opts.sdk, opts.selectorMap, opts.safeAddress),
+  );
   const groups = classify(decoded);
 
   const callOpts = {
     ...(opts.addressLabelMap !== undefined ? { addressLabelMap: opts.addressLabelMap } : {}),
     ...(opts.functionParamMap !== undefined ? { functionParamMap: opts.functionParamMap } : {}),
   };
+
+  // Section: safe (Safe-level reconcile calls — setGuard, setFallbackHandler,
+  // enable/disableModule). Rendered FIRST when present.
+  const safeSection: TreeNode | undefined =
+    groups.safeCount > 0
+      ? {
+          label: `safe (${groups.safeCount})`,
+          children: groups.safeCalls.map((c) => callNode(c, callOpts)),
+        }
+      : undefined;
 
   // Section: revokes.
   const revokeSection: TreeNode | undefined =
@@ -293,6 +347,7 @@ export function printPlanDiff(plan: Plan, opts: PrintPlanDiffOpts): void {
       : undefined;
 
   const topNodes: TreeNode[] = [];
+  if (safeSection) topNodes.push(safeSection);
   if (revokeSection) topNodes.push(revokeSection);
   if (addSection) topNodes.push(addSection);
 

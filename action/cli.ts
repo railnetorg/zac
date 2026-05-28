@@ -464,6 +464,7 @@ export function buildProgram(): Command {
             writeFileSync(outPath, json);
             printPlanDiff(plan, {
               planPath: displayPath(outPath),
+              safeAddress: plan.safeAddress,
               declaredRoleKeys: declaredRoleKeysForSafeDir(sd),
               selectorMap: buildSelectorMapForSources(sd.sources, buildSelectorMap),
               addressLabelMap: await buildAddressLabelMapForSources(
@@ -502,6 +503,7 @@ export function buildProgram(): Command {
           writeFileSync(outPath, json);
           printPlanDiff(plan, {
             planPath: displayPath(outPath),
+            safeAddress: plan.safeAddress,
             selectorMap: buildSelectorMapForSources([sourcePathFor(genPath)], buildSelectorMap),
             addressLabelMap: await buildAddressLabelMapForSources(
               [sourcePathFor(genPath)],
@@ -670,6 +672,7 @@ export function buildProgram(): Command {
             // write it — `apply` doesn't persist the plan).
             printPlanDiff(plan, {
               planPath: displayPath(safeDirPlanPathFor(sd)),
+              safeAddress: plan.safeAddress,
               declaredRoleKeys: declaredRoleKeysForSafeDir(sd),
               selectorMap: buildSelectorMapForSources(sd.sources, buildSelectorMap),
               addressLabelMap: await buildAddressLabelMapForSources(
@@ -711,6 +714,7 @@ export function buildProgram(): Command {
           }
           printPlanDiff(plan, {
             planPath: displayPath(planPathFor(genPath)),
+            safeAddress: plan.safeAddress,
             selectorMap: buildSelectorMapForSources([sourcePathFor(genPath)], buildSelectorMap),
             addressLabelMap: await buildAddressLabelMapForSources(
               [sourcePathFor(genPath)],

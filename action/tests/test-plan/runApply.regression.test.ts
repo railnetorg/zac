@@ -105,7 +105,7 @@ describe('runApply (chained wrapper regression)', () => {
     delete process.env['ZAC_PROPOSER_PRIVATE_KEY'];
     const safeInit = async (_cfg: { provider: string; signer?: string; safeAddress: string }) => ({
       createTransaction: async (args: { transactions: Call[] }) => ({
-        data: { transactions: args.transactions },
+        data: { to: args.transactions[0]!.to, value: '0', data: '0xfake', operation: 0 },
       }),
       getTransactionHash: async (_tx: { data: unknown }) =>
         '0xabc' + '1234567890'.repeat(6) + '12345',
@@ -140,7 +140,7 @@ describe('runApply (chained wrapper regression)', () => {
       safeInitCalled = true;
       return {
         createTransaction: async (args: { transactions: Call[] }) => ({
-          data: { transactions: args.transactions },
+          data: { to: args.transactions[0]!.to, value: '0', data: '0xfake', operation: 0 },
         }),
         getTransactionHash: async (_tx: { data: unknown }) =>
           '0xabc' + '1234567890'.repeat(6) + '12345',

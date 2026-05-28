@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { encodeFunctionData } from 'viem';
 import { decodeCall } from '../../apply/decodeCall';
 import type { DecodeSdk } from '../../apply/decodeCall';
 import type { PlanCall } from '../../apply/planSchema';
@@ -132,6 +133,141 @@ describe('decodeCall', () => {
     // 2 bytes of data → padded out to a full 4-byte selector for display.
     expect(decoded.selector).toBe('0x01020000');
     expect(decoded.dataLen).toBe(2);
+  });
+
+  // --- Safe-ABI dispatch (gated on `to === safeAddress`) ---
+
+  const SAFE = '0x40FF9A84a5Da941A060E2925DA228aab328DDe58';
+  const GUARD = '0x1234567890123456789012345678901234567890';
+  const FALLBACK = '0xabcdefabcdef1234567890123456789012345678';
+  const MODULE_A = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+  const MODULE_B = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+  const PREV_MODULE = '0xcccccccccccccccccccccccccccccccccccccccc';
+
+  const SAFE_ABI = [
+    {
+      type: 'function',
+      name: 'setGuard',
+      inputs: [{ type: 'address', name: 'guard' }],
+      outputs: [],
+    },
+    {
+      type: 'function',
+      name: 'setFallbackHandler',
+      inputs: [{ type: 'address', name: 'handler' }],
+      outputs: [],
+    },
+    {
+      type: 'function',
+      name: 'enableModule',
+      inputs: [{ type: 'address', name: 'module' }],
+      outputs: [],
+    },
+    {
+      type: 'function',
+      name: 'disableModule',
+      inputs: [
+        { type: 'address', name: 'prevModule' },
+        { type: 'address', name: 'module' },
+      ],
+      outputs: [],
+    },
+  ] as const;
+
+  function safeCalldata(
+    fn: 'setGuard' | 'setFallbackHandler' | 'enableModule' | 'disableModule',
+    a: string,
+    b?: string,
+  ): PlanCall {
+    const args = b === undefined ? [a as `0x${string}`] : [a as `0x${string}`, b as `0x${string}`];
+    const data = encodeFunctionData({
+      abi: SAFE_ABI,
+      functionName: fn,
+      args: args as never,
+    });
+    return { to: SAFE, value: '0', data };
+  }
+
+  it('decodes setGuard (Safe-ABI) when call.to === safeAddress', async () => {
+    const sdk = await loadSdk();
+    const call = safeCalldata('setGuard', GUARD);
+    const decoded = decodeCall(call, sdk, undefined, SAFE);
+    expect(decoded.kind).toBe('setGuard');
+    if (decoded.kind !== 'setGuard') return;
+    expect(decoded.target.toLowerCase()).toBe(SAFE.toLowerCase());
+    expect(decoded.guardAddress.toLowerCase()).toBe(GUARD.toLowerCase());
+  });
+
+  it('decodes setFallbackHandler (Safe-ABI) when call.to === safeAddress', async () => {
+    const sdk = await loadSdk();
+    const call = safeCalldata('setFallbackHandler', FALLBACK);
+    const decoded = decodeCall(call, sdk, undefined, SAFE);
+    expect(decoded.kind).toBe('setFallbackHandler');
+    if (decoded.kind !== 'setFallbackHandler') return;
+    expect(decoded.fallbackAddress.toLowerCase()).toBe(FALLBACK.toLowerCase());
+  });
+
+  it('decodes enableModule (Safe-ABI) when call.to === safeAddress', async () => {
+    const sdk = await loadSdk();
+    const call = safeCalldata('enableModule', MODULE_A);
+    const decoded = decodeCall(call, sdk, undefined, SAFE);
+    expect(decoded.kind).toBe('enableModule');
+    if (decoded.kind !== 'enableModule') return;
+    expect(decoded.target.toLowerCase()).toBe(SAFE.toLowerCase());
+    expect(decoded.moduleAddress.toLowerCase()).toBe(MODULE_A.toLowerCase());
+  });
+
+  it('decodes disableModule (Safe-ABI) with prevModule + moduleAddress', async () => {
+    const sdk = await loadSdk();
+    const call = safeCalldata('disableModule', PREV_MODULE, MODULE_B);
+    const decoded = decodeCall(call, sdk, undefined, SAFE);
+    expect(decoded.kind).toBe('disableModule');
+    if (decoded.kind !== 'disableModule') return;
+    expect(decoded.prevModule.toLowerCase()).toBe(PREV_MODULE.toLowerCase());
+    expect(decoded.moduleAddress.toLowerCase()).toBe(MODULE_B.toLowerCase());
+  });
+
+  it('selector-collision gate: enableModule selector on MODIFIER (to !== safeAddress) decodes via roles path, NOT Safe-ABI', async () => {
+    // Both Safe and Roles modifier ABIs expose `enableModule(address)` with
+    // the SAME 4-byte selector (0x610b5925). Without the safeAddress gate,
+    // a Roles `enableModule` call would misclassify as a Safe call.
+    // Encode the calldata against the SAME signature but address the MODIFIER.
+    const sdk = await loadSdk();
+    const data = encodeFunctionData({
+      abi: SAFE_ABI,
+      functionName: 'enableModule',
+      args: [MODULE_A as `0x${string}`],
+    });
+    // Selector check — both ABIs share this selector.
+    expect(data.slice(0, 10)).toBe('0x610b5925');
+    const callToModifier: PlanCall = { to: MODIFIER, value: '0', data };
+    // Pass safeAddress (SAFE) — the gate sees to=MODIFIER ≠ SAFE and skips
+    // the Safe-ABI path, falling through to the rolesAbi decoder.
+    const decoded = decodeCall(callToModifier, sdk, undefined, SAFE);
+    // MUST NOT be the Safe-side `enableModule` kind. (Rolesabi may decode
+    // this to its own `enableModule` shape with different fields, or to
+    // unknown — either way it's NOT the Safe-ABI variant.)
+    expect(decoded.kind).not.toBe('setGuard');
+    expect(decoded.kind).not.toBe('setFallbackHandler');
+    expect(decoded.kind).not.toBe('disableModule');
+    // If the roles decoder did surface an enableModule, it would have
+    // different fields (no `target` set to SAFE etc.). The critical
+    // assertion is no false-positive Safe-side dispatch.
+    if (decoded.kind === 'enableModule') {
+      // Safe-side variant has target === SAFE (call.to=SAFE). Roles-side
+      // (if it ever produces this kind) would have target === MODIFIER.
+      // Either the kind isn't 'enableModule' or the target is MODIFIER.
+      expect(decoded.target.toLowerCase()).not.toBe(SAFE.toLowerCase());
+    }
+  });
+
+  it('Safe-ABI dispatch is skipped entirely when safeAddress is undefined (legacy callers)', async () => {
+    const sdk = await loadSdk();
+    const call = safeCalldata('setGuard', GUARD);
+    // No safeAddress argument → no Safe-ABI attempt → falls through to
+    // rolesAbi which doesn't define setGuard, producing `unknown`.
+    const decoded = decodeCall(call, sdk);
+    expect(decoded.kind).toBe('unknown');
   });
 
   it('decodeKey throws (binary garbage in roleKey bytes) → falls back to raw hex', async () => {

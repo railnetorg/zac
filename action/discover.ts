@@ -13,6 +13,13 @@ import type { Plan } from './apply/planSchema';
 const ZAC_SOURCE_SUFFIX = '.zac.yaml';
 /** A plan file: ends in `.plan.json`. */
 const PLAN_SUFFIX = '.plan.json';
+/** Per-safe-dir Safe-level config file name (sibling of `.zac.yaml` files). */
+const SAFE_CONFIG_FILE = 'safe.yaml';
+
+/** Path helper: `<safeDir>/safe.yaml`. */
+export function safeConfigPathFor(dirPath: string): string {
+  return join(dirPath, SAFE_CONFIG_FILE);
+}
 /** A generated YAML file: ends in `.yaml` but NOT `.zac.yaml`. */
 function isYamlNotSource(name: string): boolean {
   return name.endsWith('.yaml') && !name.endsWith(ZAC_SOURCE_SUFFIX);
@@ -185,6 +192,72 @@ export function findGeneratedConfigs(path: string): string[] {
 }
 
 /**
+ * Validate the PATH layout (`<network>/<safeAddress>/safe.yaml`) of a
+ * `safe.yaml` file: parent must be a 0x-prefixed 40-hex address dir, and
+ * grandparent must be a known network directory. Returns the parsed
+ * `{network, safeAddress}` on success. Throws `ZacError(phase='validate')`
+ * otherwise. Does NOT read file contents — content validation lives in
+ * `validate/safeConfigSchema.ts`.
+ */
+export function validateSafeYamlLayout(safeYamlPath: string): {
+  network: string;
+  safeAddress: string;
+} {
+  if (basename(safeYamlPath) !== SAFE_CONFIG_FILE) {
+    throw new ZacError({
+      phase: 'validate',
+      message: `expected <network>/<safe-address>/${SAFE_CONFIG_FILE} layout; got ${safeYamlPath} — file must be named '${SAFE_CONFIG_FILE}'`,
+    });
+  }
+  const parentDir = dirname(safeYamlPath);
+  const parentName = basename(parentDir);
+  if (!ADDRESS_DIR_RE.test(parentName)) {
+    throw new ZacError({
+      phase: 'validate',
+      message: `expected <network>/<safe-address>/${SAFE_CONFIG_FILE} layout; got ${safeYamlPath} — parent dir must be a 0x-prefixed address`,
+    });
+  }
+  const grandparentName = basename(dirname(parentDir));
+  if (!isKnownNetworkDirectory(grandparentName)) {
+    throw new ZacError({
+      phase: 'validate',
+      message: `unknown network directory '${grandparentName}' for ${safeYamlPath}; supported: [${supportedNetworkDirectories().join(', ')}]`,
+    });
+  }
+  return { network: grandparentName, safeAddress: parentName.toLowerCase() };
+}
+
+/**
+ * Discover `safe.yaml` files under `path`.
+ * - If `path` is a file: must be named `safe.yaml`; returns `[path]`.
+ * - If `path` is a directory: walks recursively, returns every `safe.yaml`.
+ * Returned paths are absolute. Every returned path passes the strict
+ * `<network>/<safe-address>/safe.yaml` layout check.
+ */
+export function findSafeYamls(path: string): string[] {
+  const abs = toAbs(path);
+  ensureExists(abs);
+  const st = statSync(abs);
+  if (st.isFile()) {
+    if (basename(abs) !== SAFE_CONFIG_FILE) {
+      throw new ZacError({
+        phase: 'load',
+        message: `expected a ${SAFE_CONFIG_FILE} file: ${abs}`,
+      });
+    }
+    validateSafeYamlLayout(abs);
+    return [abs];
+  }
+  const found: string[] = [];
+  walk(abs, (p) => {
+    if (basename(p) === SAFE_CONFIG_FILE) found.push(p);
+  });
+  for (const p of found) validateSafeYamlLayout(p);
+  found.sort();
+  return found;
+}
+
+/**
  * Discover plan files (`*.plan.json`) under `path`.
  * - If `path` is a file: must end in `.plan.json`; returns `[path]`.
  * - If `path` is a directory: walks recursively, returns every `*.plan.json`.
@@ -213,14 +286,18 @@ export function findPlans(path: string): string[] {
 
 /**
  * A safe-dir grouping: one `<network>/<safe-address>/` directory containing
- * one or more sibling `.zac.yaml` files, all sharing the same
- * `(chain_id, safe_address, roles_modifier_address)`.
+ * EITHER one-or-more sibling `.zac.yaml` files (roles-managed safe-dir)
+ * OR a `safe.yaml` file (Safe-level-managed safe-dir) OR both.
  *
- * `sources` are absolute paths to the `.zac.yaml` files (the lookup unit for
- * `runPlanForSafeDir`). `safeAddress` is the lowercased dir name (matching
- * the layout convention); `chainId` comes from the network table; both are
- * cross-checked against the rendered `.yaml` bodies. `modifierAddress`
- * comes from the rendered YAML bodies (which must agree across siblings).
+ * `sources` are absolute paths to the `.zac.yaml` files (the lookup unit
+ * for `runPlanForSafeDir`); empty array in safe-only mode. `safeAddress`
+ * is the lowercased dir name (matching the layout convention); `chainId`
+ * comes from the network table; both are cross-checked against the
+ * rendered `.yaml` bodies when sources exist. `modifierAddress` is the
+ * `roles_modifier_address` from the rendered YAML bodies (agreed across
+ * siblings) and is `undefined` for safe-only safe-dirs (no `.zac.yaml`).
+ * `safeConfigPath` is the absolute path to the dir's `safe.yaml` when
+ * present; `undefined` for role-only safe-dirs.
  */
 export interface SafeDir {
   dirPath: string;
@@ -228,9 +305,14 @@ export interface SafeDir {
   chainId: number;
   /** Lowercased 0x-prefixed 40-hex address. */
   safeAddress: `0x${string}`;
-  /** Lowercased 0x-prefixed 40-hex address — agreed across all sources. */
-  modifierAddress: `0x${string}`;
+  /**
+   * Lowercased 0x-prefixed 40-hex address — agreed across all `sources`.
+   * Undefined in safe-only mode (no `.zac.yaml` siblings).
+   */
+  modifierAddress: `0x${string}` | undefined;
   sources: string[];
+  /** Absolute path to the dir's `safe.yaml` when present; undefined otherwise. */
+  safeConfigPath: string | undefined;
 }
 
 interface ParseGeneratedFn {
@@ -262,27 +344,85 @@ export interface FindSafeDirsOpts {
  */
 export function findSafeDirs(path: string, opts: FindSafeDirsOpts = {}): SafeDir[] {
   const parse = opts.parseGenerated ?? parseGenerated;
-  const sources = findZacSources(path);
 
-  // Group by parent dir.
-  const byDir = new Map<string, string[]>();
-  for (const src of sources) {
+  // Probe both source-types under `path`. `findZacSources` and
+  // `findSafeYamls` each accept `path` as either a file or a directory;
+  // in file-mode the OTHER probe is skipped (a `.zac.yaml` file doesn't
+  // contain `safe.yaml`s and vice-versa).
+  const abs = toAbs(path);
+  ensureExists(abs);
+  const st = statSync(abs);
+  const isFile = st.isFile();
+  const isSafeYamlFile = isFile && basename(abs) === SAFE_CONFIG_FILE;
+  const isZacSourceFile = isFile && abs.endsWith(ZAC_SOURCE_SUFFIX);
+
+  const zacSources: string[] = isSafeYamlFile ? [] : findZacSources(path);
+  const safeYamls: string[] = isZacSourceFile ? [] : findSafeYamls(path);
+
+  // Group `.zac.yaml` sources by their parent dir.
+  const byDir = new Map<string, { sources: string[]; safeYamlPath: string | undefined }>();
+  for (const src of zacSources) {
     const dir = dirname(src);
-    const list = byDir.get(dir);
-    if (list === undefined) byDir.set(dir, [src]);
-    else list.push(src);
+    const entry = byDir.get(dir);
+    if (entry === undefined) byDir.set(dir, { sources: [src], safeYamlPath: undefined });
+    else entry.sources.push(src);
+  }
+  // Union in `safe.yaml`s: attach to an existing entry or create a new
+  // safe-only entry.
+  for (const sy of safeYamls) {
+    const dir = dirname(sy);
+    const entry = byDir.get(dir);
+    if (entry === undefined) byDir.set(dir, { sources: [], safeYamlPath: sy });
+    else entry.safeYamlPath = sy;
   }
 
   const dirs = [...byDir.keys()].sort();
   const out: SafeDir[] = [];
   for (const dir of dirs) {
-    const dirSources = (byDir.get(dir) ?? []).slice().sort();
-    out.push(buildSafeDir(dir, dirSources, parse));
+    const entry = byDir.get(dir)!;
+    const dirSources = entry.sources.slice().sort();
+    out.push(buildSafeDir(dir, dirSources, entry.safeYamlPath, parse));
   }
   return out;
 }
 
-function buildSafeDir(dirPath: string, sources: string[], parse: ParseGeneratedFn): SafeDir {
+function buildSafeDir(
+  dirPath: string,
+  sources: string[],
+  safeYamlPath: string | undefined,
+  parse: ParseGeneratedFn,
+): SafeDir {
+  // Safe-only branch — no `.zac.yaml` siblings. Take path-layout from the
+  // safe.yaml itself (which is guaranteed present by findSafeDirs union
+  // logic when sources is empty). Must run BEFORE `validateSourcePathLayout`
+  // since the latter dereferences `sources[0]!` which is undefined here.
+  if (sources.length === 0) {
+    if (safeYamlPath === undefined) {
+      throw new ZacError({
+        phase: 'validate',
+        message: `internal: buildSafeDir called with no sources and no safe.yaml for ${dirPath}`,
+      });
+    }
+    const { network, safeAddress } = validateSafeYamlLayout(safeYamlPath);
+    const chainId = networkForDirectory(network);
+    if (chainId === null) {
+      throw new ZacError({
+        phase: 'validate',
+        message: `unknown network directory: ${network}`,
+      });
+    }
+    return {
+      dirPath,
+      network,
+      chainId,
+      safeAddress: safeAddress as `0x${string}`,
+      modifierAddress: undefined,
+      sources: [],
+      safeConfigPath: safeYamlPath,
+    };
+  }
+
+  // Role+safe path (sources.length > 0): unchanged.
   // Layout — every source in this dir must share the same parent (it does by
   // construction) and that parent must be a 0x-addr under a known network.
   const { network } = validateSourcePathLayout(sources[0]!);
@@ -368,6 +508,7 @@ function buildSafeDir(dirPath: string, sources: string[], parse: ParseGeneratedF
     modifierAddress:
       first.generated.deployment.roles_modifier_address.toLowerCase() as `0x${string}`,
     sources,
+    safeConfigPath: safeYamlPath,
   };
 }
 

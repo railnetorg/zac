@@ -5,15 +5,32 @@ import { safeServiceUrlForChain } from './safeServiceUrl';
 import type { Call } from './planRoleCalls';
 import type { Plan, SafeTxData } from './planSchema';
 
-/** Minimal `Safe` shape (subset of `@safe-global/protocol-kit`'s `Safe`). */
-interface SafeLike {
+/**
+ * Minimal `Safe` shape (subset of `@safe-global/protocol-kit`'s `Safe`).
+ *
+ * The 7 new methods (3 getters + 4 tx-builders) are OPTIONAL so existing
+ * unit-test stubs (e.g. `safeInitStub` in `runPlanForSafeDir.test.ts`,
+ * `runBundledSubmit.test.ts`) continue to satisfy `SafeLike` without
+ * implementing them. Runtime callers (`planSafeConfig`) check presence
+ * and throw `ZacError('apply', 'internal: Safe instance missing <method>')`
+ * when a method is needed but absent — that path is only reached when a
+ * `safe.yaml` is present, so fixtures lacking safe.yaml never trigger it.
+ */
+export interface SafeLike {
   createTransaction(args: { transactions: Call[] }): Promise<SafeTransactionLike>;
   getTransactionHash(tx: SafeTransactionLike): Promise<string>;
   signHash(hash: string): Promise<{ data: string }>;
+  getGuard?(): Promise<string>;
+  getFallbackHandler?(): Promise<string>;
+  getModules?(): Promise<string[]>;
+  createEnableGuardTx?(address: string): Promise<SafeTransactionLike>;
+  createEnableFallbackHandlerTx?(address: string): Promise<SafeTransactionLike>;
+  createEnableModuleTx?(address: string): Promise<SafeTransactionLike>;
+  createDisableModuleTx?(address: string): Promise<SafeTransactionLike>;
 }
 
-interface SafeTransactionLike {
-  data: unknown;
+export interface SafeTransactionLike {
+  data: { to: string; value: string; data: string; operation?: number };
 }
 
 interface SafeApiKitLike {
@@ -52,6 +69,40 @@ export interface BuildSafeTxOpts {
   rpcUrl: string;
   /** Injected for testability — pass a stub Safe.init function. */
   safeInit?: SafeInitFn;
+  /**
+   * Pre-initialized `Safe` instance to reuse instead of calling `safeInit`
+   * internally. `runPlanForSafeDir` shares one instance across
+   * `planSafeConfig` (live-state reads) and `buildSafeTransaction`
+   * (calldata-bundling) so a single Safe.init covers both phases. When
+   * provided, `safeInit` is ignored.
+   */
+  safe?: SafeLike;
+}
+
+/**
+ * Initialize a `Safe` instance (via injected or lazy-loaded `Safe.init`),
+ * propagating failures as `ZacError(phase='apply')`. Exported so callers
+ * who need to share one instance across multiple SDK calls
+ * (`planSafeConfig` reads guard/fallback/modules, then
+ * `buildSafeTransaction` bundles calldata) can do so explicitly.
+ */
+export async function initSafe(opts: {
+  rpcUrl: string;
+  safeAddress: string;
+  safeInit?: SafeInitFn;
+}): Promise<SafeLike> {
+  const safeInit = opts.safeInit ?? (await loadSafeInit());
+  try {
+    return await safeInit({
+      provider: opts.rpcUrl,
+      safeAddress: opts.safeAddress,
+    });
+  } catch (err) {
+    throw new ZacError({
+      phase: 'apply',
+      message: `Safe.init failed: ${err instanceof Error ? err.message : String(err)}`,
+    });
+  }
 }
 
 export interface BuildSafeTxResult {
@@ -65,24 +116,22 @@ export interface BuildSafeTxResult {
  * the live Safe contract.
  */
 export async function buildSafeTransaction(opts: BuildSafeTxOpts): Promise<BuildSafeTxResult> {
-  const safeInit = opts.safeInit ?? (await loadSafeInit());
-
-  let safe: SafeLike;
-  try {
-    safe = await safeInit({
-      provider: opts.rpcUrl,
-      safeAddress: opts.safeAddress,
-    });
-  } catch (err) {
-    throw new ZacError({
-      phase: 'apply',
-      message: `Safe.init failed: ${err instanceof Error ? err.message : String(err)}`,
-    });
-  }
+  // Reuse a caller-provided Safe instance when present (so planSafeConfig
+  // and this bundler share one Safe.init); otherwise initialize ourselves.
+  const initArgs: Parameters<typeof initSafe>[0] = {
+    rpcUrl: opts.rpcUrl,
+    safeAddress: opts.safeAddress,
+  };
+  if (opts.safeInit !== undefined) initArgs.safeInit = opts.safeInit;
+  const safe: SafeLike = opts.safe ?? (await initSafe(initArgs));
 
   const safeTransaction = await safe.createTransaction({ transactions: opts.calls });
   const safeTxHash = await safe.getTransactionHash(safeTransaction);
-  const safeTxData = safeTransaction.data as SafeTxData;
+  // protocol-kit's `safeTransaction.data` carries the full SafeTxData shape
+  // (baseGas, gasPrice, nonce, etc.); the local `SafeTransactionLike.data`
+  // type narrows to the subset planSafeConfig needs to read for Safe-level
+  // calldata. Double-cast through unknown to bridge the two views.
+  const safeTxData = safeTransaction.data as unknown as SafeTxData;
   return { safeTxHash, safeTxData };
 }
 
