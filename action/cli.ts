@@ -371,10 +371,20 @@ export function buildProgram(): Command {
       'generate Zodiac Roles V2 configs from `*.zac.yaml` sources; <path> is a file or directory (walked recursively). Output is written alongside each source as `<stem>.yaml`. Sources must live at `<network>/<safe-address>/<name>.zac.yaml`.',
     )
     .option('--config <path>', 'override path to root config.yaml (default: walk up)')
-    .action(async (inputPath: string, options: { config?: string }) => {
+    .option(
+      '--out <path>',
+      'write generated YAML to this path instead of the default `<stem>.yaml` sibling. Only valid when <path> resolves to a single source file.',
+    )
+    .action(async (inputPath: string, options: { config?: string; out?: string }) => {
       const sources = findZacSources(inputPath);
+      if (options.out !== undefined && sources.length !== 1) {
+        throw new ZacError({
+          phase: 'emit',
+          message: `--out is only valid for a single source file; got ${sources.length} sources from '${inputPath}'`,
+        });
+      }
       const { ok } = await runBatch(sources, 'generate', async (source) => {
-        const outPath = generatedPathFor(source);
+        const outPath = options.out ?? generatedPathFor(source);
         const opts: Parameters<typeof runGenerate>[0] = { configPath: source, outPath };
         if (options.config !== undefined) opts.configOverride = options.config;
         await runGenerate(opts);
