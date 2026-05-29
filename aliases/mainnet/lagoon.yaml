@@ -1,0 +1,12 @@
+# Lagoon vault aliases — mainnet.
+#
+# Lagoon vault contracts are CASE-SPECIFIC: each deployment manages its
+# own vault. No global aliases are shipped here — define entries
+# per-deployment as you need them, then reference them in templates via
+# the standard alias syntax (aliases.lagoon.<your_key>).
+#
+# Lagoon docs: https://docs.lagoon.finance/developer-hub/smart-contract-reference
+#
+# Example (uncomment and replace with your vault address):
+#
+# my_vault: "0x0000000000000000000000000000000000000000"

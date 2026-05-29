@@ -1,0 +1,69 @@
+{#-
+  Lagoon — NAV settlement and operations on Lagoon vault(s).
+
+  Each entry in `vaults` is a RESOLVED vault contract address — pass it
+  as a literal `0x…` string or a template expression (`{{ aliases.lagoon.<key> }}`
+  if you've defined one). The template does no further alias lookup;
+  vaults are case-specific so the registry doesn't ship globals.
+
+  Required template params:
+    vaults — list of 0x-prefixed vault contract addresses, e.g.
+             ["{{ aliases.lagoon.my_vault }}", "0xabc…"].
+
+  Output shape:
+    - One target per vault, with six allowed functions, all
+      execution_options: "none". Every parameter is declared `pass`
+      explicitly (zac's validator requires every signature param to be
+      covered); the all-pass optimization in `toSdkTargets` then
+      collapses this to `allowFunction` on-chain.
+    - Six functions covered (see Lagoon docs §Smart-Contract Reference):
+      • settleDeposit(uint256)            — confirm NAV + settle pending deposits
+      • settleRedeem(uint256)             — confirm NAV + settle pending redemptions
+      • expireTotalAssets()               — force the current NAV value to expire
+      • updateTotalAssetsLifespan(uint128)— adjust how long a posted NAV stays valid
+      • claimSharesOnBehalf(address[])    — push minted shares to depositors post-settlement
+      • claimAssetsOnBehalf(address[])    — push redeemed assets to redeemers post-settlement
+-#}
+roles:
+{%- for vault in vaults %}
+
+  - address: "{{ vault }}"
+    functions:
+      - signature: "function settleDeposit(uint256 _newTotalAssets)"
+        execution_options: "none"
+        params:
+          - name: _newTotalAssets
+            param_type: "static"
+            operator: "pass"
+
+      - signature: "function settleRedeem(uint256 _newTotalAssets)"
+        execution_options: "none"
+        params:
+          - name: _newTotalAssets
+            param_type: "static"
+            operator: "pass"
+
+      - signature: "function expireTotalAssets()"
+        execution_options: "none"
+
+      - signature: "function updateTotalAssetsLifespan(uint128 lifespan)"
+        execution_options: "none"
+        params:
+          - name: lifespan
+            param_type: "static"
+            operator: "pass"
+
+      - signature: "function claimSharesOnBehalf(address[] controllers)"
+        execution_options: "none"
+        params:
+          - name: controllers
+            param_type: "dynamic"
+            operator: "pass"
+
+      - signature: "function claimAssetsOnBehalf(address[] controllers)"
+        execution_options: "none"
+        params:
+          - name: controllers
+            param_type: "dynamic"
+            operator: "pass"
+{%- endfor %}
