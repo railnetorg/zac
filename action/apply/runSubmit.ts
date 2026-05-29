@@ -104,7 +104,10 @@ export async function runBundledSubmit(
     calls,
     callsCount: calls.length,
     chainId: first.chainId,
-    modifierAddress: first.modifierAddress,
+    // `modifierAddress` is OPTIONAL on Plan — conditionally spread so
+    // safe-only bundled plans (no role-modifier touchpoint) serialize
+    // without the field.
+    ...(first.modifierAddress !== undefined ? { modifierAddress: first.modifierAddress } : {}),
     safeAddress: first.safeAddress,
     safeTxData,
     safeTxHash,

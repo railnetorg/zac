@@ -277,6 +277,99 @@ describe('findSafeDirs — layout validation', () => {
     expect(safeDirs[0]!.sources[1]!).toMatch(/b\.zac\.yaml$/);
   });
 
+  // --- safe.yaml union semantics ---
+
+  it('safe.yaml alongside .zac.yaml → SafeDir.safeConfigPath populated; modifierAddress still set', () => {
+    const root = makeTempDir();
+    const src = plantSource(root, 'mainnet', SAFE_A_LO, 'foo', {
+      chainId: 1,
+      safeAddress: SAFE_A_LO,
+      modifierAddress: MOD_LO,
+    });
+    const safeDir = join(root, 'mainnet', SAFE_A_LO);
+    const safeYaml = join(safeDir, 'safe.yaml');
+    writeFileSync(safeYaml, '# stub\n');
+    const safeDirs = findSafeDirs(root);
+    expect(safeDirs).toHaveLength(1);
+    expect(safeDirs[0]!.sources).toEqual([src]);
+    expect(safeDirs[0]!.modifierAddress).toBe(MOD_LO);
+    expect(safeDirs[0]!.safeConfigPath).toBe(safeYaml);
+  });
+
+  it('safe.yaml only (no .zac.yaml) → modifierAddress undefined, safeConfigPath set, chainId from networkTable', () => {
+    const root = makeTempDir();
+    const safeDir = join(root, 'mainnet', SAFE_A_LO);
+    mkdirSync(safeDir, { recursive: true });
+    const safeYaml = join(safeDir, 'safe.yaml');
+    writeFileSync(safeYaml, '# stub\n');
+    const safeDirs = findSafeDirs(root);
+    expect(safeDirs).toHaveLength(1);
+    expect(safeDirs[0]!.sources).toEqual([]);
+    expect(safeDirs[0]!.modifierAddress).toBeUndefined();
+    expect(safeDirs[0]!.safeConfigPath).toBe(safeYaml);
+    expect(safeDirs[0]!.safeAddress).toBe(SAFE_A_LO);
+    expect(safeDirs[0]!.chainId).toBe(1);
+  });
+
+  it('safe.yaml only under unknown network → ZacError(validate, "unknown network directory ...")', () => {
+    const root = makeTempDir();
+    const safeDir = join(root, 'narnia', SAFE_A_LO);
+    mkdirSync(safeDir, { recursive: true });
+    writeFileSync(join(safeDir, 'safe.yaml'), '# x\n');
+    expect(() => findSafeDirs(root)).toThrowError(ZacError);
+    try {
+      findSafeDirs(root);
+    } catch (e) {
+      expect((e as ZacError).phase).toBe('validate');
+      expect((e as ZacError).message).toContain("'narnia'");
+    }
+  });
+
+  it('safe.yaml under non-address parent dir → ZacError(validate)', () => {
+    const root = makeTempDir();
+    const safeDir = join(root, 'mainnet', 'not-an-address');
+    mkdirSync(safeDir, { recursive: true });
+    writeFileSync(join(safeDir, 'safe.yaml'), '# x\n');
+    expect(() => findSafeDirs(root)).toThrowError(ZacError);
+    try {
+      findSafeDirs(root);
+    } catch (e) {
+      expect((e as ZacError).phase).toBe('validate');
+      expect((e as ZacError).message).toContain('0x-prefixed');
+    }
+  });
+
+  it('safe.yaml at wrong depth (no safeAddress dir) → ZacError(validate)', () => {
+    const root = makeTempDir();
+    // safe.yaml directly under <network>/ — missing the safe-address dir layer.
+    mkdirSync(join(root, 'mainnet'), { recursive: true });
+    writeFileSync(join(root, 'mainnet', 'safe.yaml'), '# x\n');
+    expect(() => findSafeDirs(root)).toThrowError(ZacError);
+  });
+
+  it('union ordering deterministic: dir-A has only .zac.yaml, dir-B has only safe.yaml', () => {
+    const root = makeTempDir();
+    // dir-A: only .zac.yaml.
+    plantSource(root, 'mainnet', SAFE_A_LO, 'foo', {
+      chainId: 1,
+      safeAddress: SAFE_A_LO,
+      modifierAddress: MOD_LO,
+    });
+    // dir-B: only safe.yaml.
+    const safeBDir = join(root, 'mainnet', SAFE_B_LO);
+    mkdirSync(safeBDir, { recursive: true });
+    writeFileSync(join(safeBDir, 'safe.yaml'), '# x\n');
+    const safeDirs = findSafeDirs(root);
+    expect(safeDirs).toHaveLength(2);
+    // Lowercased dir-path ordering — `0xaaa...` < `0xbbb...`.
+    expect(safeDirs[0]!.safeAddress).toBe(SAFE_A_LO);
+    expect(safeDirs[0]!.modifierAddress).toBe(MOD_LO);
+    expect(safeDirs[0]!.safeConfigPath).toBeUndefined();
+    expect(safeDirs[1]!.safeAddress).toBe(SAFE_B_LO);
+    expect(safeDirs[1]!.modifierAddress).toBeUndefined();
+    expect(safeDirs[1]!.safeConfigPath).toBeDefined();
+  });
+
   it('injectable parseGenerated stub bypasses parseGenerated entirely (DI sanity check)', () => {
     const root = makeTempDir();
     const dir = join(root, 'mainnet', SAFE_A_LO);

@@ -59,6 +59,13 @@ export function loadAllAliases(opts: LoadAllAliasesOpts): AliasRegistry {
     });
   }
 
+  // Auto-inject `aliases.ZERO` AFTER the namespace-merge loop so it is
+  // non-overridable: users writing `{{ aliases.ZERO }}` in templates (e.g.
+  // `safe.yaml: guard: {{ aliases.ZERO }}` to mean "skip") always get the
+  // canonical zero-address constant regardless of any user-authored
+  // `aliases.global.ZERO` entry.
+  merged['ZERO'] = '0x0000000000000000000000000000000000000000';
+
   return { merged };
 }
 

@@ -1,0 +1,24 @@
+# Per-safe-dir Safe-level configuration.
+#
+# Sits at the root of `<network>/<safe-address>/`. Declares the desired
+# guard contract, fallback handler, and enabled modules — diffed by
+# `plan --revoke-unmentioned=true` against live Safe state.
+#
+# Three keys, all required:
+#   guard:    <address> | ~     (~ = don't manage; 0x000…0 = same)
+#   fallback: <address> | ~     (~ = don't manage; 0x000…0 = same)
+#   modules:  [<addr>, ...] | ~ (~ = don't manage; list = full reconcile)
+#
+# All-`~` (this file) is the documented opt-out: every plan run touches
+# zero Safe-level state regardless of what's on-chain. Promote a `~` to a
+# concrete address (or `{{ aliases.* }}`) to start managing that field.
+#
+# When `modules` is a list, the Roles modifier MUST be explicitly included
+# — cross-validated against every sibling *.zac.yaml file's
+# `roles_modifier_address`. No auto-preservation.
+#
+# `aliases.ZERO` is auto-injected as 0x0000…0000 — usable as a literal
+# value or a sentinel.
+guard: ~
+fallback: ~
+modules: ~

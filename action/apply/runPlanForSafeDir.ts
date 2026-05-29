@@ -1,9 +1,14 @@
+import { dirname } from 'node:path';
 import { generatedPathFor } from '../discover';
 import type { SafeDir } from '../discover';
+import { findConfig } from '../load/findConfig';
+import { loadAllAliases } from '../load/loadAllAliases';
+import { parseAndValidateSafeYaml } from '../validate/safeConfigSchema';
 import { parseGenerated, type Generated } from './parseGenerated';
+import { planSafeConfig } from './planSafeConfig';
 import { planSafeDirCalls, type PlanApplyFn } from './planSafeDirCalls';
 import { resolveRpcUrl } from './rpc';
-import { buildSafeTransaction, type SafeInitFn } from './safeApi';
+import { buildSafeTransaction, initSafe, type SafeInitFn } from './safeApi';
 import type { Plan } from './planSchema';
 
 interface SdkBuilders {
@@ -52,37 +57,102 @@ export interface RunPlanForSafeDirOpts {
 export async function runPlanForSafeDir(opts: RunPlanForSafeDirOpts): Promise<Plan | null> {
   const parse = opts.parseGenerated ?? parseGenerated;
 
-  const generateds: Generated[] = opts.safeDir.sources.map((src) => parse(generatedPathFor(src)));
+  // Role-side: only when the safe-dir declares at least one `.zac.yaml`.
+  const generateds: Generated[] =
+    opts.safeDir.modifierAddress !== undefined
+      ? opts.safeDir.sources.map((src) => parse(generatedPathFor(src)))
+      : [];
 
   const resolveArgs: Parameters<typeof resolveRpcUrl>[0] = { chainId: opts.safeDir.chainId };
   if (opts.rpcUrl !== undefined) resolveArgs.overrideUrl = opts.rpcUrl;
   const rpcUrl = resolveRpcUrl(resolveArgs);
 
-  const planArgs: Parameters<typeof planSafeDirCalls>[0] = { generateds };
-  if (opts.planApply !== undefined) planArgs.planApply = opts.planApply;
-  if (opts.encodeKey !== undefined) planArgs.encodeKey = opts.encodeKey;
-  if (opts.sdkBuilders !== undefined) planArgs.sdkBuilders = opts.sdkBuilders;
-  const calls = await planSafeDirCalls(planArgs);
+  // Plan role calls only when a modifier exists.
+  let roleCalls: Awaited<ReturnType<typeof planSafeDirCalls>> = [];
+  if (opts.safeDir.modifierAddress !== undefined) {
+    const planArgs: Parameters<typeof planSafeDirCalls>[0] = { generateds };
+    if (opts.planApply !== undefined) planArgs.planApply = opts.planApply;
+    if (opts.encodeKey !== undefined) planArgs.encodeKey = opts.encodeKey;
+    if (opts.sdkBuilders !== undefined) planArgs.sdkBuilders = opts.sdkBuilders;
+    roleCalls = await planSafeDirCalls(planArgs);
+  }
 
-  if (calls.length === 0) {
-    // In sync — no Safe tx to build. Caller short-circuits.
+  // Parse `safe.yaml` when present. Render context is `{}` — `aliases` is
+  // wired as a global on the nunjucks env, no `params` to inject.
+  const parsedSafeYaml =
+    opts.safeDir.safeConfigPath !== undefined
+      ? (() => {
+          const configPath = findConfig({ startDir: opts.safeDir.dirPath });
+          const aliases = loadAllAliases({ configPath, network: opts.safeDir.network });
+          return parseAndValidateSafeYaml({
+            path: opts.safeDir.safeConfigPath,
+            aliases: aliases.merged,
+            configDir: dirname(configPath),
+            network: opts.safeDir.network,
+          });
+        })()
+      : undefined;
+
+  // Short-circuit: no `safe.yaml` AND no role calls → in-sync, no Safe
+  // instance needed. Preserves the "safeInit must not be called when 0
+  // calls" invariant exercised by TS-11.
+  if (parsedSafeYaml === undefined && roleCalls.length === 0) {
+    return null;
+  }
+
+  // Initialize the Safe instance ONCE — shared by planSafeConfig (live
+  // reads) and buildSafeTransaction (calldata bundling) below.
+  const initArgs: Parameters<typeof initSafe>[0] = {
+    rpcUrl,
+    safeAddress: opts.safeDir.safeAddress,
+  };
+  if (opts.safeInit !== undefined) initArgs.safeInit = opts.safeInit;
+  const safe = await initSafe(initArgs);
+
+  // Plan Safe-level calls when `safe.yaml` is present.
+  const safeCalls =
+    parsedSafeYaml !== undefined
+      ? await planSafeConfig({
+          safeYaml: parsedSafeYaml,
+          safe,
+          safeAddress: opts.safeDir.safeAddress,
+          declaredModifiers:
+            opts.safeDir.modifierAddress !== undefined
+              ? [
+                  {
+                    address: opts.safeDir.modifierAddress,
+                    sourceFile: opts.safeDir.sources[0] ?? opts.safeDir.dirPath,
+                  },
+                ]
+              : [],
+        })
+      : [];
+
+  // Concatenate: Safe-level FIRST, then role calls.
+  const allCalls = [...safeCalls, ...roleCalls];
+  if (allCalls.length === 0) {
+    // Both planners produced nothing — in sync.
     return null;
   }
 
   const buildArgs: Parameters<typeof buildSafeTransaction>[0] = {
     chainId: opts.safeDir.chainId,
     safeAddress: opts.safeDir.safeAddress,
-    calls,
+    calls: allCalls,
     rpcUrl,
+    safe,
   };
   if (opts.safeInit !== undefined) buildArgs.safeInit = opts.safeInit;
   const { safeTxHash, safeTxData } = await buildSafeTransaction(buildArgs);
 
   return {
-    calls,
-    callsCount: calls.length,
+    calls: allCalls,
+    callsCount: allCalls.length,
     chainId: opts.safeDir.chainId,
-    modifierAddress: opts.safeDir.modifierAddress,
+    // `modifierAddress` is optional on Plan — omit when absent.
+    ...(opts.safeDir.modifierAddress !== undefined
+      ? { modifierAddress: opts.safeDir.modifierAddress }
+      : {}),
     safeAddress: opts.safeDir.safeAddress,
     safeTxData,
     safeTxHash,

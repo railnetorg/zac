@@ -1,5 +1,54 @@
-import { decodeFunctionData } from 'viem';
+import { decodeFunctionData, toFunctionSelector } from 'viem';
 import type { PlanCall } from './planSchema';
+
+/**
+ * Minimal Safe ABI for the 4 Safe-level functions the diff renderer
+ * recognizes. Parameters are EXPLICITLY NAMED so `decodeFunctionData`
+ * returns them by name. Kept inline (rather than imported from a package)
+ * because the dependency surface is tiny and the ABI is static.
+ *
+ * NOTE: `enableModule(0x610b5925)` and `disableModule(0xe009cfde)` are
+ * SHARED with the Roles modifier ABI. To disambiguate at decode time,
+ * the Safe-ABI dispatch is gated on `call.to === safeAddress` — see
+ * `decodeCall` below.
+ */
+const SAFE_ABI = [
+  {
+    type: 'function',
+    name: 'setGuard',
+    inputs: [{ type: 'address', name: 'guard' }],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'setFallbackHandler',
+    inputs: [{ type: 'address', name: 'handler' }],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'enableModule',
+    inputs: [{ type: 'address', name: 'module' }],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'disableModule',
+    inputs: [
+      { type: 'address', name: 'prevModule' },
+      { type: 'address', name: 'module' },
+    ],
+    outputs: [],
+  },
+] as const;
+
+/** Precomputed selectors for the 4 Safe-ABI functions (lowercase 0x-hex). */
+const SAFE_SELECTORS: Record<string, true> = {
+  [toFunctionSelector('function setGuard(address guard)')]: true,
+  [toFunctionSelector('function setFallbackHandler(address handler)')]: true,
+  [toFunctionSelector('function enableModule(address module)')]: true,
+  [toFunctionSelector('function disableModule(address prevModule, address module)')]: true,
+};
 
 /**
  * SDK surface needed by `decodeCall`. Injected so unit tests can stub the
@@ -43,6 +92,15 @@ export type DecodedCall =
       target: `0x${string}`;
       fnSelector: `0x${string}`;
       fnName?: string;
+    }
+  | { kind: 'setGuard'; target: `0x${string}`; guardAddress: `0x${string}` }
+  | { kind: 'setFallbackHandler'; target: `0x${string}`; fallbackAddress: `0x${string}` }
+  | { kind: 'enableModule'; target: `0x${string}`; moduleAddress: `0x${string}` }
+  | {
+      kind: 'disableModule';
+      target: `0x${string}`;
+      prevModule: `0x${string}`;
+      moduleAddress: `0x${string}`;
     }
   | { kind: 'unknown'; selector: `0x${string}`; dataLen: number };
 
@@ -90,6 +148,7 @@ export function decodeCall(
   call: PlanCall,
   sdk: DecodeSdk,
   extraSelectors?: Record<string, string>,
+  safeAddress?: string,
 ): DecodedCall {
   const data = call.data;
   if (data.length < 10) {
@@ -99,6 +158,54 @@ export function decodeCall(
     return { kind: 'unknown', selector: padded, dataLen: Math.max(0, (data.length - 2) / 2) };
   }
   const selector = data.slice(0, 10) as `0x${string}`;
+
+  // Safe-ABI dispatch — gated by `call.to === safeAddress` to disambiguate
+  // the `enableModule` / `disableModule` selector collision between Safe
+  // and Roles modifier. Skipped entirely for legacy callers who pass no
+  // `safeAddress`. When the gate matches but the selector isn't a Safe-ABI
+  // function, fall through to the rolesAbi path (a Safe contract receives
+  // ONLY Safe-ABI calls in practice, but the fallback keeps unknown
+  // selectors decodable).
+  if (
+    safeAddress !== undefined &&
+    call.to.toLowerCase() === safeAddress.toLowerCase() &&
+    SAFE_SELECTORS[selector.toLowerCase()] === true
+  ) {
+    try {
+      const safeDecoded = decodeFunctionData({
+        abi: SAFE_ABI,
+        data: data as `0x${string}`,
+      }) as { functionName: string; args: readonly unknown[] };
+      const target = call.to as `0x${string}`;
+      switch (safeDecoded.functionName) {
+        case 'setGuard':
+          return { kind: 'setGuard', target, guardAddress: safeDecoded.args[0] as `0x${string}` };
+        case 'setFallbackHandler':
+          return {
+            kind: 'setFallbackHandler',
+            target,
+            fallbackAddress: safeDecoded.args[0] as `0x${string}`,
+          };
+        case 'enableModule':
+          return {
+            kind: 'enableModule',
+            target,
+            moduleAddress: safeDecoded.args[0] as `0x${string}`,
+          };
+        case 'disableModule':
+          return {
+            kind: 'disableModule',
+            target,
+            prevModule: safeDecoded.args[0] as `0x${string}`,
+            moduleAddress: safeDecoded.args[1] as `0x${string}`,
+          };
+      }
+    } catch {
+      // Fall through — try rolesAbi path. (This branch is unreachable in
+      // practice because the selector pre-check guarantees a successful
+      // Safe-ABI decode, but defensive code keeps the printer robust.)
+    }
+  }
 
   let decoded: { functionName: string; args: readonly unknown[] };
   try {

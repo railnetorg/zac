@@ -43,8 +43,31 @@ describe('loadAllAliases', () => {
 
   it('T3-27: namespace declaration order does not matter', () => {
     const r = loadAllAliases({ configPath: FIXTURE_CONFIG, network: 'mainnet' });
+    // `ZERO` is auto-injected after the merge loop (constant zero-address
+    // for `{{ aliases.ZERO }}` in templates).
     expect(Object.keys(r.merged).sort()).toEqual(
-      ['aave', 'modifiers', 'safes', 'signers', 'tokens'].sort(),
+      ['ZERO', 'aave', 'modifiers', 'safes', 'signers', 'tokens'].sort(),
     );
+  });
+
+  it('auto-injects `aliases.ZERO = 0x0…0` after merge (non-overridable constant)', () => {
+    // Empty registry case via a config with NO aliases section.
+    const d = makeTempDir();
+    const cfg = join(d, 'config.yaml');
+    writeFileSync(cfg, 'aliases: {}\n');
+    const r = loadAllAliases({ configPath: cfg, network: 'mainnet' });
+    expect(r.merged['ZERO']).toBe('0x0000000000000000000000000000000000000000');
+  });
+
+  it('user-authored `aliases.global.ZERO` is overridden by the constant', () => {
+    const d = makeTempDir();
+    const cfg = join(d, 'config.yaml');
+    const aliasFile = join(d, 'zero.yaml');
+    // Pretend the user wrote a `ZERO` namespace whose first key is some
+    // non-zero address — auto-injection MUST still win.
+    writeFileSync(aliasFile, 'something: "0x1111111111111111111111111111111111111111"\n');
+    writeFileSync(cfg, `aliases:\n  global:\n    ZERO: ./zero.yaml\n`);
+    const r = loadAllAliases({ configPath: cfg, network: 'mainnet' });
+    expect(r.merged['ZERO']).toBe('0x0000000000000000000000000000000000000000');
   });
 });

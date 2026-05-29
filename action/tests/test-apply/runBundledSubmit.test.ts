@@ -59,7 +59,18 @@ function buildStubs() {
     return {
       createTransaction: async (args: { transactions: Call[] }) => {
         createTxCalls.push({ transactions: args.transactions });
-        return { data: { transactions: args.transactions, marker: 'fake-tx-data' } };
+        // `SafeTransactionLike.data` narrows to `{to, value, data, operation?}`
+        // — what protocol-kit's Safe.createTransaction returns. The transactions
+        // array isn't part of that shape; the test wants to inspect it
+        // separately via `createTxCalls`.
+        return {
+          data: {
+            to: args.transactions[0]!.to,
+            value: '0',
+            data: '0xfake-tx-data',
+            operation: 0,
+          },
+        };
       },
       getTransactionHash: async (_tx: { data: unknown }) => '0xfeed' + 'beef'.repeat(15),
       signHash: async (hash: string) => ({ data: '0xsig:' + hash.slice(0, 10) }),
