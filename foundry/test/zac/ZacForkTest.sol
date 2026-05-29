@@ -15,6 +15,18 @@ abstract contract ZacForkTest is Test {
     ///         planned call as the impersonated Safe on the active fork.
     /// @param configPath YAML deployment config path relative to /foundry/.
     function zacApply(string memory configPath) internal {
+        _zacApply(configPath, "");
+    }
+
+    /// @notice Render + plan + apply with an explicit `--config` root path. Use
+    ///         when the `.zac.yaml` lives outside any `examples/` hierarchy and
+    ///         `findConfig`'s upward walk can't otherwise reach the root
+    ///         `config.yaml` that registers the alias namespaces.
+    function zacApply(string memory configPath, string memory rootConfigPath) internal {
+        _zacApply(configPath, rootConfigPath);
+    }
+
+    function _zacApply(string memory configPath, string memory rootConfigPath) private {
         // Hard-fail if RPC_URL unset; we'd have nothing to talk to.
         vm.envString("RPC_URL");
 
@@ -31,27 +43,37 @@ abstract contract ZacForkTest is Test {
         );
         string memory planPath = string.concat(generatedPath, ".plan.json");
 
+        bool hasRootConfig = bytes(rootConfigPath).length > 0;
+
         // 1. zac generate -> flattened deployment YAML
-        string[] memory genCmd = new string[](6);
+        string[] memory genCmd = new string[](hasRootConfig ? 8 : 6);
         genCmd[0] = "bun";
         genCmd[1] = "../action/cli.ts";
         genCmd[2] = "generate";
         genCmd[3] = configPath;
         genCmd[4] = "--out";
         genCmd[5] = generatedPath;
+        if (hasRootConfig) {
+            genCmd[6] = "--config";
+            genCmd[7] = rootConfigPath;
+        }
         Vm.FfiResult memory r = vm.tryFfi(genCmd);
         if (r.exitCode != 0) {
             revert(string.concat("zac generate failed: ", string(r.stderr)));
         }
 
         // 2. zac plan -> JSON describing role-state-update calls
-        string[] memory planCmd = new string[](6);
+        string[] memory planCmd = new string[](hasRootConfig ? 8 : 6);
         planCmd[0] = "bun";
         planCmd[1] = "../action/cli.ts";
         planCmd[2] = "plan";
         planCmd[3] = generatedPath;
         planCmd[4] = "--out";
         planCmd[5] = planPath;
+        if (hasRootConfig) {
+            planCmd[6] = "--config";
+            planCmd[7] = rootConfigPath;
+        }
         r = vm.tryFfi(planCmd);
         if (r.exitCode != 0) {
             revert(string.concat("zac plan failed: ", string(r.stderr)));

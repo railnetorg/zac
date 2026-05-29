@@ -345,12 +345,13 @@ function resolveGeneratedInputs(
       return generated;
     }
     if (absInput.endsWith('.yaml')) {
-      // Reject generated `.yaml` direct input — uniform CLI surface.
-      const suggested = absInput.slice(0, -'.yaml'.length) + '.zac.yaml';
-      throw new ZacError({
-        phase: 'load',
-        message: `expected a source file ending in .zac.yaml (not a generated .yaml): ${absInput} — pass ${suggested} instead`,
-      });
+      // Accept a `.yaml` file as an already-generated input. The canonical
+      // `*.zac.yaml` → sibling `.yaml` flow is the branch above; this branch
+      // lets fork tests + programmatic callers point `plan` at a generated
+      // artifact directly (e.g. a `/tmp/...yaml` written by an earlier
+      // `zac generate --out`). Non-breaking: standalone CLI users pass
+      // `*.zac.yaml` as before.
+      return [absInput];
     }
     // Anything else (e.g. .json, .txt) — fall through to findGeneratedConfigs
     // which surfaces a clean phase=load error.
@@ -410,10 +411,15 @@ export function buildProgram(): Command {
       (v: string) => parseBool('--revoke-unmentioned', v),
       false,
     )
+    .option(
+      '--out <path>',
+      'write plan JSON to this path instead of the default `<stem>.plan.json` sibling. Only valid for a single generated input (errors when <path> resolves to multiple sources).',
+    )
+    .option('--config <path>', 'override path to root config.yaml (default: walk up)')
     .action(
       async (
         inputPath: string,
-        options: { rpcUrl?: string; revokeUnmentioned: boolean },
+        options: { rpcUrl?: string; revokeUnmentioned: boolean; out?: string; config?: string },
         command: Command,
       ) => {
         const { runPlan } = await import('./apply/runPlan');
@@ -423,7 +429,13 @@ export function buildProgram(): Command {
         const { buildSelectorMap } = await import('./apply/buildSelectorMap');
         const { buildAddressLabelMap } = await import('./apply/buildAddressLabelMap');
         const { loadAllAliases } = await import('./load/loadAllAliases');
-        const { findConfig } = await import('./load/findConfig');
+        const { findConfig: findConfigRaw } = await import('./load/findConfig');
+        // Propagate `--config` to every findConfig call site (label-map building,
+        // etc.) by wrapping the import.
+        const findConfig: typeof findConfigRaw = (args) =>
+          options.config !== undefined
+            ? findConfigRaw({ ...args, override: options.config })
+            : findConfigRaw(args);
         const sdk = await loadDiffSdk();
 
         const absInput = isAbsolute(inputPath) ? inputPath : resolve(inputPath);
@@ -474,6 +486,12 @@ export function buildProgram(): Command {
         // `--revoke-unmentioned=false`. Accept either a `*.zac.yaml` (we
         // translate to its sibling generated `*.yaml`) or a directory.
         const generated = resolveGeneratedInputs(inputPath, inputIsFile, absInput);
+        if (options.out !== undefined && generated.length !== 1) {
+          throw new ZacError({
+            phase: 'apply',
+            message: `--out is only valid for a single generated input; got ${generated.length} from '${inputPath}'`,
+          });
+        }
         const { ok } = await runBatch(generated, 'plan', async (genPath) => {
           const planOpts: Parameters<typeof runPlan>[0] = { generatedPath: genPath };
           if (options.rpcUrl !== undefined) planOpts.rpcUrl = options.rpcUrl;
@@ -485,7 +503,7 @@ export function buildProgram(): Command {
             return;
           }
           const json = serializePlan(plan);
-          const outPath = planPathFor(genPath);
+          const outPath = options.out ?? planPathFor(genPath);
           writeFileSync(outPath, json);
           printPlanDiff(plan, {
             planPath: displayPath(outPath),

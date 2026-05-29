@@ -154,15 +154,16 @@ describe('cli apply', () => {
     expect(stderr).not.toContain('WARN: --revoke-unmentioned has no effect');
   });
 
-  it('T11-26: plan with a generated .yaml file directly → phase=load suggesting the .zac.yaml', async () => {
-    // The CLI surface is uniform: users always pass .zac.yaml sources.
-    // Passing the generated .yaml directly must be rejected with a clear
-    // hint pointing to the source.
+  it('T11-26: plan accepts a generated .yaml file directly (fork tests + programmatic callers)', async () => {
+    // A generated `.yaml` is a valid plan input: it is treated as the
+    // already-flattened config. The canonical `*.zac.yaml` → sibling `.yaml`
+    // flow still works; this path lets fork tests point plan at an artifact
+    // written by an earlier `zac generate --out`. It proceeds past the load
+    // phase (here failing later at apply for lack of an RPC URL).
     const { src } = plantSafeDirSource({ writeGenerated: true });
     const generated = src.slice(0, -'.zac.yaml'.length) + '.yaml';
     const { code, stderr } = await runCli(['plan', generated]);
     expect(code).toBe(1);
-    expect(stderr).toContain('phase=load');
-    expect(stderr).toContain('.zac.yaml');
+    expect(stderr).not.toContain('phase=load');
   });
 });
