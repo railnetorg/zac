@@ -14,6 +14,30 @@ interface ParamYaml extends ChildOp {
   name: string;
 }
 
+/**
+ * Map a YAML `execution_options` string to the SDK FunctionPermission's
+ * `send` / `delegatecall` flags. Omitted / "none" leaves both unset (the
+ * SDK defaults to ExecutionOptions.None).
+ */
+function executionFlags(opt: string | undefined): { send?: boolean; delegatecall?: boolean } {
+  switch (opt) {
+    case undefined:
+    case 'none':
+      return {};
+    case 'send':
+      return { send: true };
+    case 'delegatecall':
+      return { delegatecall: true };
+    case 'both':
+      return { send: true, delegatecall: true };
+    default:
+      throw new ZacError({
+        phase: 'apply',
+        message: `unknown execution_options '${opt}' (expected none | send | delegatecall | both)`,
+      });
+  }
+}
+
 interface AbiInput {
   name?: string;
   type: string;
@@ -166,6 +190,7 @@ export function toSdkTargets(generated: Generated, roleKey: string, sdk: SdkBuil
       const perm: Record<string, unknown> = {
         targetAddress: target.address as `0x${string}`,
         signature: fn.signature,
+        ...executionFlags((fn as { execution_options?: string }).execution_options),
       };
       if (scopingResult !== null) {
         perm['condition'] = sdk.c.calldataMatches(scopingResult.scoping, scopingResult.abiTypes);
