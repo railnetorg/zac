@@ -74,8 +74,14 @@ export function validateOperatorAgainstAbi(
     });
   }
 
-  // Array param: array_* ops and any-type composites allowed.
+  // Array param: array_* ops and any-type composites allowed; `pass` is
+  // also accepted at the top level — it leaves the whole array slot
+  // unscoped on-chain (the planner emits `undefined` for the position,
+  // which the SDK's `calldataMatches` treats as "no scoping for this
+  // slot" regardless of element type). Equivalent to omitting the param
+  // entirely from `params[]`, except this satisfies the coverage check.
   if (abiType.endsWith('[]')) {
+    if (operator === 'pass') return;
     if (ARRAY_OPS.has(operator)) {
       // Element-type child validation done by the caller.
       return;

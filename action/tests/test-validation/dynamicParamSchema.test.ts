@@ -117,6 +117,26 @@ describe('dynamicParamSchema', () => {
     expect(() => validateParamAgainstInput(bad, i[0]!)).toThrow(ZacError);
   });
 
+  it('T6-32b: address[] + pass accepted (unscoped array slot — equivalent to omitting the param)', () => {
+    // The planner emits `undefined` for a top-level `pass` slot, which the
+    // SDK's calldataMatches treats as "no scoping for this position"
+    // regardless of element type. Symmetric with scalar-pass.
+    const i = inputs('function foo(address[] addrs)');
+    const ok = { name: 'addrs', operator: 'pass' };
+    expect(() => validateParamAgainstInput(ok, i[0]!)).not.toThrow();
+  });
+
+  it('T6-32c: array of other types + pass also accepted (bytes32[], uint256[])', () => {
+    const iBytes = inputs('function foo(bytes32[] hashes)');
+    expect(() =>
+      validateParamAgainstInput({ name: 'hashes', operator: 'pass' }, iBytes[0]!),
+    ).not.toThrow();
+    const iUint = inputs('function foo(uint256[] amounts)');
+    expect(() =>
+      validateParamAgainstInput({ name: 'amounts', operator: 'pass' }, iUint[0]!),
+    ).not.toThrow();
+  });
+
   it('T6-33: address[] array_subset valid + invalid child', () => {
     const i = inputs('function foo(address[] addrs)');
     const ok = {

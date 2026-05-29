@@ -1,0 +1,16 @@
+roles_modifier_address: "{{ aliases.modifiers.my_modifier }}"
+safe_address: "{{ aliases.safes.my_safe }}"
+chain_id: 1
+name: My Safe Lagoon Vault Manager
+description: Settle deposits/redeems and manage NAV on Lagoon vault(s)
+configs:
+  - template: "../../../templates/lagoon/lagoon.tmpl"
+    key: LAGOON
+    members:
+      - "{{ aliases.signers.alice }}"
+    params:
+      # Pass each vault contract address directly — a literal 0x… string,
+      # or an alias expression once you've added an entry to
+      # aliases/<chain>/lagoon.yaml (referenced as aliases.lagoon.<key>).
+      vaults:
+        - "0x30a3699e0dcea6bdc8bb2c13e74a2324e0b20116"
