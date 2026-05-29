@@ -23,7 +23,7 @@ contracts-test:
 # usage: just forge-test-fork https://sepolia-rpc.example
 forge-test-fork upstream:
     @bash -c '\
-      anvil --fork-url {{upstream}} --port 8546 --quiet & \
+      anvil --fork-url "{{upstream}}" --port 8546 --quiet & \
       ANVIL_PID=$$!; \
       trap "kill $$ANVIL_PID 2>/dev/null" EXIT; \
       for i in 1 2 3 4 5 6 7 8 9 10; do \
