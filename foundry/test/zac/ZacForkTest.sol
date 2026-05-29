@@ -50,8 +50,9 @@ abstract contract ZacForkTest is Test {
             uint256(0),
             address(0)
         );
-        bytes memory createCd =
-            abi.encodeWithSignature("createProxyWithNonce(address,bytes,uint256)", SAFE_SINGLETON_V1_4_1, safeInit, saltNonce);
+        bytes memory createCd = abi.encodeWithSignature(
+            "createProxyWithNonce(address,bytes,uint256)", SAFE_SINGLETON_V1_4_1, safeInit, saltNonce
+        );
         address safe = abi.decode(_anvilCall(SAFE_PROXY_FACTORY, createCd), (address));
 
         bytes memory modInit = abi.encodeWithSignature("setUp(bytes)", abi.encode(safe, safe, safe));
@@ -88,8 +89,7 @@ abstract contract ZacForkTest is Test {
     ///         resolve from outside the `examples/` hierarchy.
     function applyInlineConfig(RolesFixture memory fx, string memory configsYaml) internal {
         // Layout the CLI expects: <network>/<safe-address>/<name>.zac.yaml.
-        string memory configDir =
-            string.concat(vm.projectRoot(), "/cache/zac-fork-test/mainnet/", vm.toString(fx.safe));
+        string memory configDir = string.concat(vm.projectRoot(), "/cache/zac-fork-test/mainnet/", vm.toString(fx.safe));
         string[] memory mkdir = new string[](3);
         mkdir[0] = "mkdir";
         mkdir[1] = "-p";
