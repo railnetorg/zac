@@ -1,0 +1,20 @@
+roles_modifier_address: "{{ aliases.modifiers.my_modifier }}"
+safe_address: "{{ aliases.safes.my_safe }}"
+chain_id: 1
+name: My Safe Flash-loan Helper Manager
+description: Same-asset leveraged loops via the Flash-loan Helper (Aave V3, optional Morpho/Aave flash)
+configs:
+  - template: "../../../templates/helper/helper.tmpl"
+    key: FLASH_LOAN_HELPER
+    members:
+      - "{{ aliases.signers.alice }}"
+      - "{{ aliases.signers.bob }}"
+    params:
+      assets:
+        - "USDC"
+      allowed_flash_venues:
+        - "aave"
+        - "morpho"
+      # Strict lower bound — keeper's `p.minHealthFactor` must be > this.
+      # 1099999999999999999 ≡ HF >= 1.1e18.
+      min_health_factor_floor: "1099999999999999999"
