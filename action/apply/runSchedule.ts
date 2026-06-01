@@ -266,7 +266,7 @@ export async function runSchedule(opts: RunScheduleOpts): Promise<ScheduleOutcom
     const params: ScheduleParams = {
       to: tx.to,
       value: BigInt(tx.value),
-      data: ((tx.data ?? '0x') as Hex),
+      data: (tx.data ?? '0x') as Hex,
       operation: tx.operation,
       safeTxGas: BigInt(tx.safeTxGas),
       baseGas: BigInt(tx.baseGas),
@@ -302,16 +302,14 @@ export async function runSchedule(opts: RunScheduleOpts): Promise<ScheduleOutcom
  * api-kit returns confirmations in insertion order from Safe Tx Service, so
  * we sort here at the call boundary.
  */
-function packSortedSignatures(
-  confs: Array<{ owner: string; signature: string }>,
-): Hex {
+function packSortedSignatures(confs: Array<{ owner: string; signature: string }>): Hex {
   const sorted = [...confs].sort((a, b) => {
     const la = a.owner.toLowerCase();
     const lb = b.owner.toLowerCase();
     return la < lb ? -1 : la > lb ? 1 : 0;
   });
   const concat = sorted.map((c) => c.signature.replace(/^0x/, '')).join('');
-  return (`0x${concat}` as Hex);
+  return `0x${concat}` as Hex;
 }
 
 function makeViemScheduleClient(rpcUrl: string, privateKey: `0x${string}`): ScheduleClient {

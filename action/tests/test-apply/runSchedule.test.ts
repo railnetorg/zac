@@ -186,10 +186,7 @@ describe('runSchedule', () => {
     const dir = join(root, 'mainnet', SAFE);
     mkdirSync(dir, { recursive: true });
     // Bare-address form: install path, but no timelock_delay.
-    writeFileSync(
-      join(dir, 'safe.yaml'),
-      `guard: "${GUARD}"\nfallback: ~\nmodules: ~\n`,
-    );
+    writeFileSync(join(dir, 'safe.yaml'), `guard: "${GUARD}"\nfallback: ~\nmodules: ~\n`);
     const safeDir: SafeDir = {
       dirPath: dir,
       network: 'mainnet',

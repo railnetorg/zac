@@ -65,7 +65,9 @@ function buildSafeStub(state: { guard?: string; fallback?: string; modules?: str
 type GuardInput = string | { address: string; timelockDelay?: number } | null;
 
 /** Build a `ParsedSafeYaml` allowing the convenient bare-string `guard:` form. */
-function yaml(over: { guard?: GuardInput; fallback?: string | null; modules?: string[] | null } = {}): ParsedSafeYaml {
+function yaml(
+  over: { guard?: GuardInput; fallback?: string | null; modules?: string[] | null } = {},
+): ParsedSafeYaml {
   const out: ParsedSafeYaml = { guard: null, fallback: null, modules: null };
   if (over.guard !== undefined) {
     out.guard =

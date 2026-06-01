@@ -56,11 +56,11 @@ contract TimelockGuardOnlyTest is Test {
         safeMock.setMockGuard(address(guard));
     }
 
-    function test_version() public {
+    function test_version() public view {
         assertEq(guard.version(), "1.0.0");
     }
 
-    function test_deployedNotZero() public {
+    function test_deployedNotZero() public view {
         assertTrue(address(guard) != address(0));
     }
 
