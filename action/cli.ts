@@ -533,6 +533,7 @@ export function buildProgram(): Command {
     .action(async (inputPath: string) => {
       const { runSubmit, runBundledSubmit } = await import('./apply/runSubmit');
       const { parsePlan } = await import('./apply/planSchema');
+      const { computeSafeTxMessageHash } = await import('./apply/safeApi');
       const proposerKey = process.env['ZAC_PROPOSER_PRIVATE_KEY'] as `0x${string}` | undefined;
       if (proposerKey === undefined) {
         throw new ZacError({
@@ -564,8 +565,13 @@ export function buildProgram(): Command {
         if (apiKey !== undefined) submitArgs.apiKey = apiKey;
         // RPC URL is resolved per-chainId inside runSubmit (see resolveRpcUrl).
         const result = await runSubmit(submitArgs);
+        const messageHash = computeSafeTxMessageHash(result.safeTxData);
         process.stdout.write(
-          `submitted ${displayPath(planPath)}: safeTxHash ${result.safeTxHash}\n`,
+          `submitted ${displayPath(planPath)}: ` +
+            `safe=${plan.safeAddress} chain=${plan.chainId} ` +
+            `plans=1 calls=${result.callsCount} ` +
+            `nonce=${result.safeTxData.nonce} operation=${result.safeTxData.operation} ` +
+            `safeTxHash=${result.safeTxHash} messageHash=${messageHash}\n`,
         );
         return;
       }
@@ -591,8 +597,18 @@ export function buildProgram(): Command {
         if (apiKey !== undefined) submitArgs.apiKey = apiKey;
         // RPC URL is resolved per-chainId inside runBundledSubmit (see resolveRpcUrl).
         const result = await runBundledSubmit(submitArgs);
+        const messageHash = computeSafeTxMessageHash(result.safeTxData);
+        // Key=value log line — parsed by downstream tooling
+        // (build-release-body.ts) to recover the BUNDLED tx data that
+        // signers must verify on hardware. The fields after `submitted` are
+        // intentionally space-separated `key=value` pairs (stable across
+        // versions); pre-bundle per-plan hashes from `*.plan.json` are NOT
+        // valid post-bundle and must be replaced by these values.
         process.stdout.write(
-          `submitted safe=${group.safeAddress} chain=${group.chainId} (${group.plans.length} plan${group.plans.length === 1 ? '' : 's'}): safeTxHash ${result.safeTxHash}\n`,
+          `submitted safe=${group.safeAddress} chain=${group.chainId} ` +
+            `plans=${group.plans.length} calls=${result.callsCount} ` +
+            `nonce=${result.safeTxData.nonce} operation=${result.safeTxData.operation} ` +
+            `safeTxHash=${result.safeTxHash} messageHash=${messageHash}\n`,
         );
       });
       if (!ok) {
