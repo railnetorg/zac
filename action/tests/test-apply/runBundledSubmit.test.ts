@@ -240,4 +240,25 @@ describe('runBundledSubmit', () => {
     expect(proposeCalls[0]!.safeTxHash).toBe(result.safeTxHash);
     expect(result.safeTxHash).not.toBe(storedHash);
   });
+
+  it('TB-16: returns the freshly-computed bundled safeTxData and total callsCount so callers can render the post-bundle view', async () => {
+    const { safeInitStub, FakeApiKit } = buildStubs();
+    const cA1: Call = { to: SAFE_A, value: '0', data: '0xa1' };
+    const cA2: Call = { to: SAFE_A, value: '0', data: '0xa2' };
+    const result = await runBundledSubmit({
+      plans: [
+        makePlan({ safeAddress: SAFE_A, chainId: 1, calls: [cA1] }),
+        makePlan({ safeAddress: SAFE_A, chainId: 1, calls: [cA2] }),
+      ],
+      proposerPrivateKey: TEST_KEY,
+      safeInit: safeInitStub,
+      apiKitCtor: FakeApiKit,
+      rpcUrl: 'http://stub/rpc',
+    });
+    // callsCount is the sum across plans, not any single plan's count.
+    expect(result.callsCount).toBe(2);
+    // safeTxData comes from the bundled createTransaction stub (data: '0xfake-tx-data').
+    expect(result.safeTxData.data).toBe('0xfake-tx-data');
+    expect(result.safeTxData.to).toBe(SAFE_A);
+  });
 });

@@ -1,9 +1,54 @@
-import { getAddress } from 'viem';
+import { getAddress, hashStruct } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { ZacError } from '../errors';
 import { safeServiceUrlForChain } from './safeServiceUrl';
 import type { Call } from './planRoleCalls';
 import type { Plan, SafeTxData } from './planSchema';
+
+// EIP-712 SafeTx struct definition — matches Safe contracts v1.3+. The
+// `messageHash` returned by `computeSafeTxMessageHash` is the inner
+// `keccak256(hashStruct(SafeTx))` that a signer's hardware wallet displays
+// when signing an EIP-712 SafeTx. `safeTxHash` (returned by protocol-kit)
+// is the outer EIP-712 digest under the per-chain domain separator;
+// signers verify BOTH on hardware.
+const SAFE_TX_TYPES = {
+  SafeTx: [
+    { name: 'to', type: 'address' },
+    { name: 'value', type: 'uint256' },
+    { name: 'data', type: 'bytes' },
+    { name: 'operation', type: 'uint8' },
+    { name: 'safeTxGas', type: 'uint256' },
+    { name: 'baseGas', type: 'uint256' },
+    { name: 'gasPrice', type: 'uint256' },
+    { name: 'gasToken', type: 'address' },
+    { name: 'refundReceiver', type: 'address' },
+    { name: 'nonce', type: 'uint256' },
+  ],
+} as const;
+
+/**
+ * Compute the EIP-712 inner struct hash for a SafeTx — the value a hardware
+ * wallet shows under "Message hash" when signing. Used by the submit-log
+ * emitter so signers can cross-check the bundled tx on their device.
+ */
+export function computeSafeTxMessageHash(data: SafeTxData): `0x${string}` {
+  return hashStruct({
+    types: SAFE_TX_TYPES,
+    primaryType: 'SafeTx',
+    data: {
+      to: data.to as `0x${string}`,
+      value: BigInt(data.value),
+      data: data.data as `0x${string}`,
+      operation: data.operation,
+      safeTxGas: BigInt(data.safeTxGas),
+      baseGas: BigInt(data.baseGas),
+      gasPrice: BigInt(data.gasPrice),
+      gasToken: data.gasToken as `0x${string}`,
+      refundReceiver: data.refundReceiver as `0x${string}`,
+      nonce: BigInt(data.nonce),
+    },
+  });
+}
 
 /**
  * Minimal `Safe` shape (subset of `@safe-global/protocol-kit`'s `Safe`).
