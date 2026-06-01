@@ -786,6 +786,57 @@ export function buildProgram(): Command {
       },
     );
 
+  program
+    .command('schedule <path>')
+    .description(
+      'fetch quorum-met proposals from the Safe Transaction Service and broadcast `scheduleTransaction` through the TimelockGuard configured in `safe.yaml`. <path> is a `safe.yaml` file or a directory (walked recursively — safe-dirs must live at `<network>/<safe-address>/`). Signs and broadcasts with `ZAC_SCHEDULER_PRIVATE_KEY` (separate from `ZAC_PROPOSER_PRIVATE_KEY`). RPC URL is resolved per-chainId via `<NETWORK>_RPC_URL` (falling back to `RPC_URL`).',
+    )
+    .option(
+      '--rpc-url <url>',
+      'RPC URL for the schedule broadcast; overrides any per-chain or `RPC_URL` env var',
+    )
+    .action(async (inputPath: string, options: { rpcUrl?: string }) => {
+      const { runSchedule } = await import('./apply/runSchedule');
+
+      const schedulerKey = process.env['ZAC_SCHEDULER_PRIVATE_KEY'] as `0x${string}` | undefined;
+      if (schedulerKey === undefined) {
+        throw new ZacError({
+          phase: 'apply',
+          message: 'ZAC_SCHEDULER_PRIVATE_KEY env var is required for schedule',
+        });
+      }
+      const apiKey = process.env['SAFE_API_KEY'];
+
+      const safeDirs = findSafeDirs(inputPath);
+      const { ok } = await runSafeDirBatch(safeDirs, 'schedule', async (sd) => {
+        const scheduleArgs: Parameters<typeof runSchedule>[0] = {
+          safeDir: sd,
+          schedulerPrivateKey: schedulerKey,
+        };
+        if (options.rpcUrl !== undefined) scheduleArgs.rpcUrl = options.rpcUrl;
+        if (apiKey !== undefined) scheduleArgs.apiKey = apiKey;
+        const { scheduled, skipped } = await runSchedule(scheduleArgs);
+        for (const s of scheduled) {
+          process.stdout.write(
+            `scheduled safe=${sd.safeAddress} chain=${sd.chainId} nonce=${s.nonce} safeTxHash=${s.safeTxHash} txHash=${s.txHash}\n`,
+          );
+        }
+        for (const s of skipped) {
+          process.stdout.write(
+            `skipped safe=${sd.safeAddress} chain=${sd.chainId} nonce=${s.nonce} safeTxHash=${s.safeTxHash} reason="${s.reason}"\n`,
+          );
+        }
+        if (scheduled.length === 0 && skipped.length === 0) {
+          process.stdout.write(
+            `nothing to schedule for safe=${sd.safeAddress} chain=${sd.chainId}\n`,
+          );
+        }
+      });
+      if (!ok) {
+        throw new ZacError({ phase: 'apply', message: 'one or more schedule steps failed' });
+      }
+    });
+
   return program;
 }
 

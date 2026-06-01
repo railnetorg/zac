@@ -5,15 +5,27 @@
 # `plan --revoke-unmentioned=true` against live Safe state.
 #
 # Three keys, all required:
-#   guard:    <address> | ~     (~ = don't manage; 0x000…0 = EXPLICITLY
-#                                 clear the on-chain guard via
-#                                 setGuard(0x0) — use ~ to leave the slot
-#                                 untouched)
-#   fallback: <address> | ~     (~ = don't manage; 0x000…0 = EXPLICITLY
-#                                 clear the on-chain fallback handler via
-#                                 setFallbackHandler(0x0) — use ~ to leave
-#                                 the slot untouched)
-#   modules:  [<addr>, ...] | ~ (~ = don't manage; list = full reconcile)
+#   guard:    <address> | <guard-object> | ~  (~ = don't manage;
+#                                              0x000…0 = EXPLICITLY clear
+#                                              the on-chain guard via
+#                                              setGuard(0x0) — use ~ to
+#                                              leave the slot untouched)
+#   fallback: <address> | ~                   (~ = don't manage; 0x000…0 =
+#                                              EXPLICITLY clear the on-chain
+#                                              fallback handler via
+#                                              setFallbackHandler(0x0) —
+#                                              use ~ to leave untouched)
+#   modules:  [<addr>, ...] | ~               (~ = don't manage; list = full reconcile)
+#
+# `guard` accepts either a bare address or a nested object with a timelock
+# configuration. The nested form is required when the guard is a
+# TimelockGuard (or compatible): plan batches `setGuard` together with
+# `configureTimelockGuard(delay)` in one Safe transaction so the guard is
+# never enabled with a zero delay window.
+#
+#   guard:
+#     address: 0xTimelockGuardOnly...
+#     timelock_delay: 86400   # seconds — positive integer required
 #
 # All-`~` (this file) is the documented opt-out: every plan run touches
 # zero Safe-level state regardless of what's on-chain. Promote a `~` to a

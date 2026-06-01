@@ -5,3 +5,6 @@ src/=src/
 @safe/=lib/safe-smart-account/contracts/
 @openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/
 @halmos-cheatcodes/=lib/halmos-cheatcodes/src/
+@optimism-contracts=lib/optimism/packages/contracts-bedrock/src
+@optimism-interfaces=lib/optimism/packages/contracts-bedrock/interfaces
+@safe-contracts=lib/optimism/packages/contracts-bedrock/lib/safe-contracts/contracts
