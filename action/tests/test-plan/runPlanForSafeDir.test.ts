@@ -112,7 +112,11 @@ function safeInitStubWithSafe(state: { guard?: string; fallback?: string; module
         state.fallback ?? '0x0000000000000000000000000000000000000000',
       getModules: async () => state.modules ?? [],
       createEnableGuardTx: async (a: string) => txFor('setGuard', a),
+      createDisableGuardTx: async () =>
+        txFor('setGuard', '0x0000000000000000000000000000000000000000'),
       createEnableFallbackHandlerTx: async (a: string) => txFor('setFallback', a),
+      createDisableFallbackHandlerTx: async () =>
+        txFor('setFallback', '0x0000000000000000000000000000000000000000'),
       createEnableModuleTx: async (a: string) => txFor('enableModule', a),
       createDisableModuleTx: async (a: string) => txFor('disableModule', a),
     };

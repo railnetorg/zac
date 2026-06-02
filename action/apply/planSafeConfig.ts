@@ -114,31 +114,61 @@ export async function planSafeConfig(opts: PlanSafeConfigOpts): Promise<Call[]> 
     }
   }
 
-  // 3b. guard.
-  if (opts.safeYaml.guard !== null && !isZero(opts.safeYaml.guard)) {
-    if (liveGuard.toLowerCase() !== opts.safeYaml.guard.toLowerCase()) {
-      if (opts.safe.createEnableGuardTx === undefined) {
-        throw new ZacError({
-          phase: 'apply',
-          message: 'internal: Safe instance missing createEnableGuardTx',
-        });
+  // 3b. guard. Symmetric to `fallback`: the EXPLICIT zero address is a
+  //     real op — emits `setGuard(0x0)` to CLEAR the on-chain guard. Only
+  //     `null` (YAML `~`) means "don't manage". The inequality guard
+  //     implicitly skips when desired matches live (incl. desired=0x0
+  //     already cleared on-chain).
+  if (opts.safeYaml.guard !== null) {
+    const desiredGuard = opts.safeYaml.guard;
+    if (liveGuard.toLowerCase() !== desiredGuard.toLowerCase()) {
+      if (isZero(desiredGuard)) {
+        if (opts.safe.createDisableGuardTx === undefined) {
+          throw new ZacError({
+            phase: 'apply',
+            message: 'internal: Safe instance missing createDisableGuardTx',
+          });
+        }
+        const tx = await opts.safe.createDisableGuardTx();
+        setGuardCalls.push(callFromTx(tx));
+      } else {
+        if (opts.safe.createEnableGuardTx === undefined) {
+          throw new ZacError({
+            phase: 'apply',
+            message: 'internal: Safe instance missing createEnableGuardTx',
+          });
+        }
+        const tx = await opts.safe.createEnableGuardTx(desiredGuard);
+        setGuardCalls.push(callFromTx(tx));
       }
-      const tx = await opts.safe.createEnableGuardTx(opts.safeYaml.guard);
-      setGuardCalls.push(callFromTx(tx));
     }
   }
 
-  // 3c. fallback.
-  if (opts.safeYaml.fallback !== null && !isZero(opts.safeYaml.fallback)) {
-    if (liveFallback.toLowerCase() !== opts.safeYaml.fallback.toLowerCase()) {
-      if (opts.safe.createEnableFallbackHandlerTx === undefined) {
-        throw new ZacError({
-          phase: 'apply',
-          message: 'internal: Safe instance missing createEnableFallbackHandlerTx',
-        });
+  // 3c. fallback. Same shape as the guard branch: explicit zero clears
+  //     the on-chain fallback handler via `setFallbackHandler(0x0)`; only
+  //     `~` (null) skips the slot.
+  if (opts.safeYaml.fallback !== null) {
+    const desiredFallback = opts.safeYaml.fallback;
+    if (liveFallback.toLowerCase() !== desiredFallback.toLowerCase()) {
+      if (isZero(desiredFallback)) {
+        if (opts.safe.createDisableFallbackHandlerTx === undefined) {
+          throw new ZacError({
+            phase: 'apply',
+            message: 'internal: Safe instance missing createDisableFallbackHandlerTx',
+          });
+        }
+        const tx = await opts.safe.createDisableFallbackHandlerTx();
+        setFallbackCalls.push(callFromTx(tx));
+      } else {
+        if (opts.safe.createEnableFallbackHandlerTx === undefined) {
+          throw new ZacError({
+            phase: 'apply',
+            message: 'internal: Safe instance missing createEnableFallbackHandlerTx',
+          });
+        }
+        const tx = await opts.safe.createEnableFallbackHandlerTx(desiredFallback);
+        setFallbackCalls.push(callFromTx(tx));
       }
-      const tx = await opts.safe.createEnableFallbackHandlerTx(opts.safeYaml.fallback);
-      setFallbackCalls.push(callFromTx(tx));
     }
   }
 

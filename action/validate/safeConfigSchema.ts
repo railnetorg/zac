@@ -15,9 +15,17 @@ const AddressString = z.string().refine((s) => isAddress(s), {
 /**
  * Parsed-and-validated `safe.yaml` content. All three fields are
  * REQUIRED in the source file; `null` (the YAML `~` shorthand) means
- * "don't manage this slot" (no call emitted at plan time). For `guard`
- * and `fallback`, the zero address ALSO means skip (no call). For
- * `modules`, the zero address is filtered out before set-diffing.
+ * "don't manage this slot" (no call emitted at plan time).
+ *
+ * Per-field zero-address semantics:
+ * - `guard`: zero address is EXPLICIT — when live is non-zero the plan
+ *    emits `setGuard(0x0)` to clear the on-chain guard; when live is
+ *    already zero the inequality guard short-circuits. Use `~` (null) if
+ *    you don't want zac to touch the guard at all.
+ * - `fallback`: same as `guard` — zero address is EXPLICIT, emits
+ *    `setFallbackHandler(0x0)` to clear the on-chain fallback handler;
+ *    use `~` (null) to leave the slot untouched.
+ * - `modules`: zero address is filtered out before set-diffing.
  */
 export interface ParsedSafeYaml {
   guard: string | null;

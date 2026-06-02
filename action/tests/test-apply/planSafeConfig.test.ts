@@ -31,6 +31,19 @@ function buildSafeStub(state: { guard?: string; fallback?: string; modules?: str
       },
     };
   }
+  function txForNoArg(kind: string): SafeTransactionLike {
+    return {
+      data: {
+        to: SAFE,
+        value: '0',
+        // Distinct `kind` tag (e.g. `disableFallback`) so assertions can
+        // distinguish a no-arg "clear" call from a same-selector enable call
+        // that happened to pass the zero address (paranoid regression guard).
+        data: `0x${kind}` as `0x${string}` as string,
+        operation: 0,
+      },
+    };
+  }
   return {
     createTransaction: async () => ({
       data: { to: SAFE, value: '0', data: '0xstub', operation: 0 },
@@ -41,7 +54,9 @@ function buildSafeStub(state: { guard?: string; fallback?: string; modules?: str
     getFallbackHandler: async () => state.fallback ?? ZERO,
     getModules: async () => state.modules ?? [],
     createEnableGuardTx: async (a: string) => txFor('setGuard', a),
+    createDisableGuardTx: async () => txForNoArg('disableGuard'),
     createEnableFallbackHandlerTx: async (a: string) => txFor('setFallback', a),
+    createDisableFallbackHandlerTx: async () => txForNoArg('disableFallback'),
     createEnableModuleTx: async (a: string) => txFor('enableModule', a),
     createDisableModuleTx: async (a: string) => txFor('disableModule', a),
   };
@@ -62,15 +77,13 @@ describe('planSafeConfig', () => {
     expect(calls).toEqual([]);
   });
 
-  it('guard: 0x0 → no setGuard call', async () => {
-    const calls = await planSafeConfig({
-      safeYaml: yaml({ guard: ZERO }),
-      safe: buildSafeStub({ guard: GUARD_A }),
-      safeAddress: SAFE,
-      declaredModifiers: [],
-    });
-    expect(calls).toEqual([]);
-  });
+  // ── guard semantics ───────────────────────────────────────────────────
+  //
+  // Symmetric to `fallback`: zero address is an EXPLICIT clear (emits
+  // setGuard(0x0)); only `~` (null) skips the slot. The inequality guard
+  // (`liveGuard !== desiredGuard`) short-circuits when desired=0x0 and
+  // live is already 0x0 (the "in-sync" path), avoiding protocol-kit's
+  // "There is no guard enabled yet" throw.
 
   it('guard matches live (case-insensitive) → no setGuard call', async () => {
     const calls = await planSafeConfig({
@@ -82,7 +95,7 @@ describe('planSafeConfig', () => {
     expect(calls).toEqual([]);
   });
 
-  it('guard differs from live → one setGuard call after disables/enables', async () => {
+  it('guard differs from live → one setGuard call carrying the desired addr', async () => {
     const calls = await planSafeConfig({
       safeYaml: yaml({ guard: GUARD_A }),
       safe: buildSafeStub({ guard: GUARD_B }),
@@ -96,7 +109,79 @@ describe('planSafeConfig', () => {
     expect(calls[0]!.data.toLowerCase()).toContain(GUARD_A.toLowerCase());
   });
 
-  it('fallback differs → one setFallbackHandler call', async () => {
+  it('guard: 0x0 with live non-zero → emits the no-arg disable builder (NOT the enable builder with zero arg)', async () => {
+    const calls = await planSafeConfig({
+      safeYaml: yaml({ guard: ZERO }),
+      safe: buildSafeStub({ guard: GUARD_A }),
+      safeAddress: SAFE,
+      declaredModifiers: [],
+    });
+    expect(calls).toHaveLength(1);
+    // Stub tags the no-arg builder with `disableGuard` (vs `setGuard`
+    // for the enable builder) — a regression that wired the zero arg
+    // through `createEnableGuardTx(ZERO)` would carry the `setGuard`
+    // tag instead and this assertion would fail.
+    expect(calls[0]!.data).toContain('disableGuard');
+    expect(calls[0]!.data.toLowerCase()).not.toContain(GUARD_A.toLowerCase());
+  });
+
+  it('guard: 0x0 with live already zero → no-op (inequality guard short-circuits)', async () => {
+    const calls = await planSafeConfig({
+      safeYaml: yaml({ guard: ZERO }),
+      safe: buildSafeStub({ guard: ZERO }),
+      safeAddress: SAFE,
+      declaredModifiers: [],
+    });
+    expect(calls).toEqual([]);
+  });
+
+  it('guard: ~ → no-op regardless of live state (both non-zero and zero)', async () => {
+    const a = await planSafeConfig({
+      safeYaml: yaml({ guard: null }),
+      safe: buildSafeStub({ guard: GUARD_A }),
+      safeAddress: SAFE,
+      declaredModifiers: [],
+    });
+    expect(a).toEqual([]);
+    const b = await planSafeConfig({
+      safeYaml: yaml({ guard: null }),
+      safe: buildSafeStub({ guard: ZERO }),
+      safeAddress: SAFE,
+      declaredModifiers: [],
+    });
+    expect(b).toEqual([]);
+  });
+
+  it('guard: 0x0 with live non-zero but SafeLike missing createDisableGuardTx → ZacError(apply, "internal: ...")', async () => {
+    const partial: SafeLike = {
+      createTransaction: async () => ({
+        data: { to: SAFE, value: '0', data: '0x', operation: 0 },
+      }),
+      getTransactionHash: async () => '0x',
+      signHash: async () => ({ data: '0x' }),
+      getGuard: async () => GUARD_A,
+      getFallbackHandler: async () => ZERO,
+      getModules: async () => [],
+      // createDisableGuardTx intentionally missing
+    };
+    await expect(
+      planSafeConfig({
+        safeYaml: yaml({ guard: ZERO }),
+        safe: partial,
+        safeAddress: SAFE,
+        declaredModifiers: [],
+      }),
+    ).rejects.toThrow(/internal: Safe instance missing createDisableGuardTx/);
+  });
+
+  // ── fallback semantics ────────────────────────────────────────────────
+  //
+  // Symmetric to `guard`: zero address is an EXPLICIT clear (emits
+  // setFallbackHandler(0x0)); only `~` (null) skips the slot. See the
+  // guard block above and `ParsedSafeYaml` JSDoc in
+  // `validate/safeConfigSchema.ts`.
+
+  it('fallback differs → one setFallbackHandler call carrying the desired addr', async () => {
     const calls = await planSafeConfig({
       safeYaml: yaml({ fallback: FALLBACK_A }),
       safe: buildSafeStub({ fallback: FALLBACK_B }),
@@ -105,6 +190,78 @@ describe('planSafeConfig', () => {
     });
     expect(calls).toHaveLength(1);
     expect(calls[0]!.data).toContain('setFallback');
+    // Asserts the DESIRED address rides in calldata (catches an
+    // enable/disable mix-up that drops the addr).
+    expect(calls[0]!.data.toLowerCase()).toContain(FALLBACK_A.toLowerCase());
+  });
+
+  it('fallback: 0x0 with live non-zero → emits the no-arg disable builder (NOT the enable builder with zero arg)', async () => {
+    const calls = await planSafeConfig({
+      safeYaml: yaml({ fallback: ZERO }),
+      safe: buildSafeStub({ fallback: FALLBACK_A }),
+      safeAddress: SAFE,
+      declaredModifiers: [],
+    });
+    expect(calls).toHaveLength(1);
+    // Stub tags the no-arg builder with `disableFallback` (vs `setFallback`
+    // for the enable builder) — a regression that wired the zero arg
+    // through `createEnableFallbackHandlerTx(ZERO)` would carry the
+    // `setFallback` tag instead and this assertion would fail.
+    expect(calls[0]!.data).toContain('disableFallback');
+    // Negative paranoia: must not echo the LIVE fallback addr (catches a
+    // branch that mistakenly forwards `liveFallback` to the disable builder).
+    expect(calls[0]!.data.toLowerCase()).not.toContain(FALLBACK_A.toLowerCase());
+  });
+
+  it('fallback: 0x0 with live already zero → no-op (inequality guard short-circuits)', async () => {
+    const calls = await planSafeConfig({
+      safeYaml: yaml({ fallback: ZERO }),
+      safe: buildSafeStub({ fallback: ZERO }),
+      safeAddress: SAFE,
+      declaredModifiers: [],
+    });
+    expect(calls).toEqual([]);
+  });
+
+  it('fallback: ~ → no-op regardless of live state (both non-zero and zero)', async () => {
+    // Non-zero live: zac must NOT manage this slot.
+    const a = await planSafeConfig({
+      safeYaml: yaml({ fallback: null }),
+      safe: buildSafeStub({ fallback: FALLBACK_A }),
+      safeAddress: SAFE,
+      declaredModifiers: [],
+    });
+    expect(a).toEqual([]);
+    // Zero live: same — the whole fallback block is gated by `fallback !== null`.
+    const b = await planSafeConfig({
+      safeYaml: yaml({ fallback: null }),
+      safe: buildSafeStub({ fallback: ZERO }),
+      safeAddress: SAFE,
+      declaredModifiers: [],
+    });
+    expect(b).toEqual([]);
+  });
+
+  it('fallback: 0x0 with live non-zero but SafeLike missing createDisableFallbackHandlerTx → ZacError(apply, "internal: ...")', async () => {
+    const partial: SafeLike = {
+      createTransaction: async () => ({
+        data: { to: SAFE, value: '0', data: '0x', operation: 0 },
+      }),
+      getTransactionHash: async () => '0x',
+      signHash: async () => ({ data: '0x' }),
+      getGuard: async () => ZERO,
+      getFallbackHandler: async () => FALLBACK_A,
+      getModules: async () => [],
+      // createDisableFallbackHandlerTx intentionally missing
+    };
+    await expect(
+      planSafeConfig({
+        safeYaml: yaml({ fallback: ZERO }),
+        safe: partial,
+        safeAddress: SAFE,
+        declaredModifiers: [],
+      }),
+    ).rejects.toThrow(/internal: Safe instance missing createDisableFallbackHandlerTx/);
   });
 
   it('modules: ~ → no module reconcile', async () => {

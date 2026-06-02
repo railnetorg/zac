@@ -60,10 +60,15 @@ export function loadAllAliases(opts: LoadAllAliasesOpts): AliasRegistry {
   }
 
   // Auto-inject `aliases.ZERO` AFTER the namespace-merge loop so it is
-  // non-overridable: users writing `{{ aliases.ZERO }}` in templates (e.g.
-  // `safe.yaml: guard: {{ aliases.ZERO }}` to mean "skip") always get the
-  // canonical zero-address constant regardless of any user-authored
-  // `aliases.global.ZERO` entry.
+  // non-overridable: users writing `{{ aliases.ZERO }}` in templates
+  // always get the canonical zero-address constant regardless of any
+  // user-authored `aliases.global.ZERO` entry.
+  //
+  // Semantics in `safe.yaml`: `{{ aliases.ZERO }}` is a DELIBERATE clear —
+  // `guard: {{ aliases.ZERO }}` emits setGuard(0x0) and
+  // `fallback: {{ aliases.ZERO }}` emits setFallbackHandler(0x0). Use `~`
+  // (YAML null) when you want zac to leave the slot untouched. Inside a
+  // `modules` array the zero address is silently filtered out.
   merged['ZERO'] = '0x0000000000000000000000000000000000000000';
 
   return { merged };
