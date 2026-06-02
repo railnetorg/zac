@@ -254,7 +254,9 @@ modules:
     let outErr: { stdout: string; stderr: string };
     try {
       outErr = await captureStdout(async () => {
-        await buildProgram().parseAsync(['plan', root], { from: 'user' });
+        await buildProgram().parseAsync(['plan', '--revoke-unmentioned', 'false', root], {
+          from: 'user',
+        });
       });
     } finally {
       if (prevRpc === undefined) delete process.env['MAINNET_RPC_URL'];
