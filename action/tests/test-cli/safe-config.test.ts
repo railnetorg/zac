@@ -162,8 +162,24 @@ vi.mock('@safe-global/protocol-kit', () => ({
       createEnableGuardTx: async (a: string) => ({
         data: { to: SAFE, value: '0', data: `0xsetGuard:${a.toLowerCase()}`, operation: 0 },
       }),
+      createDisableGuardTx: async () => ({
+        data: {
+          to: SAFE,
+          value: '0',
+          data: `0xsetGuard:0x0000000000000000000000000000000000000000`,
+          operation: 0,
+        },
+      }),
       createEnableFallbackHandlerTx: async (a: string) => ({
         data: { to: SAFE, value: '0', data: `0xsetFallback:${a.toLowerCase()}`, operation: 0 },
+      }),
+      createDisableFallbackHandlerTx: async () => ({
+        data: {
+          to: SAFE,
+          value: '0',
+          data: `0xsetFallback:0x0000000000000000000000000000000000000000`,
+          operation: 0,
+        },
       }),
       createEnableModuleTx: async (a: string) => ({
         data: { to: SAFE, value: '0', data: `0xenableModule:${a.toLowerCase()}`, operation: 0 },
@@ -347,6 +363,121 @@ modules:
     expect(plan.calls).toHaveLength(1);
     expect(plan.calls[0]!.data).toContain('setFallback');
     expect(plan.calls[0]!.data).toContain(FALLBACK_DESIRED.toLowerCase());
+  });
+
+  it('setFallbackHandler clear end-to-end: safe.yaml fallback: 0x0 with live non-zero → plan.json with 1 setFallbackHandler(0x0) call', async () => {
+    const FALLBACK_LIVE = '0xfeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee0';
+    liveFallback = FALLBACK_LIVE;
+    // `{{ aliases.ZERO }}` is wired by the env's auto-injected ZERO alias
+    // (see `loadAllAliases`); spelling the zero address inline here keeps
+    // the fixture independent of that wiring.
+    const { root, safeDir } = plantWithSafeYaml(`guard: ~
+fallback: "0x0000000000000000000000000000000000000000"
+modules:
+  - "${MOD}"
+`);
+    const planPath = join(safeDir, `${SAFE.toLowerCase()}.plan.json`);
+    const prevRpc = process.env['MAINNET_RPC_URL'];
+    process.env['MAINNET_RPC_URL'] = 'http://stub.invalid';
+    try {
+      await captureStdout(async () => {
+        await buildProgram().parseAsync(['plan', '--revoke-unmentioned', 'true', root], {
+          from: 'user',
+        });
+      });
+    } finally {
+      if (prevRpc === undefined) delete process.env['MAINNET_RPC_URL'];
+      else process.env['MAINNET_RPC_URL'] = prevRpc;
+    }
+    expect(existsSync(planPath)).toBe(true);
+    const plan = JSON.parse(readFileSync(planPath, 'utf8')) as {
+      calls: Array<{ to: string; data: string }>;
+    };
+    expect(plan.calls).toHaveLength(1);
+    expect(plan.calls[0]!.data).toContain('setFallback');
+    expect(plan.calls[0]!.data).toContain('0x0000000000000000000000000000000000000000');
+  });
+
+  it('setGuard clear end-to-end: safe.yaml guard: 0x0 with live non-zero → plan.json with 1 setGuard(0x0) call', async () => {
+    liveGuard = GUARD_DESIRED;
+    const { root, safeDir } = plantWithSafeYaml(`guard: "0x0000000000000000000000000000000000000000"
+fallback: ~
+modules:
+  - "${MOD}"
+`);
+    const planPath = join(safeDir, `${SAFE.toLowerCase()}.plan.json`);
+    const prevRpc = process.env['MAINNET_RPC_URL'];
+    process.env['MAINNET_RPC_URL'] = 'http://stub.invalid';
+    try {
+      await captureStdout(async () => {
+        await buildProgram().parseAsync(['plan', '--revoke-unmentioned', 'true', root], {
+          from: 'user',
+        });
+      });
+    } finally {
+      if (prevRpc === undefined) delete process.env['MAINNET_RPC_URL'];
+      else process.env['MAINNET_RPC_URL'] = prevRpc;
+    }
+    expect(existsSync(planPath)).toBe(true);
+    const plan = JSON.parse(readFileSync(planPath, 'utf8')) as {
+      calls: Array<{ to: string; data: string }>;
+    };
+    expect(plan.calls).toHaveLength(1);
+    expect(plan.calls[0]!.data).toContain('setGuard');
+    expect(plan.calls[0]!.data).toContain('0x0000000000000000000000000000000000000000');
+  });
+
+  it('setGuard clear end-to-end: safe.yaml guard: 0x0 when live already zero → in-sync (no plan emitted)', async () => {
+    liveGuard = '0x0000000000000000000000000000000000000000';
+    const { root, safeDir } = plantWithSafeYaml(`guard: "0x0000000000000000000000000000000000000000"
+fallback: ~
+modules:
+  - "${MOD}"
+`);
+    const planPath = join(safeDir, `${SAFE.toLowerCase()}.plan.json`);
+    const prevRpc = process.env['MAINNET_RPC_URL'];
+    process.env['MAINNET_RPC_URL'] = 'http://stub.invalid';
+    let outErr: { stdout: string; stderr: string };
+    try {
+      outErr = await captureStdout(async () => {
+        await buildProgram().parseAsync(['plan', '--revoke-unmentioned', 'true', root], {
+          from: 'user',
+        });
+      });
+    } finally {
+      if (prevRpc === undefined) delete process.env['MAINNET_RPC_URL'];
+      else process.env['MAINNET_RPC_URL'] = prevRpc;
+    }
+    expect(outErr.stdout).toContain('in sync:');
+    expect(existsSync(planPath)).toBe(false);
+  });
+
+  it('setFallbackHandler clear end-to-end: safe.yaml fallback: 0x0 when live already zero → in-sync (no plan emitted)', async () => {
+    liveFallback = '0x0000000000000000000000000000000000000000';
+    const { root, safeDir } = plantWithSafeYaml(`guard: ~
+fallback: "0x0000000000000000000000000000000000000000"
+modules:
+  - "${MOD}"
+`);
+    const planPath = join(safeDir, `${SAFE.toLowerCase()}.plan.json`);
+    const prevRpc = process.env['MAINNET_RPC_URL'];
+    process.env['MAINNET_RPC_URL'] = 'http://stub.invalid';
+    let outErr: { stdout: string; stderr: string };
+    try {
+      outErr = await captureStdout(async () => {
+        await buildProgram().parseAsync(['plan', '--revoke-unmentioned', 'true', root], {
+          from: 'user',
+        });
+      });
+    } finally {
+      if (prevRpc === undefined) delete process.env['MAINNET_RPC_URL'];
+      else process.env['MAINNET_RPC_URL'] = prevRpc;
+    }
+    expect(outErr.stdout).toContain('in sync:');
+    // A regression that silently emitted a no-op `setFallbackHandler(0x0)`
+    // call would still print "in sync:" in mixed output. Assert the plan
+    // artifact is genuinely absent.
+    expect(existsSync(planPath)).toBe(false);
   });
 
   it('enableModule end-to-end: safe.yaml lists a new module not on-chain → plan.json with enableModule + cross-validation passes (modifier still listed)', async () => {

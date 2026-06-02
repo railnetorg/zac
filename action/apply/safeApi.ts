@@ -69,7 +69,24 @@ export interface SafeLike {
   getFallbackHandler?(): Promise<string>;
   getModules?(): Promise<string[]>;
   createEnableGuardTx?(address: string): Promise<SafeTransactionLike>;
+  /**
+   * No-arg twin of `createEnableGuardTx`. Encodes `setGuard(0x0)` so a
+   * deployment can EXPLICITLY drop its guard when `safe.yaml` requests
+   * `guard: 0x0`. Picked by `planSafeConfig` when desired is the zero
+   * address and live is non-zero; the matching production builder lives
+   * in protocol-kit as `Safe.createDisableGuardTx`.
+   */
+  createDisableGuardTx?(): Promise<SafeTransactionLike>;
   createEnableFallbackHandlerTx?(address: string): Promise<SafeTransactionLike>;
+  /**
+   * No-arg twin of `createEnableFallbackHandlerTx`. Encodes
+   * `setFallbackHandler(0x0)` so a deployment can EXPLICITLY drop its
+   * fallback handler when `safe.yaml` requests `fallback: 0x0`. Picked
+   * by `planSafeConfig` when desired is the zero address and live is
+   * non-zero; the matching production builder lives in protocol-kit as
+   * `Safe.createDisableFallbackHandlerTx`.
+   */
+  createDisableFallbackHandlerTx?(): Promise<SafeTransactionLike>;
   createEnableModuleTx?(address: string): Promise<SafeTransactionLike>;
   createDisableModuleTx?(address: string): Promise<SafeTransactionLike>;
 }

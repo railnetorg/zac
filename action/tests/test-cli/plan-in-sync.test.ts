@@ -124,7 +124,13 @@ vi.mock('@safe-global/protocol-kit', () => ({
         createEnableGuardTx: async () => ({
           data: { to: '0x0', value: '0', data: '0xsetGuard', operation: 0 },
         }),
+        createDisableGuardTx: async () => ({
+          data: { to: '0x0', value: '0', data: '0xsetGuard', operation: 0 },
+        }),
         createEnableFallbackHandlerTx: async () => ({
+          data: { to: '0x0', value: '0', data: '0xsetFallback', operation: 0 },
+        }),
+        createDisableFallbackHandlerTx: async () => ({
           data: { to: '0x0', value: '0', data: '0xsetFallback', operation: 0 },
         }),
         createEnableModuleTx: async () => ({
