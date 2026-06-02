@@ -25,11 +25,11 @@ export interface RunSubmitOpts {
 export interface SubmitResult {
   safeTxHash: string;
   /**
-   * The exact `SafeTxData` that was posted to Safe Transaction Service.
-   * For `runSubmit` this is `opts.plan.safeTxData`; for `runBundledSubmit`
-   * this is the freshly-computed bundled tx data (live nonce, MultiSend
-   * payload). Downstream tooling (release-body renderer) uses this to
-   * surface post-bundle `nonce` / `operation` / `messageHash` to signers.
+   * The exact `SafeTxData` that was posted to Safe Transaction Service —
+   * always freshly computed here from the plan's `calls` against the live
+   * Safe (nonce, threshold). The plan itself carries no Safe tx. Downstream
+   * tooling (the release-body / submit-log renderer) uses this to surface
+   * `nonce` / `operation` / `messageHash` to signers.
    */
   safeTxData: SafeTxData;
   /** Number of underlying calls inside the proposed Safe tx. */
@@ -37,28 +37,20 @@ export interface SubmitResult {
 }
 
 /**
- * Sign + post a pre-computed Plan to Safe Transaction Service. Thin wrapper
- * around `signAndPropose`.
+ * Build the Safe transaction for a single plan's calls against the live Safe
+ * and post it to the Safe Transaction Service. Thin wrapper over
+ * `runBundledSubmit`.
  */
 export async function runSubmit(opts: RunSubmitOpts): Promise<SubmitResult> {
-  const resolveArgs: Parameters<typeof resolveRpcUrl>[0] = { chainId: opts.plan.chainId };
-  if (opts.rpcUrl !== undefined) resolveArgs.overrideUrl = opts.rpcUrl;
-  const rpcUrl = resolveRpcUrl(resolveArgs);
-
-  const submitArgs: Parameters<typeof signAndPropose>[0] = {
-    plan: opts.plan,
+  const bundledArgs: Parameters<typeof runBundledSubmit>[0] = {
+    plans: [opts.plan],
     proposerPrivateKey: opts.proposerPrivateKey,
-    rpcUrl,
   };
-  if (opts.apiKey !== undefined) submitArgs.apiKey = opts.apiKey;
-  if (opts.safeInit !== undefined) submitArgs.safeInit = opts.safeInit;
-  if (opts.apiKitCtor !== undefined) submitArgs.apiKitCtor = opts.apiKitCtor;
-  const result = await signAndPropose(submitArgs);
-  return {
-    safeTxHash: result.safeTxHash,
-    safeTxData: opts.plan.safeTxData,
-    callsCount: opts.plan.calls.length,
-  };
+  if (opts.apiKey !== undefined) bundledArgs.apiKey = opts.apiKey;
+  if (opts.rpcUrl !== undefined) bundledArgs.rpcUrl = opts.rpcUrl;
+  if (opts.safeInit !== undefined) bundledArgs.safeInit = opts.safeInit;
+  if (opts.apiKitCtor !== undefined) bundledArgs.apiKitCtor = opts.apiKitCtor;
+  return runBundledSubmit(bundledArgs);
 }
 
 export interface RunBundledSubmitOpts {
@@ -78,12 +70,12 @@ export interface RunBundledSubmitOpts {
 
 /**
  * Bundle every plan's `calls[]` into ONE Safe transaction (auto-wrapped in
- * MultiSend when N>1 by protocol-kit) and post it to Safe Transaction
- * Service. All plans must share the same `safeAddress` and `chainId`.
+ * MultiSend when N>1 by protocol-kit), built against the live Safe (nonce,
+ * threshold), and post it to the Safe Transaction Service. All plans must
+ * share the same `safeAddress` and `chainId`.
  *
- * The bundled `safeTxData` and `safeTxHash` are recomputed from the live
- * Safe contract (nonce, threshold) — the stored per-plan hashes are NOT
- * reused.
+ * This is the sole place a Safe tx is built — `plan` produces only calldata,
+ * so the live-Safe read happens here at submit time, not at plan time.
  */
 export async function runBundledSubmit(opts: RunBundledSubmitOpts): Promise<SubmitResult> {
   if (opts.plans.length === 0) {
@@ -117,31 +109,18 @@ export async function runBundledSubmit(opts: RunBundledSubmitOpts): Promise<Subm
   if (opts.safeInit !== undefined) buildArgs.safeInit = opts.safeInit;
   const { safeTxHash, safeTxData } = await buildSafeTransaction(buildArgs);
 
-  const bundledPlan: Plan = {
-    calls,
-    callsCount: calls.length,
-    chainId: first.chainId,
-    // `modifierAddress` is OPTIONAL on Plan — conditionally spread so
-    // safe-only bundled plans (no role-modifier touchpoint) serialize
-    // without the field.
-    ...(first.modifierAddress !== undefined ? { modifierAddress: first.modifierAddress } : {}),
+  const submitArgs: Parameters<typeof signAndPropose>[0] = {
     safeAddress: first.safeAddress,
+    chainId: first.chainId,
     safeTxData,
     safeTxHash,
-  };
-
-  const submitArgs: Parameters<typeof signAndPropose>[0] = {
-    plan: bundledPlan,
     proposerPrivateKey: opts.proposerPrivateKey,
     rpcUrl,
   };
   if (opts.apiKey !== undefined) submitArgs.apiKey = opts.apiKey;
   if (opts.safeInit !== undefined) submitArgs.safeInit = opts.safeInit;
   if (opts.apiKitCtor !== undefined) submitArgs.apiKitCtor = opts.apiKitCtor;
-  const result = await signAndPropose(submitArgs);
-  return {
-    safeTxHash: result.safeTxHash,
-    safeTxData,
-    callsCount: calls.length,
-  };
+  await signAndPropose(submitArgs);
+
+  return { safeTxHash, safeTxData, callsCount: calls.length };
 }

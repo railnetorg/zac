@@ -392,10 +392,20 @@ export function buildProgram(): Command {
       'generate Zodiac Roles V2 configs from `*.zac.yaml` sources; <path> is a file or directory (walked recursively). Output is written alongside each source as `<stem>.yaml`. Sources must live at `<network>/<safe-address>/<name>.zac.yaml`.',
     )
     .option('--config <path>', 'override path to root config.yaml (default: walk up)')
-    .action(async (inputPath: string, options: { config?: string }) => {
+    .option(
+      '--out <path>',
+      'write the generated config to this exact path instead of alongside the source (single-source input only)',
+    )
+    .action(async (inputPath: string, options: { config?: string; out?: string }) => {
       const sources = findZacSources(inputPath);
+      if (options.out !== undefined && sources.length !== 1) {
+        throw new ZacError({
+          phase: 'emit',
+          message: `--out requires a single source, got ${sources.length}`,
+        });
+      }
       const { ok } = await runBatch(sources, 'generate', async (source) => {
-        const outPath = generatedPathFor(source);
+        const outPath = options.out ?? generatedPathFor(source);
         const opts: Parameters<typeof runGenerate>[0] = { configPath: source, outPath };
         if (options.config !== undefined) opts.configOverride = options.config;
         await runGenerate(opts);
@@ -421,10 +431,15 @@ export function buildProgram(): Command {
       (v: string) => parseBool('--revoke-unmentioned', v),
       false,
     )
+    .option(
+      '--out <path>',
+      'write the plan JSON to this exact path instead of the derived `*.plan.json` (file-mode / single-source input only)',
+    )
+    .option('--config <path>', 'override path to root config.yaml (default: walk up)')
     .action(
       async (
         inputPath: string,
-        options: { rpcUrl?: string; revokeUnmentioned: boolean },
+        options: { rpcUrl?: string; revokeUnmentioned: boolean; out?: string; config?: string },
         command: Command,
       ) => {
         const { runPlan } = await import('./apply/runPlan');
@@ -435,7 +450,11 @@ export function buildProgram(): Command {
         const { buildFunctionParamMap } = await import('./apply/buildFunctionParamMap');
         const { buildAddressLabelMap } = await import('./apply/buildAddressLabelMap');
         const { loadAllAliases } = await import('./load/loadAllAliases');
-        const { findConfig } = await import('./load/findConfig');
+        const { findConfig: findConfigRaw } = await import('./load/findConfig');
+        const findConfig: typeof findConfigRaw = (args) =>
+          options.config !== undefined
+            ? findConfigRaw({ ...args, override: options.config })
+            : findConfigRaw(args);
         const sdk = await loadDiffSdk();
 
         const absInput = isAbsolute(inputPath) ? inputPath : resolve(inputPath);
@@ -488,9 +507,14 @@ export function buildProgram(): Command {
         // `--revoke-unmentioned=false`. Accept either a `*.zac.yaml` (we
         // translate to its sibling generated `*.yaml`) or a directory.
         const generated = resolveGeneratedInputs(inputPath, inputIsFile, absInput);
+        if (options.out !== undefined && generated.length !== 1) {
+          throw new ZacError({
+            phase: 'apply',
+            message: `--out requires a single generated input, got ${generated.length}`,
+          });
+        }
         const { ok } = await runBatch(generated, 'plan', async (genPath) => {
           const planOpts: Parameters<typeof runPlan>[0] = { generatedPath: genPath };
-          if (options.rpcUrl !== undefined) planOpts.rpcUrl = options.rpcUrl;
           const plan = await runPlan(planOpts);
           if (plan === null) {
             // In sync: skip write, skip diff. Do NOT touch any existing
@@ -499,7 +523,7 @@ export function buildProgram(): Command {
             return;
           }
           const json = serializePlan(plan);
-          const outPath = planPathFor(genPath);
+          const outPath = options.out ?? planPathFor(genPath);
           writeFileSync(outPath, json);
           printPlanDiff(plan, {
             planPath: displayPath(outPath),
@@ -721,7 +745,6 @@ export function buildProgram(): Command {
         const generated = resolveGeneratedInputs(inputPath, inputIsFile, absInput);
         const { ok } = await runBatch(generated, 'apply', async (genPath) => {
           const planOpts: Parameters<typeof runPlan>[0] = { generatedPath: genPath };
-          if (options.rpcUrl !== undefined) planOpts.rpcUrl = options.rpcUrl;
           const plan = await runPlan(planOpts);
           if (plan === null) {
             // In sync: nothing to submit. No Safe tx proposed.

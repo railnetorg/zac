@@ -13,19 +13,6 @@ function makePlan(callsCount = 2): Plan {
     chainId: 1,
     modifierAddress: '0x4444444444444444444444444444444444444444',
     safeAddress: '0x3333333333333333333333333333333333333333',
-    safeTxData: {
-      baseGas: '0',
-      data: '0xfeed',
-      gasPrice: '0',
-      gasToken: '0x0000000000000000000000000000000000000000',
-      nonce: 0,
-      operation: 0,
-      refundReceiver: '0x0000000000000000000000000000000000000000',
-      safeTxGas: '0',
-      to: '0x4444444444444444444444444444444444444444',
-      value: '0',
-    },
-    safeTxHash: '0xfeed' + 'beef'.repeat(15),
   };
 }
 
@@ -34,35 +21,8 @@ describe('planSchema', () => {
     const json = serializePlan(makePlan());
     const parsed = JSON.parse(json) as Record<string, unknown>;
     const topKeys = Object.keys(parsed);
-    const expected = [
-      'calls',
-      'callsCount',
-      'chainId',
-      'modifierAddress',
-      'safeAddress',
-      'safeTxData',
-      'safeTxHash',
-    ];
+    const expected = ['calls', 'callsCount', 'chainId', 'modifierAddress', 'safeAddress'];
     expect(topKeys).toEqual(expected);
-  });
-
-  it('TM-6b: serializePlan emits alphabetically-ordered keys at nested level (safeTxData)', () => {
-    const json = serializePlan(makePlan());
-    const parsed = JSON.parse(json) as { safeTxData: Record<string, unknown> };
-    const nestedKeys = Object.keys(parsed.safeTxData);
-    const expected = [
-      'baseGas',
-      'data',
-      'gasPrice',
-      'gasToken',
-      'nonce',
-      'operation',
-      'refundReceiver',
-      'safeTxGas',
-      'to',
-      'value',
-    ];
-    expect(nestedKeys).toEqual(expected);
   });
 
   it('TM-6c: serializePlan recomputes callsCount from calls.length', () => {
@@ -76,13 +36,11 @@ describe('planSchema', () => {
     const plan = makePlan(2);
     const json = serializePlan(plan);
     const reparsed = parsePlan(json);
-    expect(reparsed.safeTxHash).toBe(plan.safeTxHash);
     expect(reparsed.chainId).toBe(plan.chainId);
     expect(reparsed.safeAddress).toBe(plan.safeAddress);
     expect(reparsed.modifierAddress).toBe(plan.modifierAddress);
     expect(reparsed.callsCount).toBe(2);
     expect(reparsed.calls.length).toBe(2);
-    expect(reparsed.safeTxData).toEqual(plan.safeTxData);
   });
 
   it('TM-6e: PlanSchema rejects malformed input (missing callsCount)', () => {

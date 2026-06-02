@@ -137,8 +137,6 @@ describe('plan output naming', () => {
         generatedPath: gen,
         planApplyRole,
         encodeKey: fakeEncodeKey,
-        safeInit: safeInitStub(),
-        rpcUrl: 'http://stub/rpc',
       });
       expect(plan).not.toBeNull();
       const outPath = planPathFor(gen);
@@ -200,8 +198,6 @@ roles:
         generatedPath: gen,
         planApplyRole,
         encodeKey: fakeEncodeKey,
-        safeInit: safeInitStub(),
-        rpcUrl: 'http://stub/rpc',
       });
       expect(plan).not.toBeNull();
       const outPath = planPathFor(gen);

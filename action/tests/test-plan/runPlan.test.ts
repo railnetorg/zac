@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runPlan } from '../../apply/runPlan';
-import type { PlanApplyRoleFn, Call } from '../../apply/planRoleCalls';
+import type { PlanApplyRoleFn } from '../../apply/planRoleCalls';
 import { PlanSchema, serializePlan, parsePlan } from '../../apply/planSchema';
 
 const tempDirs: string[] = [];
@@ -41,30 +41,8 @@ roles:
 
 const fakeEncodeKey = (_key: string): `0x${string}` => `0x${'a'.repeat(64)}` as `0x${string}`;
 
-function safeInitStub() {
-  return async (_cfg: { provider: string; signer?: string; safeAddress: string }) => ({
-    createTransaction: async (args: { transactions: Call[] }) => ({
-      data: {
-        baseGas: '0',
-        data: '0xdeadbeef',
-        gasPrice: '0',
-        gasToken: '0x0000000000000000000000000000000000000000',
-        nonce: 0,
-        operation: 0,
-        refundReceiver: '0x0000000000000000000000000000000000000000',
-        safeTxGas: '0',
-        to: args.transactions[0]!.to,
-        value: '0',
-      },
-    }),
-    getTransactionHash: async (_tx: { data: unknown }) =>
-      '0xabc' + '1234567890'.repeat(6) + '12345',
-    signHash: async (_hash: string) => ({ data: '0xsig' }),
-  });
-}
-
 describe('runPlan', () => {
-  it('TM-1: returns a Plan with calls.length>=1, valid safeTxHash, and round-trips via serializePlan + parsePlan', async () => {
+  it('TM-1: returns a calldata-only Plan (calls + ids, no Safe tx) that round-trips via serializePlan + parsePlan', async () => {
     const planFn: PlanApplyRoleFn = async () => [
       {
         to: '0x4444444444444444444444444444444444444444' as `0x${string}`,
@@ -75,47 +53,24 @@ describe('runPlan', () => {
       generatedPath: writeGenerated(),
       planApplyRole: planFn,
       encodeKey: fakeEncodeKey,
-      safeInit: safeInitStub(),
-      rpcUrl: 'http://stub/rpc',
     });
     expect(plan).not.toBeNull();
     expect(plan!.calls.length).toBeGreaterThanOrEqual(1);
     expect(plan!.callsCount).toBe(plan!.calls.length);
-    expect(plan!.safeTxHash).toMatch(/^0xabc/);
     expect(plan!.safeAddress).toBe('0x3333333333333333333333333333333333333333');
     expect(plan!.modifierAddress).toBe('0x4444444444444444444444444444444444444444');
     expect(plan!.chainId).toBe(1);
+    // No Safe tx is built at plan time (RPC-free).
+    expect((plan as unknown as { safeTxHash?: unknown }).safeTxHash).toBeUndefined();
     // Round-trip.
     const json = serializePlan(plan!);
     expect(() => PlanSchema.parse(JSON.parse(json))).not.toThrow();
     const parsed = parsePlan(json);
-    expect(parsed.safeTxHash).toBe(plan!.safeTxHash);
     expect(parsed.callsCount).toBe(plan!.callsCount);
+    expect(parsed.calls).toEqual(plan!.calls);
   });
 
-  it('TM-2: DI happy path — mocked planApplyRole + safeInit; assert call forwarding shape', async () => {
-    let safeInitArgs: unknown = null;
-    const safeInit = async (cfg: { provider: string; signer?: string; safeAddress: string }) => {
-      safeInitArgs = cfg;
-      return {
-        createTransaction: async (args: { transactions: Call[] }) => ({
-          data: {
-            baseGas: '0',
-            data: '0x',
-            gasPrice: '0',
-            gasToken: '0x0000000000000000000000000000000000000000',
-            nonce: 5,
-            operation: 0,
-            refundReceiver: '0x0000000000000000000000000000000000000000',
-            safeTxGas: '0',
-            to: args.transactions[0]!.to,
-            value: '0',
-          },
-        }),
-        getTransactionHash: async (_tx: { data: unknown }) => '0xfeed' + 'beef'.repeat(15),
-        signHash: async (_hash: string) => ({ data: '0xsig' }),
-      };
-    };
+  it('TM-2: DI happy path — mocked planApplyRole; assert call-forwarding shape (no RPC/Safe init)', async () => {
     let planFnArgs: unknown = null;
     const planFn: PlanApplyRoleFn = async (desired, meta) => {
       planFnArgs = { desired, meta };
@@ -130,14 +85,7 @@ describe('runPlan', () => {
       generatedPath: writeGenerated(),
       planApplyRole: planFn,
       encodeKey: fakeEncodeKey,
-      safeInit,
-      rpcUrl: 'http://stub/rpc',
     });
-    expect(safeInitArgs).toMatchObject({
-      provider: 'http://stub/rpc',
-      safeAddress: '0x3333333333333333333333333333333333333333',
-    });
-    expect((safeInitArgs as { signer?: string }).signer).toBeUndefined();
     expect(planFnArgs).toMatchObject({
       meta: {
         chainId: 1,
@@ -148,22 +96,11 @@ describe('runPlan', () => {
 
   it('TM-3: planApplyRole returning 0 calls → returns null ("in sync"), does NOT throw', async () => {
     const planFn: PlanApplyRoleFn = async () => [];
-    let safeInitCalled = false;
-    const safeInit = async (_cfg: { provider: string; signer?: string; safeAddress: string }) => {
-      safeInitCalled = true;
-      // If we ever reach this, the implementation incorrectly tried to
-      // build a Safe tx for an in-sync source. The assertion below catches
-      // that — but also the call would fail the test by signature.
-      throw new Error('safeInit must not be called when calls.length === 0');
-    };
     const result = await runPlan({
       generatedPath: writeGenerated(),
       planApplyRole: planFn,
       encodeKey: fakeEncodeKey,
-      safeInit,
-      rpcUrl: 'http://stub/rpc',
     });
     expect(result).toBeNull();
-    expect(safeInitCalled).toBe(false);
   });
 });

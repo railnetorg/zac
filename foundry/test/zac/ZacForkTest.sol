@@ -167,13 +167,15 @@ abstract contract ZacForkTest is Test {
     ///      role-state-update call as the Safe (the Modifier's owner). `plan` emits the
     ///      role-update calls, which the test applies directly.
     function _applyInProcess(string memory configPath, string memory rootConfigPath) private {
-        // Unique temp paths per (test contract, call site).
+        // Unique temp path per (test contract, call site).
         string memory id = string.concat(vm.toString(uint256(uint160(address(this)))), "-", vm.toString(gasleft()));
-        string memory generatedPath = string.concat("/tmp/zac-generated-", id, ".yaml");
-        string memory planPath = string.concat(generatedPath, ".plan.json");
+        // `plan` takes the `.zac.yaml` source and derives its sibling generated
+        // `.yaml`, so generate must write the generated config alongside the source.
+        string memory generatedPath = vm.replace(configPath, ".zac.yaml", ".yaml");
+        string memory planPath = string.concat("/tmp/zac-plan-", id, ".json");
 
         _zac("generate", configPath, generatedPath, rootConfigPath);
-        _zac("plan", generatedPath, planPath, rootConfigPath);
+        _zac("plan", configPath, planPath, rootConfigPath);
 
         // Per-field parsing reads only the fields used here; any others are ignored.
         string memory planJson = vm.readFile(planPath);

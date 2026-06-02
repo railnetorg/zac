@@ -90,19 +90,6 @@ function makePlan(calls: PlanCall[]): Plan {
     chainId: 1,
     modifierAddress: MODIFIER,
     safeAddress: '0x40FF9A84a5Da941A060E2925DA228aab328DDe58',
-    safeTxData: {
-      baseGas: '0',
-      data: '0x',
-      gasPrice: '0',
-      gasToken: '0x0000000000000000000000000000000000000000',
-      nonce: 0,
-      operation: 0,
-      refundReceiver: '0x0000000000000000000000000000000000000000',
-      safeTxGas: '0',
-      to: MODIFIER,
-      value: '0',
-    },
-    safeTxHash: '0x' + 'a'.repeat(64),
   };
 }
 

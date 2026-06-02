@@ -3,7 +3,7 @@ import { privateKeyToAccount } from 'viem/accounts';
 import { ZacError } from '../errors';
 import { safeServiceUrlForChain } from './safeServiceUrl';
 import type { Call } from './planRoleCalls';
-import type { Plan, SafeTxData } from './planSchema';
+import type { SafeTxData } from './planSchema';
 
 // EIP-712 SafeTx struct definition — matches Safe contracts v1.3+. The
 // `messageHash` returned by `computeSafeTxMessageHash` is the inner
@@ -181,7 +181,11 @@ export async function buildSafeTransaction(opts: BuildSafeTxOpts): Promise<Build
 }
 
 export interface SignAndProposeOpts {
-  plan: Plan;
+  safeAddress: string;
+  chainId: number;
+  /** The Safe tx to post — built fresh against the live Safe at submit time. */
+  safeTxData: SafeTxData;
+  safeTxHash: string;
   proposerPrivateKey: `0x${string}`;
   apiKey?: string;
   /**
@@ -198,15 +202,15 @@ export interface SignAndProposeOpts {
 }
 
 /**
- * Sign `plan.safeTxHash` with the proposer key and post the transaction to
- * Safe Transaction Service. Used by `runSubmit`.
+ * Sign `safeTxHash` with the proposer key and post the transaction to Safe
+ * Transaction Service. Used by `runBundledSubmit` after building the Safe tx.
  */
 export async function signAndPropose(opts: SignAndProposeOpts): Promise<{ safeTxHash: string }> {
-  const txServiceUrl = opts.txServiceUrl ?? safeServiceUrlForChain(opts.plan.chainId);
+  const txServiceUrl = opts.txServiceUrl ?? safeServiceUrlForChain(opts.chainId);
   if (txServiceUrl === null && opts.apiKey === undefined) {
     throw new ZacError({
       phase: 'apply',
-      message: `no Safe Transaction Service URL for chainId ${opts.plan.chainId} and no SAFE_API_KEY set`,
+      message: `no Safe Transaction Service URL for chainId ${opts.chainId} and no SAFE_API_KEY set`,
     });
   }
 
@@ -220,7 +224,7 @@ export async function signAndPropose(opts: SignAndProposeOpts): Promise<{ safeTx
     safe = await safeInit({
       provider: opts.rpcUrl,
       signer: opts.proposerPrivateKey,
-      safeAddress: opts.plan.safeAddress,
+      safeAddress: opts.safeAddress,
     });
   } catch (err) {
     throw new ZacError({
@@ -229,10 +233,10 @@ export async function signAndPropose(opts: SignAndProposeOpts): Promise<{ safeTx
     });
   }
 
-  const signature = await safe.signHash(opts.plan.safeTxHash);
+  const signature = await safe.signHash(opts.safeTxHash);
 
   const apiKitConfig: { chainId: bigint; txServiceUrl?: string; apiKey?: string } = {
-    chainId: BigInt(opts.plan.chainId),
+    chainId: BigInt(opts.chainId),
   };
   if (txServiceUrl !== null) apiKitConfig.txServiceUrl = txServiceUrl;
   if (opts.apiKey !== undefined) apiKitConfig.apiKey = opts.apiKey;
@@ -240,13 +244,13 @@ export async function signAndPropose(opts: SignAndProposeOpts): Promise<{ safeTx
 
   try {
     // Safe Tx Service rejects non-EIP-55 addresses with "Checksum address
-    // validation failed". `Plan.safeAddress` is lowercased to match the
-    // on-disk safe-dir naming convention (see `discover.ts`), so checksum
-    // it here at the API boundary.
+    // validation failed". `safeAddress` is lowercased to match the on-disk
+    // safe-dir naming convention (see `discover.ts`), so checksum it here at
+    // the API boundary.
     await apiKit.proposeTransaction({
-      safeAddress: getAddress(opts.plan.safeAddress),
-      safeTransactionData: opts.plan.safeTxData,
-      safeTxHash: opts.plan.safeTxHash,
+      safeAddress: getAddress(opts.safeAddress),
+      safeTransactionData: opts.safeTxData,
+      safeTxHash: opts.safeTxHash,
       senderAddress: proposerAddress,
       senderSignature: signature.data,
     });
@@ -257,7 +261,7 @@ export async function signAndPropose(opts: SignAndProposeOpts): Promise<{ safeTx
     });
   }
 
-  return { safeTxHash: opts.plan.safeTxHash };
+  return { safeTxHash: opts.safeTxHash };
 }
 
 async function loadSafeInit(): Promise<SafeInitFn> {
