@@ -20,15 +20,17 @@ export const SafeTxDataSchema = z.object({
 });
 
 /**
+ * A Plan is pure calldata — the role-state-update (and Safe-config) `calls`
+ * the proposer must execute. It carries NO Safe transaction (`safeTxData` /
+ * `safeTxHash`): those are built against the live Safe at SUBMIT time (see
+ * `runBundledSubmit`), so `plan` needs neither an RPC nor a deployed Safe.
+ *
  * `modifierAddress` is OPTIONAL — present in legacy per-file plans and in
  * per-safe-dir plans whose safe-dir declares at least one `.zac.yaml`,
  * absent in safe-only plans (a safe-dir with `safe.yaml` only and no role
  * configs). `serializePlan` conditionally spreads it so the JSON output
  * omits the key entirely when undefined; downstream `runBundledSubmit` /
  * `runPlanForSafeDir` do the same when constructing Plan instances.
- *
- * No committed `.plan.json` artifacts exist in the repo at the time of
- * this change, so no migration needed.
  */
 export const PlanSchema = z.object({
   calls: z.array(PlanCallSchema),
@@ -36,8 +38,6 @@ export const PlanSchema = z.object({
   chainId: z.number(),
   modifierAddress: z.string().optional(),
   safeAddress: z.string(),
-  safeTxData: SafeTxDataSchema,
-  safeTxHash: z.string(),
 });
 
 export type Plan = z.infer<typeof PlanSchema>;
@@ -53,8 +53,6 @@ export function serializePlan(plan: Plan): string {
     chainId: plan.chainId,
     ...(plan.modifierAddress !== undefined ? { modifierAddress: plan.modifierAddress } : {}),
     safeAddress: plan.safeAddress,
-    safeTxData: plan.safeTxData,
-    safeTxHash: plan.safeTxHash,
   };
   return JSON.stringify(sortDeep(withCount), null, 2);
 }

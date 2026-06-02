@@ -8,7 +8,7 @@ import { parseGenerated, type Generated } from './parseGenerated';
 import { planSafeConfig } from './planSafeConfig';
 import { planSafeDirCalls, type PlanApplyFn } from './planSafeDirCalls';
 import { resolveRpcUrl } from './rpc';
-import { buildSafeTransaction, initSafe, type SafeInitFn } from './safeApi';
+import { initSafe, type SafeInitFn } from './safeApi';
 import type { Plan } from './planSchema';
 
 interface SdkBuilders {
@@ -28,9 +28,9 @@ interface SdkBuilders {
 export interface RunPlanForSafeDirOpts {
   safeDir: SafeDir;
   /**
-   * CLI `--rpc-url` override. When omitted, the URL is resolved per-chain
-   * via `<NETWORK>_RPC_URL` (e.g. `MAINNET_RPC_URL`) with `RPC_URL` as the
-   * universal fallback. See `resolveRpcUrl`.
+   * CLI `--rpc-url` override, forwarded to `resolveRpcUrl` ONLY when a
+   * `safe.yaml` is present (Safe-config planning reads live guard/fallback/
+   * module state). Role-only safe-dirs never resolve an RPC.
    */
   rpcUrl?: string;
   planApply?: PlanApplyFn;
@@ -42,17 +42,22 @@ export interface RunPlanForSafeDirOpts {
 }
 
 /**
- * Compute ONE Safe transaction (calls + safeTxHash + safeTxData) for the
- * whole safe-dir via the SDK's per-modifier `planApply`. The aggregated
+ * Compute the aggregated role-state-update (and Safe-config) `calls` for a
+ * whole safe-dir — pure calldata, NO Safe transaction. The aggregated
  * `desired.roles` is the union across every source in `safeDir.sources`;
  * the SDK natively emits revoke calls for any role on the modifier not in
  * the aggregated set (the "revoke unmentioned" default).
  *
- * Returns `null` when the aggregated `planApply` produces 0 calls — i.e.
- * the on-chain role state already matches the aggregated desired state
- * and there is nothing to propose. "In sync" is a SUCCESS condition; the
- * caller decides how to surface it (the CLI prints a one-liner and skips
- * the plan-file write).
+ * RPC usage is gated on `safe.yaml`: role calls are planned offline, so a
+ * role-only safe-dir needs neither an RPC nor a deployed Safe. A Safe is
+ * initialized (and an RPC resolved) ONLY when a `safe.yaml` is present,
+ * because Safe-config planning diffs against live guard/fallback/module
+ * state. The Safe tx itself is built later, at submit time.
+ *
+ * Returns `null` when there is nothing to propose — both the role planner
+ * and the Safe-config planner produced 0 calls. "In sync" is a SUCCESS
+ * condition; the caller decides how to surface it (the CLI prints a
+ * one-liner and skips the plan-file write).
  */
 export async function runPlanForSafeDir(opts: RunPlanForSafeDirOpts): Promise<Plan | null> {
   const parse = opts.parseGenerated ?? parseGenerated;
@@ -63,11 +68,8 @@ export async function runPlanForSafeDir(opts: RunPlanForSafeDirOpts): Promise<Pl
       ? opts.safeDir.sources.map((src) => parse(generatedPathFor(src)))
       : [];
 
-  const resolveArgs: Parameters<typeof resolveRpcUrl>[0] = { chainId: opts.safeDir.chainId };
-  if (opts.rpcUrl !== undefined) resolveArgs.overrideUrl = opts.rpcUrl;
-  const rpcUrl = resolveRpcUrl(resolveArgs);
-
-  // Plan role calls only when a modifier exists.
+  // Plan role calls only when a modifier exists. RPC-free — `planSafeDirCalls`
+  // reads no chain state.
   let roleCalls: Awaited<ReturnType<typeof planSafeDirCalls>> = [];
   if (opts.safeDir.modifierAddress !== undefined) {
     const planArgs: Parameters<typeof planSafeDirCalls>[0] = { generateds };
@@ -94,39 +96,42 @@ export async function runPlanForSafeDir(opts: RunPlanForSafeDirOpts): Promise<Pl
       : undefined;
 
   // Short-circuit: no `safe.yaml` AND no role calls → in-sync, no Safe
-  // instance needed. Preserves the "safeInit must not be called when 0
-  // calls" invariant exercised by TS-11.
+  // instance needed (preserves the RPC-free role-only path).
   if (parsedSafeYaml === undefined && roleCalls.length === 0) {
     return null;
   }
 
-  // Initialize the Safe instance ONCE — shared by planSafeConfig (live
-  // reads) and buildSafeTransaction (calldata bundling) below.
-  const initArgs: Parameters<typeof initSafe>[0] = {
-    rpcUrl,
-    safeAddress: opts.safeDir.safeAddress,
-  };
-  if (opts.safeInit !== undefined) initArgs.safeInit = opts.safeInit;
-  const safe = await initSafe(initArgs);
+  // Safe-config calls are planned ONLY when a `safe.yaml` is present — that
+  // is the sole branch that needs a live Safe (guard/fallback/module reads),
+  // so the RPC + Safe.init are gated here rather than run unconditionally.
+  let safeCalls: Awaited<ReturnType<typeof planSafeConfig>> = [];
+  if (parsedSafeYaml !== undefined) {
+    const resolveArgs: Parameters<typeof resolveRpcUrl>[0] = { chainId: opts.safeDir.chainId };
+    if (opts.rpcUrl !== undefined) resolveArgs.overrideUrl = opts.rpcUrl;
+    const rpcUrl = resolveRpcUrl(resolveArgs);
 
-  // Plan Safe-level calls when `safe.yaml` is present.
-  const safeCalls =
-    parsedSafeYaml !== undefined
-      ? await planSafeConfig({
-          safeYaml: parsedSafeYaml,
-          safe,
-          safeAddress: opts.safeDir.safeAddress,
-          declaredModifiers:
-            opts.safeDir.modifierAddress !== undefined
-              ? [
-                  {
-                    address: opts.safeDir.modifierAddress,
-                    sourceFile: opts.safeDir.sources[0] ?? opts.safeDir.dirPath,
-                  },
-                ]
-              : [],
-        })
-      : [];
+    const initArgs: Parameters<typeof initSafe>[0] = {
+      rpcUrl,
+      safeAddress: opts.safeDir.safeAddress,
+    };
+    if (opts.safeInit !== undefined) initArgs.safeInit = opts.safeInit;
+    const safe = await initSafe(initArgs);
+
+    safeCalls = await planSafeConfig({
+      safeYaml: parsedSafeYaml,
+      safe,
+      safeAddress: opts.safeDir.safeAddress,
+      declaredModifiers:
+        opts.safeDir.modifierAddress !== undefined
+          ? [
+              {
+                address: opts.safeDir.modifierAddress,
+                sourceFile: opts.safeDir.sources[0] ?? opts.safeDir.dirPath,
+              },
+            ]
+          : [],
+    });
+  }
 
   // Concatenate: Safe-level FIRST, then role calls.
   const allCalls = [...safeCalls, ...roleCalls];
@@ -134,16 +139,6 @@ export async function runPlanForSafeDir(opts: RunPlanForSafeDirOpts): Promise<Pl
     // Both planners produced nothing — in sync.
     return null;
   }
-
-  const buildArgs: Parameters<typeof buildSafeTransaction>[0] = {
-    chainId: opts.safeDir.chainId,
-    safeAddress: opts.safeDir.safeAddress,
-    calls: allCalls,
-    rpcUrl,
-    safe,
-  };
-  if (opts.safeInit !== undefined) buildArgs.safeInit = opts.safeInit;
-  const { safeTxHash, safeTxData } = await buildSafeTransaction(buildArgs);
 
   return {
     calls: allCalls,
@@ -154,7 +149,5 @@ export async function runPlanForSafeDir(opts: RunPlanForSafeDirOpts): Promise<Pl
       ? { modifierAddress: opts.safeDir.modifierAddress }
       : {}),
     safeAddress: opts.safeDir.safeAddress,
-    safeTxData,
-    safeTxHash,
   };
 }

@@ -15,19 +15,6 @@ function makePlan(overrides: Partial<Plan> & Pick<Plan, 'safeAddress' | 'chainId
     chainId: 1,
     modifierAddress: '0x4444444444444444444444444444444444444444',
     safeAddress: '0x0000000000000000000000000000000000000000',
-    safeTxData: {
-      baseGas: '0',
-      data: '0xdeadbeef',
-      gasPrice: '0',
-      gasToken: '0x0000000000000000000000000000000000000000',
-      nonce: 0,
-      operation: 0,
-      refundReceiver: '0x0000000000000000000000000000000000000000',
-      safeTxGas: '0',
-      to: '0x4444444444444444444444444444444444444444',
-      value: '0',
-    },
-    safeTxHash: '0xfeedbeefbeefbeefbeefbeefbeefbeefbeefbeefbeefbeefbeefbeefbeefbeef',
   };
   return { ...base, ...overrides };
 }
