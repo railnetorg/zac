@@ -156,7 +156,9 @@ describe('cli plan diff wiring', () => {
     let out: string;
     try {
       out = await captureStdout(async () => {
-        await program.parseAsync(['plan', root], { from: 'user' });
+        await program.parseAsync(['plan', '--revoke-unmentioned', 'false', root], {
+          from: 'user',
+        });
       });
     } finally {
       if (prevRpc === undefined) delete process.env['MAINNET_RPC_URL'];

@@ -265,7 +265,9 @@ function parseBool(name: string, value: string): boolean {
  * `--revoke-unmentioned=true` in file-mode, where the flag is a no-op.
  * Without this, the flag silently downgrades to legacy and the user has
  * no signal that their intent was ignored. Skipped when the flag is at
- * its default (`false`) or when the user explicitly chose `false`.
+ * its default (`true`) or when the user explicitly chose `false` — file-
+ * mode is always per-file legacy regardless of the flag value, so an
+ * explicit `false` is consistent with the actual behavior.
  */
 function warnIfFileFlagNoOp(
   command: Command,
@@ -419,7 +421,7 @@ export function buildProgram(): Command {
   program
     .command('plan <path>')
     .description(
-      "compute role-state-update calls + Safe TX hash; output as JSON (no signing, no posting). <path> is a `*.zac.yaml` file or a directory (walked recursively — sources must live at `<network>/<safe-address>/<name>.zac.yaml`). By default (`--revoke-unmentioned=false`), each source produces a per-file `<stem>.plan.json` via `planApplyRole` with no revokes. With `--revoke-unmentioned=true` in directory mode, plans are aggregated per safe-dir and the SDK's `planApply` emits revoke calls for any role on the modifier not in the aggregated set; output is `<safe-address>.plan.json` inside each safe-dir. RPC URL is resolved per-chainId via `<NETWORK>_RPC_URL` (e.g. `MAINNET_RPC_URL`, `BASE_RPC_URL`), falling back to `RPC_URL`.",
+      "compute role-state-update calls + Safe TX hash; output as JSON (no signing, no posting). <path> is a `*.zac.yaml` file or a directory (walked recursively — sources must live at `<network>/<safe-address>/<name>.zac.yaml`). By default (`--revoke-unmentioned=true`) in directory mode, plans are aggregated per safe-dir and the SDK's `planApply` emits revoke calls for any role on the modifier not in the aggregated set; output is `<safe-address>.plan.json` inside each safe-dir. Safe-dir mode is also the only mode that consults `safe.yaml` for Safe-level config (guard/fallback/modules). Pass `--revoke-unmentioned=false` to opt into the legacy per-file flow: each source produces a `<stem>.plan.json` via `planApplyRole` with no revokes, and `safe.yaml` is ignored. RPC URL is resolved per-chainId via `<NETWORK>_RPC_URL` (e.g. `MAINNET_RPC_URL`, `BASE_RPC_URL`), falling back to `RPC_URL`.",
     )
     .option(
       '--rpc-url <url>',
@@ -427,9 +429,9 @@ export function buildProgram(): Command {
     )
     .option(
       '--revoke-unmentioned <bool>',
-      "when true, directory-mode aggregates roles per safe-dir and uses the SDK's `planApply` (which natively revokes any role on the modifier not in the aggregated set). when false (default), every source is planned independently via `planApplyRole` and no revokes are emitted. ignored in file-mode (always per-file legacy).",
+      "when true (DEFAULT), directory-mode aggregates roles per safe-dir and uses the SDK's `planApply` (which natively revokes any role on the modifier not in the aggregated set) — also the only mode that consults `safe.yaml` for Safe-level config (guard/fallback/modules). when false, every source is planned independently via `planApplyRole`, no revokes are emitted, and `safe.yaml` is ignored. ignored in file-mode (always per-file legacy).",
       (v: string) => parseBool('--revoke-unmentioned', v),
-      false,
+      true,
     )
     .option(
       '--out <path>',
@@ -643,7 +645,7 @@ export function buildProgram(): Command {
   program
     .command('apply <path>')
     .description(
-      'propose role state updates as Safe transactions (signed by ZAC_PROPOSER_PRIVATE_KEY env var; optional SAFE_API_KEY). <path> is a `*.zac.yaml` file or a directory (walked recursively — sources must live at `<network>/<safe-address>/<name>.zac.yaml`). By default (`--revoke-unmentioned=false`), each source proposes its own per-role transaction via `planApplyRole`. With `--revoke-unmentioned=true` in directory mode, one Safe transaction per safe-dir aggregates all sources via `planApply` (revoking any unmentioned role). RPC URL is resolved per-chainId via `<NETWORK>_RPC_URL` (e.g. `MAINNET_RPC_URL`, `BASE_RPC_URL`), falling back to `RPC_URL`.',
+      'propose role state updates as Safe transactions (signed by ZAC_PROPOSER_PRIVATE_KEY env var; optional SAFE_API_KEY). <path> is a `*.zac.yaml` file or a directory (walked recursively — sources must live at `<network>/<safe-address>/<name>.zac.yaml`). By default (`--revoke-unmentioned=true`) in directory mode, one Safe transaction per safe-dir aggregates all sources via `planApply` (revoking any unmentioned role) and Safe-level config from `safe.yaml` (guard/fallback/modules) is included. Pass `--revoke-unmentioned=false` to opt into the legacy per-file flow: each source proposes its own per-role transaction via `planApplyRole`, no revokes, and `safe.yaml` is ignored. RPC URL is resolved per-chainId via `<NETWORK>_RPC_URL` (e.g. `MAINNET_RPC_URL`, `BASE_RPC_URL`), falling back to `RPC_URL`.',
     )
     .option(
       '--rpc-url <url>',
@@ -651,9 +653,9 @@ export function buildProgram(): Command {
     )
     .option(
       '--revoke-unmentioned <bool>',
-      "when true, directory-mode aggregates roles per safe-dir and uses the SDK's `planApply` (which natively revokes any role on the modifier not in the aggregated set). when false (default), every source is applied independently via `planApplyRole` and no revokes are emitted. ignored in file-mode (always per-file legacy).",
+      "when true (DEFAULT), directory-mode aggregates roles per safe-dir and uses the SDK's `planApply` (which natively revokes any role on the modifier not in the aggregated set) — also the only mode that consults `safe.yaml` for Safe-level config (guard/fallback/modules). when false, every source is applied independently via `planApplyRole`, no revokes are emitted, and `safe.yaml` is ignored. ignored in file-mode (always per-file legacy).",
       (v: string) => parseBool('--revoke-unmentioned', v),
-      false,
+      true,
     )
     .action(
       async (
