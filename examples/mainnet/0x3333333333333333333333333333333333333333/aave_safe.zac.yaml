@@ -19,3 +19,4 @@ configs:
         - "cbETH"
         - "WBTC"
         - "LINK"
+      emode_category: 0

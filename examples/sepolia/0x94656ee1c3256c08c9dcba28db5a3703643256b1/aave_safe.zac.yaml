@@ -11,3 +11,4 @@ configs:
     params:
       deposit_assets:
         - "DAI"
+      emode_category: 0

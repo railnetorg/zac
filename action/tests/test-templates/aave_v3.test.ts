@@ -24,6 +24,7 @@ describe('aave_v3/aave_v3.tmpl', () => {
 
   const params = {
     deposit_assets: ['USDC', 'DAI'],
+    emode_category: 0,
   };
 
   it('T9-1: renders without error', () => {
@@ -39,6 +40,23 @@ describe('aave_v3/aave_v3.tmpl', () => {
       'function supply(address asset, uint256 amount, address onBehalfOf, uint16 referralCode)',
     );
     expect(out).toContain('function withdraw(address asset, uint256 amount, address onBehalfOf)');
+    expect(out).toContain(
+      'function borrow(address asset, uint256 amount, uint256 interestRateMode, uint16 referralCode, address onBehalfOf)',
+    );
+    expect(out).toContain(
+      'function repay(address asset, uint256 amount, uint256 interestRateMode, address onBehalfOf)',
+    );
+    expect(out).toContain('function setUserEMode(uint8 categoryId)');
+  });
+
+  it('T9-2b: borrow/repay pin interestRateMode to 2 and setUserEMode to emode_category', () => {
+    const out = env.render('aave_v3/aave_v3.tmpl', { ...params, emode_category: 1 });
+    // interestRateMode appears on both borrow and repay, each pinned to variable (2).
+    expect(out.split('name: interestRateMode').length - 1).toBe(2);
+    expect(out.match(/value: "2"/g)).toHaveLength(2);
+    // setUserEMode categoryId pinned to the configured emode_category.
+    expect(out).toContain('name: categoryId');
+    expect(out).toContain('value: "1"');
   });
 
   it('T9-3: _macros/common.tmpl exposes approve(spender) for equal_to single spender', () => {
