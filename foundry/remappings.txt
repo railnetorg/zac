@@ -1,0 +1,7 @@
+forge-std/=lib/forge-std/src/
+src/=src/
+@aave-v3-origin/=lib/aave-v3-origin/src/contracts/
+@morpho-blue/=lib/morpho-blue/src/
+@safe/=lib/safe-smart-account/contracts/
+@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/
+@halmos-cheatcodes/=lib/halmos-cheatcodes/src/

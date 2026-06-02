@@ -2,9 +2,20 @@
 src = "src"
 out = "out"
 libs = ["lib"]
-# fork tests live under test/zac/ and require ffi + RPC_URL — excluded from
-# the default profile so `forge test` (no profile) skips them.
-no_match_path = "test/zac/**"
+solc_version = "0.8.34"
+# fork tests live under test/zac/ (ZAC policy fork tests via ZacForkTest) and
+# test/fork/ (contract fork tests against real Aave/Morpho/Safe). Both require
+# RPC_URL — excluded from the default profile so `forge test` (no profile) skips them.
+no_match_path = "test/{zac,fork}/**"
+
+[profile.contracts-fork]
+src = "src"
+out = "out"
+libs = ["lib"]
+solc_version = "0.8.34"
+test = "test/fork"
+# Override the inherited no_match_path from default so contract fork tests run here.
+no_match_path = "__never_match__"
 
 [profile.fork]
 src = "src"
