@@ -33,6 +33,7 @@ fs_permissions = [
   { access = "read", path = "../templates" },
   { access = "read", path = "../aliases" },
   { access = "read-write", path = "/tmp" },
+  { access = "read-write", path = "cache" },
 ]
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options

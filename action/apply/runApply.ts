@@ -40,10 +40,8 @@ export async function runApply(opts: RunApplyOpts): Promise<{ safeTxHash: string
   const apiKey = opts.apiKey ?? process.env['SAFE_API_KEY'];
 
   const planArgs: Parameters<typeof runPlan>[0] = { generatedPath: opts.generatedPath };
-  if (opts.rpcUrl !== undefined) planArgs.rpcUrl = opts.rpcUrl;
   if (opts.planApplyRole !== undefined) planArgs.planApplyRole = opts.planApplyRole;
   if (opts.encodeKey !== undefined) planArgs.encodeKey = opts.encodeKey;
-  if (opts.safeInit !== undefined) planArgs.safeInit = opts.safeInit;
   const plan = await runPlan(planArgs);
   if (plan === null) return null;
 

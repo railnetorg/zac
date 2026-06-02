@@ -1,0 +1,3 @@
+# Sentinel address. Fork tests etch the Helper's bytecode here via forge-std
+# `deployCodeTo`. Replace once the Helper singleton is actually deployed.
+singleton: "0x000000000000000000000000000000000000c0de"

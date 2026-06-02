@@ -1,133 +1,87 @@
 # ZAC Foundry fork tests
 
-Hand-written Foundry tests that fork a real chain, apply a ZAC config to the
-forked Safe + Roles modifier, then assert against the resulting on-fork state.
+Hand-written Foundry tests that fork a real chain, stand up a fresh Safe + Roles
+V2 Modifier, apply a rendered ZAC policy to them, then assert the Modifier's
+allow/deny decisions.
 
-## Architecture
-
-Three processes:
-
-```
-+-----------------+         +-----------------+         +-----------------+
-|  upstream RPC   |         |  anvil (8546)   |         |  forge test     |
-| (Alchemy, etc.) | <-----+ |  --fork-url     | <-----+ |  FOUNDRY_PROFILE|
-|                 |         |  upstream       |         |  =fork          |
-+-----------------+         +-----------------+         +-----------------+
-                                    ^                          |
-                                    |                          | vm.rpc(anvil_*)
-                                    | eth_sendTransaction      | vm.tryFfi(bun ../action/cli.ts ...)
-                                    +------------------------+ |
-                                                               v
-                                                       +-----------------+
-                                                       | zac generate +  |
-                                                       | zac plan        |
-                                                       +-----------------+
-```
-
-- **upstream RPC**: the real chain (Sepolia / mainnet / etc.) — source of forked state.
-- **anvil**: local fork. Both the FFI subprocess (zac CLI's read-only RPC queries) AND forge's in-process EVM talk to this same anvil URL, so state stays coherent.
-- **forge**: runs the Solidity tests, calls the helper, then asserts.
+Everything runs inside forge's own EVM. The Safe + Modifier are deployed through
+the canonical CREATE2 factories on the fork, and the policy's role-state-update
+calls are executed as the Safe via `vm.prank` — so any fork RPC works (no
+anvil-specific cheats, no out-of-band transactions).
 
 ## How to run
-
-Convenience path — spawns anvil, exports `RPC_URL`, cleans up on exit:
 
 ```
 just forge-test-fork https://your-upstream-rpc.example
 ```
 
-Manual path — run anvil yourself, then run forge:
+That runs the `fork` profile (ZAC policy tests under `templates/**/tests/`) and
+the `contracts-fork` profile (contract tests under `foundry/test/fork/`) against
+the given RPC. Or directly:
 
 ```
-anvil --fork-url https://your-upstream-rpc.example --port 8546 &
-cd foundry && FOUNDRY_PROFILE=fork RPC_URL=http://127.0.0.1:8546 forge test -vvv
+cd foundry && FOUNDRY_PROFILE=fork RPC_URL=https://your-upstream-rpc.example forge test -vvv
 ```
-
-`RPC_URL` must point at an anvil RPC, not a raw upstream, because the helper
-uses `anvil_setBalance`, `anvil_impersonateAccount`, and
-`anvil_stopImpersonatingAccount` — non-anvil nodes reject those methods.
 
 If `RPC_URL` is unset, tests hard-fail at `vm.envString("RPC_URL")` in `setUp`.
-That is the intended behavior: fork tests are opt-in via env, and missing env
-should error, not silently skip.
+That is intended: fork tests are opt-in via env, and missing env should error,
+not silently skip.
 
-## `zacApply(configPath)` semantics
+## The harness (`ZacForkTest.sol`)
 
-The helper in `ZacForkTest.sol` does seven things in order:
+- `deployRolesFixture(SafeConfig cfg, address member)` — deploys a fresh Safe
+  (owner = `member`, threshold 1) and a fresh Roles V2 Modifier
+  (owner/avatar/target = the Safe) via `cfg`'s factories, enables the Modifier
+  on the Safe, and enables `member` on the Modifier so it clears the Modifier's
+  `moduleOnly` gate. Returns `RolesFixture { safe, modifier_ }`.
+- `mainnetSafeConfig()` / `baseSafeConfig()` — per-chain `SafeConfig`s (the Safe
+  + Zodiac factory/mastercopy addresses). They are CREATE2-deterministic, so a
+  chain that ever diverges overrides just its own entry.
+- `applyConfigFile(RolesFixture fx, address member, string fixtureRelPath)` —
+  reads a policy fixture (see below), substitutes the runtime placeholders,
+  renders + plans it via the ZAC CLI (`generate` then `plan` over FFI), and
+  executes each planned role-state-update call in-process as the Safe (the
+  Modifier's owner).
 
-1. Read `RPC_URL` (hard-fail if unset).
-2. Capture `startBlock = block.number`. This is forge's pinned block, BEFORE
-   the helper mutates anvil.
-3. **FFI**: `bun ../action/cli.ts generate <configPath> --out /tmp/...` —
-   renders the YAML into a flattened deployment config. **Read-only.**
-4. **FFI**: `bun ../action/cli.ts plan <generated> --out /tmp/....plan.json` —
-   computes the role-state-update calls and emits a JSON artifact. **Read-only.**
-5. **Disable anvil auto-mining** (`evm_setAutomine(false)`). Fund the Safe
-   (`anvil_setBalance`), impersonate it (`anvil_impersonateAccount`), then
-   `eth_sendTransaction` each planned call from the Safe directly. With
-   auto-mining off, every tx queues in the mempool.
-6. **Mine all queued txs into a single block** (`anvil_mine`), re-enable
-   auto-mining, stop impersonation. The N calls all land in one new block
-   with sequential nonces, executed in submit order.
-7. `vm.rollFork(startBlock + 1)` — re-pin forge to anvil's new tip.
+## Policy fixtures
 
-### Why `vm.rollFork`?
+Each test folder holds a `policy.zac.yaml` — a full deployment config with
+placeholders for the values only known at runtime, which `applyConfigFile`
+substitutes:
 
-Forge's in-process EVM caches state at the block it was pinned to by
-`vm.createSelectFork`. The `eth_sendTransaction` calls above advance anvil's
-tip but do NOT auto-roll forge's pin. Without `vm.rollFork`, subsequent test
-reads come from the cached pre-apply state and assertions fail.
-
-FFI alone (`zac generate` / `zac plan`) is read-only — it does not move
-anvil's tip and does not require any forge-side re-pinning. It is the
-helper's `vm.rpc` calls that necessitate `vm.rollFork`.
-
-### Why impersonate the Safe directly?
-
-Modifier owner-only calls (`assignRoles`, `scopeTarget`, etc.) require
-`msg.sender == safeAddress`. On a fork we can take the shortcut of
-impersonating the Safe via `anvil_impersonateAccount` and sending the calls
-directly, bypassing `Safe.execTransaction`'s threshold/signature checks. This
-is the right shortcut for *configuring* the role.
-
-Tests that need the real Safe → modifier → target path (e.g. exercising
-`execTransactionWithRole` from a role member) still go through the on-chain
-modifier and are NOT short-circuited.
-
-## Caveats
-
-- **Why batch into one block?** Anvil's auto-mining is asynchronous: each
-  `eth_sendTransaction` returns immediately with a tx hash but the block
-  containing it lands shortly *after*. The last submitted tx can linger in
-  the mempool past the helper's probe, leaving forge with the wrong tip.
-  Disabling auto-mining, queuing all txs, then explicitly mining one block
-  eliminates the race. Side effect: all calls execute in a single block —
-  fine for ZAC (each call is an independent owner-only modifier setter).
-- **Nonce drift**: between `zac plan` and the Safe TX Service `submit` step,
-  the live Safe nonce may advance. Not relevant for fork tests (we never
-  submit), but worth knowing if you use `zac plan` outputs elsewhere.
-- **`out/` shared with default profile**: both profiles use `out = "out"`.
-  Switching `FOUNDRY_PROFILE` may force a recompile if you've built under
-  one and want to build under the other.
-- **No CI workflow**: these tests need a live RPC and an anvil binary. They
-  are opt-in local-only.
+| Placeholder     | Replaced with                                  |
+| --------------- | ---------------------------------------------- |
+| `__MODIFIER__`  | the freshly deployed Roles Modifier            |
+| `__SAFE__`      | the freshly deployed Safe                      |
+| `__MEMBER__`    | the role member the test authorises            |
+| `__TEMPLATES__` | the absolute `templates/` directory            |
 
 ## Adding a new fork test
 
+1. Drop a `policy.zac.yaml` next to your test (see an existing one for the
+   placeholder shape).
+2. Write the test:
+
 ```solidity
-import {ZacForkTest} from "./ZacForkTest.sol";
+import {ZacForkTest} from "zac-test/ZacForkTest.sol";
 
 contract MyTest is ZacForkTest {
+    address constant ALICE = 0x1111111111111111111111111111111111111111;
+
     function setUp() public {
         vm.createSelectFork(vm.envString("RPC_URL"));
-        zacApply("../examples/path/to/your_config.yaml");
-    }
-
-    function test_something() public {
-        // assert against post-apply state
+        RolesFixture memory fx = deployRolesFixture(mainnetSafeConfig(), ALICE);
+        applyConfigFile(fx, ALICE, "my_template/tests/policy.zac.yaml");
+        // assert allow/deny via fx.modifier_.execTransactionWithRole(...)
     }
 }
 ```
 
-`zacApply` is the only entry point — provide the config path relative to
-`/foundry/` and you're done.
+## Caveats
+
+- **`plan` needs the Zodiac subgraph.** `plan` computes the role-state-update
+  calls by diffing against the subgraph, so the FFI step needs network access
+  (the fork itself can be any RPC).
+- **`out/` is shared with the default profile** (`out = "out"`). Switching
+  `FOUNDRY_PROFILE` may force a recompile.
+- **No CI workflow.** These tests need a live RPC; they are opt-in, local-only.

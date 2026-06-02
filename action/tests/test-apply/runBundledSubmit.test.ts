@@ -26,19 +26,6 @@ function makePlan(overrides: { safeAddress: string; chainId: number; calls?: Cal
     chainId: overrides.chainId,
     modifierAddress: '0x4444444444444444444444444444444444444444',
     safeAddress: overrides.safeAddress,
-    safeTxData: {
-      baseGas: '0',
-      data: '0xdeadbeef',
-      gasPrice: '0',
-      gasToken: '0x0000000000000000000000000000000000000000',
-      nonce: 0,
-      operation: 0,
-      refundReceiver: '0x0000000000000000000000000000000000000000',
-      safeTxGas: '0',
-      to: '0x4444444444444444444444444444444444444444',
-      value: '0',
-    },
-    safeTxHash: '0xfeedbeefbeefbeefbeefbeefbeefbeefbeefbeefbeefbeefbeefbeefbeefbeef',
   };
 }
 
@@ -220,15 +207,9 @@ describe('runBundledSubmit', () => {
     expect(safeBCreate!.transactions).toEqual([cB1]);
   });
 
-  it('TB-15: proposed safeTxHash is the FRESHLY-COMPUTED hash from protocol-kit, not the stored per-plan hash', async () => {
+  it('TB-15: proposed safeTxHash is the freshly-computed protocol-kit hash, built from calls at submit', async () => {
     const { safeInitStub, FakeApiKit, proposeCalls } = buildStubs();
-    // Stored hash is a distinct value (all zeros after the prefix) so we can
-    // assert the proposed hash is NOT the stored one.
-    const storedHash = '0x' + '0'.repeat(64);
-    const plan: Plan = {
-      ...makePlan({ safeAddress: SAFE_A, chainId: 1 }),
-      safeTxHash: storedHash,
-    };
+    const plan = makePlan({ safeAddress: SAFE_A, chainId: 1 });
     const result = await runBundledSubmit({
       plans: [plan, plan],
       proposerPrivateKey: TEST_KEY,
@@ -238,7 +219,6 @@ describe('runBundledSubmit', () => {
     });
     expect(result.safeTxHash).toMatch(/^0xfeed/);
     expect(proposeCalls[0]!.safeTxHash).toBe(result.safeTxHash);
-    expect(result.safeTxHash).not.toBe(storedHash);
   });
 
   it('TB-16: returns the freshly-computed bundled safeTxData and total callsCount so callers can render the post-bundle view', async () => {

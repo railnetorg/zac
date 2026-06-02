@@ -1,7 +1,5 @@
 import { parseGenerated } from './parseGenerated';
 import { planRoleCalls, type PlanApplyRoleFn } from './planRoleCalls';
-import { resolveRpcUrl } from './rpc';
-import { buildSafeTransaction, type SafeInitFn } from './safeApi';
 import type { Plan } from './planSchema';
 
 interface SdkBuilders {
@@ -20,21 +18,16 @@ interface SdkBuilders {
 
 export interface RunPlanOpts {
   generatedPath: string;
-  /**
-   * CLI `--rpc-url` override. When omitted, the URL is resolved per-chain
-   * via `<NETWORK>_RPC_URL` (e.g. `MAINNET_RPC_URL`) with `RPC_URL` as the
-   * universal fallback. See `resolveRpcUrl`.
-   */
-  rpcUrl?: string;
   planApplyRole?: PlanApplyRoleFn;
   encodeKey?: (key: string) => `0x${string}`;
   sdkBuilders?: SdkBuilders;
-  safeInit?: SafeInitFn;
 }
 
 /**
- * Compute the Safe transaction (calls + safeTxHash + safeTxData) for a
- * generated ZAC config, without signing or posting.
+ * Compute the role-state-update `calls` for a generated ZAC config — pure
+ * calldata, no Safe transaction. RPC-free: `planApplyRole` reads no chain
+ * state and no Safe is initialized, so `plan` needs neither an RPC nor a
+ * deployed Safe. The Safe tx (nonce, hash) is built later, at submit time.
  *
  * Returns `null` when `planApplyRole` produces 0 calls — i.e. the on-chain
  * role state already matches the desired state and there is nothing to
@@ -44,12 +37,6 @@ export interface RunPlanOpts {
 export async function runPlan(opts: RunPlanOpts): Promise<Plan | null> {
   const generated = parseGenerated(opts.generatedPath);
 
-  const resolveArgs: Parameters<typeof resolveRpcUrl>[0] = {
-    chainId: generated.deployment.chain_id,
-  };
-  if (opts.rpcUrl !== undefined) resolveArgs.overrideUrl = opts.rpcUrl;
-  const rpcUrl = resolveRpcUrl(resolveArgs);
-
   const planArgs: Parameters<typeof planRoleCalls>[0] = { generated };
   if (opts.planApplyRole !== undefined) planArgs.planApplyRole = opts.planApplyRole;
   if (opts.encodeKey !== undefined) planArgs.encodeKey = opts.encodeKey;
@@ -57,18 +44,9 @@ export async function runPlan(opts: RunPlanOpts): Promise<Plan | null> {
   const calls = await planRoleCalls(planArgs);
 
   if (calls.length === 0) {
-    // In sync — no Safe tx to build. Caller short-circuits.
+    // In sync — nothing to propose. Caller short-circuits.
     return null;
   }
-
-  const buildArgs: Parameters<typeof buildSafeTransaction>[0] = {
-    chainId: generated.deployment.chain_id,
-    safeAddress: generated.deployment.safe_address,
-    calls,
-    rpcUrl,
-  };
-  if (opts.safeInit !== undefined) buildArgs.safeInit = opts.safeInit;
-  const { safeTxHash, safeTxData } = await buildSafeTransaction(buildArgs);
 
   return {
     calls,
@@ -76,7 +54,5 @@ export async function runPlan(opts: RunPlanOpts): Promise<Plan | null> {
     chainId: generated.deployment.chain_id,
     modifierAddress: generated.deployment.roles_modifier_address,
     safeAddress: generated.deployment.safe_address,
-    safeTxData,
-    safeTxHash,
   };
 }

@@ -210,7 +210,6 @@ describe('runPlanForSafeDir', () => {
     expect(plan!.safeAddress.toLowerCase()).toBe(SAFE_A.toLowerCase());
     expect(plan!.modifierAddress!.toLowerCase()).toBe(MOD_A.toLowerCase());
     expect(plan!.chainId).toBe(1);
-    expect(plan!.safeTxHash).toMatch(/^0xabc/);
   });
 
   it('TS-11: planApply returning 0 calls → returns null ("in sync"), does NOT throw', async () => {

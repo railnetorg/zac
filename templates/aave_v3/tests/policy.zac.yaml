@@ -1,0 +1,19 @@
+# Policy fixture for AaveV3RoleMainnetTest. A full deployment config; the
+# ZacForkTest harness substitutes the runtime placeholders before applying:
+#   __MODIFIER__  → the freshly deployed Roles Modifier
+#   __SAFE__      → the freshly deployed Safe
+#   __MEMBER__    → the role member the test authorises
+#   __TEMPLATES__ → the absolute templates/ directory
+roles_modifier_address: "__MODIFIER__"
+safe_address: "__SAFE__"
+chain_id: 1
+name: ZAC aave_v3 policy fork test
+description: In-process policy fork test for aave_v3.tmpl.
+configs:
+  - template: "__TEMPLATES__/aave_v3/aave_v3.tmpl"
+    key: AAVE_V3
+    members:
+      - "__MEMBER__"
+    params:
+      deposit_assets:
+        - "USDC"
