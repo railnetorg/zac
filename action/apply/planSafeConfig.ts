@@ -1,3 +1,4 @@
+import { encodeFunctionData } from 'viem';
 import { ZacError } from '../errors';
 import type { ParsedSafeYaml } from '../validate/safeConfigSchema';
 import type { Call } from './planRoleCalls';
@@ -8,6 +9,18 @@ const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 function isZero(a: string): boolean {
   return a.toLowerCase() === ZERO_ADDRESS;
 }
+
+/**
+ * Reader for the guard contract's current `timelockDelay(safe)`. Returns
+ * `undefined` when the guard is not (yet) installed or not configured for
+ * this safe — the call then triggers `configureTimelockGuard` to set it.
+ *
+ * Plumbed by the runner from a viem `publicClient`; tests stub it.
+ */
+export type ReadTimelockDelayFn = (
+  guardAddress: string,
+  safeAddress: string,
+) => Promise<bigint | undefined>;
 
 export interface PlanSafeConfigOpts {
   safeYaml: ParsedSafeYaml;
@@ -20,6 +33,11 @@ export interface PlanSafeConfigOpts {
    * `.zac.yaml` path to name in the error. Pass `[]` in safe-only safe-dirs.
    */
   declaredModifiers: Array<{ address: string; sourceFile: string }>;
+  /**
+   * Required when `safeYaml.guard` includes a `timelockDelay` — used to skip
+   * the `configureTimelockGuard` call when on-chain delay already matches.
+   */
+  readTimelockDelay?: ReadTimelockDelayFn;
 }
 
 /**
@@ -114,15 +132,22 @@ export async function planSafeConfig(opts: PlanSafeConfigOpts): Promise<Call[]> 
     }
   }
 
-  // 3b. guard. Symmetric to `fallback`: the EXPLICIT zero address is a
-  //     real op — emits `setGuard(0x0)` to CLEAR the on-chain guard. Only
-  //     `null` (YAML `~`) means "don't manage". The inequality guard
-  //     implicitly skips when desired matches live (incl. desired=0x0
-  //     already cleared on-chain).
+  // 3b. guard. The schema stores guard as `{ address, timelockDelay? } | null`;
+  //     `null` (YAML `~`) means "don't manage" — explicitly skip. The
+  //     EXPLICIT zero address is a real op — emits `setGuard(0x0)` to CLEAR
+  //     the on-chain guard. The inequality guard implicitly skips when
+  //     desired matches live (incl. desired=0x0 already cleared on-chain).
+  //
+  //     When `timelockDelay` is set the guard is a TimelockGuard and we
+  //     append a `configureTimelockGuard(delay)` call in the same batch as
+  //     `setGuard` so there's never a window where the guard is enabled
+  //     with delay=0 (a security requirement of the contract).
   if (opts.safeYaml.guard !== null) {
-    const desiredGuard = opts.safeYaml.guard;
-    if (liveGuard.toLowerCase() !== desiredGuard.toLowerCase()) {
-      if (isZero(desiredGuard)) {
+    const guardAddr = opts.safeYaml.guard.address;
+    const timelockDelay = opts.safeYaml.guard.timelockDelay;
+
+    if (liveGuard.toLowerCase() !== guardAddr.toLowerCase()) {
+      if (isZero(guardAddr)) {
         if (opts.safe.createDisableGuardTx === undefined) {
           throw new ZacError({
             phase: 'apply',
@@ -138,8 +163,38 @@ export async function planSafeConfig(opts: PlanSafeConfigOpts): Promise<Call[]> 
             message: 'internal: Safe instance missing createEnableGuardTx',
           });
         }
-        const tx = await opts.safe.createEnableGuardTx(desiredGuard);
+        const tx = await opts.safe.createEnableGuardTx(guardAddr);
         setGuardCalls.push(callFromTx(tx));
+      }
+    }
+
+    if (timelockDelay !== undefined) {
+      if (opts.readTimelockDelay === undefined) {
+        throw new ZacError({
+          phase: 'apply',
+          message:
+            'internal: readTimelockDelay is required when safe.yaml guard.timelock_delay is set',
+        });
+      }
+      const liveDelay = await opts.readTimelockDelay(guardAddr, opts.safeAddress);
+      if (liveDelay !== BigInt(timelockDelay)) {
+        setGuardCalls.push({
+          to: guardAddr,
+          value: '0',
+          data: encodeFunctionData({
+            abi: [
+              {
+                type: 'function',
+                name: 'configureTimelockGuard',
+                stateMutability: 'nonpayable',
+                inputs: [{ name: '_timelockDelay', type: 'uint256' }],
+                outputs: [],
+              },
+            ],
+            functionName: 'configureTimelockGuard',
+            args: [BigInt(timelockDelay)],
+          }),
+        });
       }
     }
   }

@@ -7,6 +7,15 @@ solc_version = "0.8.34"
 # test/fork/ (contract fork tests against real Aave/Morpho/Safe). Both require
 # RPC_URL — excluded from the default profile so `forge test` (no profile) skips them.
 no_match_path = "test/{zac,fork}/**"
+# Remappings required by optimism's transitive imports. Project-level aliases
+# live in remappings.txt; these stay here to avoid cluttering it.
+remappings = [
+  "interfaces/=lib/optimism/packages/contracts-bedrock/interfaces/",
+  "safe-contracts/=lib/optimism/packages/contracts-bedrock/lib/safe-contracts/contracts/",
+  "@openzeppelin/contracts/=lib/optimism/packages/contracts-bedrock/lib/openzeppelin-contracts/contracts/",
+  "@openzeppelin/contracts-upgradeable/=lib/optimism/packages/contracts-bedrock/lib/openzeppelin-contracts-upgradeable/contracts/",
+  "@solady/=lib/optimism/packages/contracts-bedrock/lib/solady/src/",
+]
 
 [profile.contracts-fork]
 src = "src"
@@ -16,6 +25,11 @@ solc_version = "0.8.34"
 test = "test/fork"
 # Override the inherited no_match_path from default so contract fork tests run here.
 no_match_path = "__never_match__"
+
+[lint]
+# Vendored optimism sources use project-relative imports (e.g. "src/libraries/...")
+# that don't resolve from this project's root, so disable lint on build.
+lint_on_build = false
 
 [profile.fork]
 src = "src"

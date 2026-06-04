@@ -49,7 +49,7 @@ modules:
   - "${MOD_B}"
 `);
     const result = parseAndValidateSafeYaml(defaultOpts(path));
-    expect(result.guard).toBe(GUARD);
+    expect(result.guard).toEqual({ address: GUARD });
     expect(result.fallback).toBe(FALLBACK);
     expect(result.modules).toEqual([MOD_A, MOD_B]);
   });
@@ -100,6 +100,37 @@ fallback: ~
     } catch (e) {
       expect((e as ZacError).message).toContain("'modules' is required");
     }
+  });
+
+  it('guard nested-object form with `timelock_delay` → normalized to { address, timelockDelay }', () => {
+    const path = writeYaml(`guard:
+  address: "${GUARD}"
+  timelock_delay: 86400
+fallback: ~
+modules: ~
+`);
+    const result = parseAndValidateSafeYaml(defaultOpts(path));
+    expect(result.guard).toEqual({ address: GUARD, timelockDelay: 86400 });
+  });
+
+  it('guard nested-object form with invalid address → ZacError(validate)', () => {
+    const path = writeYaml(`guard:
+  address: "0xnothex"
+  timelock_delay: 86400
+fallback: ~
+modules: ~
+`);
+    expect(() => parseAndValidateSafeYaml(defaultOpts(path))).toThrowError(ZacError);
+  });
+
+  it('guard nested-object form with non-positive `timelock_delay` → ZacError(validate)', () => {
+    const path = writeYaml(`guard:
+  address: "${GUARD}"
+  timelock_delay: 0
+fallback: ~
+modules: ~
+`);
+    expect(() => parseAndValidateSafeYaml(defaultOpts(path))).toThrowError(ZacError);
   });
 
   it('invalid hex in `guard` → ZacError(validate) with "invalid address" message', () => {
@@ -164,7 +195,7 @@ fallback: ~
 modules: ~
 `);
     const result = parseAndValidateSafeYaml(defaultOpts(path));
-    expect(result.guard).toBe(ZERO);
+    expect(result.guard).toEqual({ address: ZERO });
   });
 
   it('empty file → ZacError(parse)', () => {

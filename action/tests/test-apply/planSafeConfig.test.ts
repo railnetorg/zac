@@ -62,8 +62,24 @@ function buildSafeStub(state: { guard?: string; fallback?: string; modules?: str
   };
 }
 
-function yaml(over: Partial<ParsedSafeYaml>): ParsedSafeYaml {
-  return { guard: null, fallback: null, modules: null, ...over };
+type GuardInput = string | { address: string; timelockDelay?: number } | null;
+
+/** Build a `ParsedSafeYaml` allowing the convenient bare-string `guard:` form. */
+function yaml(
+  over: { guard?: GuardInput; fallback?: string | null; modules?: string[] | null } = {},
+): ParsedSafeYaml {
+  const out: ParsedSafeYaml = { guard: null, fallback: null, modules: null };
+  if (over.guard !== undefined) {
+    out.guard =
+      over.guard === null
+        ? null
+        : typeof over.guard === 'string'
+          ? { address: over.guard }
+          : over.guard;
+  }
+  if (over.fallback !== undefined) out.fallback = over.fallback;
+  if (over.modules !== undefined) out.modules = over.modules;
+  return out;
 }
 
 describe('planSafeConfig', () => {
@@ -379,6 +395,59 @@ describe('planSafeConfig', () => {
       // `operation` is not part of the Call shape — destructured out.
       expect(c).not.toHaveProperty('operation');
     }
+  });
+
+  it('guard with timelockDelay, guard differs from live, live delay differs → setGuard + configureTimelockGuard', async () => {
+    const calls = await planSafeConfig({
+      safeYaml: yaml({ guard: { address: GUARD_A, timelockDelay: 86400 } }),
+      safe: buildSafeStub({ guard: GUARD_B }),
+      safeAddress: SAFE,
+      declaredModifiers: [],
+      readTimelockDelay: async () => 0n,
+    });
+    expect(calls).toHaveLength(2);
+    expect(calls[0]!.data).toContain('setGuard');
+    // configureTimelockGuard call targets the guard contract directly.
+    expect(calls[1]!.to.toLowerCase()).toBe(GUARD_A.toLowerCase());
+    expect(calls[1]!.value).toBe('0');
+    // Selector for `configureTimelockGuard(uint256)`.
+    expect(calls[1]!.data.startsWith('0x')).toBe(true);
+    // 86400 = 0x15180 — encoded as 32-byte arg padded.
+    expect(calls[1]!.data.toLowerCase()).toContain('15180');
+  });
+
+  it('guard with timelockDelay, guard matches live, delay matches live → no calls', async () => {
+    const calls = await planSafeConfig({
+      safeYaml: yaml({ guard: { address: GUARD_A, timelockDelay: 86400 } }),
+      safe: buildSafeStub({ guard: GUARD_A }),
+      safeAddress: SAFE,
+      declaredModifiers: [],
+      readTimelockDelay: async () => 86400n,
+    });
+    expect(calls).toEqual([]);
+  });
+
+  it('guard with timelockDelay, guard matches live, delay differs → only configureTimelockGuard', async () => {
+    const calls = await planSafeConfig({
+      safeYaml: yaml({ guard: { address: GUARD_A, timelockDelay: 86400 } }),
+      safe: buildSafeStub({ guard: GUARD_A }),
+      safeAddress: SAFE,
+      declaredModifiers: [],
+      readTimelockDelay: async () => 3600n,
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.to.toLowerCase()).toBe(GUARD_A.toLowerCase());
+  });
+
+  it('guard with timelockDelay but no readTimelockDelay provided → ZacError(apply)', async () => {
+    await expect(
+      planSafeConfig({
+        safeYaml: yaml({ guard: { address: GUARD_A, timelockDelay: 86400 } }),
+        safe: buildSafeStub({ guard: GUARD_B }),
+        safeAddress: SAFE,
+        declaredModifiers: [],
+      }),
+    ).rejects.toThrow(/readTimelockDelay is required/);
   });
 
   it('SafeLike missing `getGuard` → ZacError(apply, "internal: ...")', async () => {

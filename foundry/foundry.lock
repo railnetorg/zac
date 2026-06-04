@@ -17,6 +17,9 @@
   "lib/openzeppelin-contracts": {
     "rev": "cd05883078060e0cd8a7bd36636944570dbe1722"
   },
+  "lib/optimism": {
+    "rev": "c9e1e742e9448c7c95c0c76301a8d2f62cacccb2"
+  },
   "lib/safe-smart-account": {
     "rev": "d7de455e0103bd3b6d1d6a4075d7c36d1869d677"
   }

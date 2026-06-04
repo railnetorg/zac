@@ -18,23 +18,43 @@ const AddressString = z.string().refine((s) => isAddress(s), {
  * "don't manage this slot" (no call emitted at plan time).
  *
  * Per-field zero-address semantics:
- * - `guard`: zero address is EXPLICIT — when live is non-zero the plan
- *    emits `setGuard(0x0)` to clear the on-chain guard; when live is
- *    already zero the inequality guard short-circuits. Use `~` (null) if
- *    you don't want zac to touch the guard at all.
+ * - `guard`: zero address (bare-string form) is EXPLICIT — when live is
+ *    non-zero the plan emits `setGuard(0x0)` to clear the on-chain guard;
+ *    when live is already zero the inequality guard short-circuits. Use
+ *    `~` (null) if you don't want zac to touch the guard at all.
  * - `fallback`: same as `guard` — zero address is EXPLICIT, emits
  *    `setFallbackHandler(0x0)` to clear the on-chain fallback handler;
  *    use `~` (null) to leave the slot untouched.
  * - `modules`: zero address is filtered out before set-diffing.
+ *
+ * `guard` accepts two source forms (always normalized to the object form here):
+ *   guard: 0xABCD...
+ *   guard: { address: 0xABCD..., timelock_delay: 86400 }
+ * When `timelockDelay` is set, the guard is expected to be a TimelockGuard
+ * (or compatible) — `planSafeConfig` will batch a `configureTimelockGuard`
+ * call alongside `setGuard` to avoid a zero-delay window.
  */
 export interface ParsedSafeYaml {
-  guard: string | null;
+  guard: ParsedGuard | null;
   fallback: string | null;
   modules: string[] | null;
 }
 
+export interface ParsedGuard {
+  address: string;
+  /** Timelock delay in seconds; only set when the source used the object form with `timelock_delay`. */
+  timelockDelay?: number;
+}
+
+const GuardObjectSchema = z
+  .object({
+    address: AddressString,
+    timelock_delay: z.number().int().positive(),
+  })
+  .strict();
+
 export const SafeConfigSchema = z.object({
-  guard: z.union([z.null(), AddressString]),
+  guard: z.union([z.null(), AddressString, GuardObjectSchema]),
   fallback: z.union([z.null(), AddressString]),
   modules: z.union([z.null(), z.array(AddressString)]),
 });
@@ -134,13 +154,24 @@ export function parseAndValidateSafeYaml(opts: ParseAndValidateSafeYamlOpts): Pa
     // Distinguish "invalid address" from other zod errors with a stable
     // user-facing message format.
     const got = obj[keyStr];
-    const isAddrField = keyStr === 'guard' || keyStr === 'fallback';
-    if (isAddrField && typeof got === 'string') {
+    if (keyStr === 'fallback' && typeof got === 'string') {
       throw new ZacError({
         phase: 'validate',
-        message: `safe.yaml: '${keyStr}': invalid address '${got}'`,
+        message: `safe.yaml: 'fallback': invalid address '${got}'`,
         sourceLocation: { file: opts.path },
       });
+    }
+    if (keyStr === 'guard') {
+      // Bare-address form failure: emit the legacy `invalid address` message
+      // for compatibility with tests / docs. Object-form failures fall through
+      // to the generic zod message (which names the bad sub-key).
+      if (typeof got === 'string') {
+        throw new ZacError({
+          phase: 'validate',
+          message: `safe.yaml: 'guard': invalid address '${got}'`,
+          sourceLocation: { file: opts.path },
+        });
+      }
     }
     if (keyStr === 'modules' && Array.isArray(got)) {
       // Find the first non-address element for the message.
@@ -161,8 +192,9 @@ export function parseAndValidateSafeYaml(opts: ParseAndValidateSafeYamlOpts): Pa
   }
 
   // 6. Post-parse: enforce no duplicate modules after the `0x0` filter.
-  if (parsed.data.modules !== null) {
-    const filtered = parsed.data.modules.filter((m) => m.toLowerCase() !== ZERO_ADDRESS);
+  const modules: string[] | null = parsed.data.modules;
+  if (modules !== null) {
+    const filtered = modules.filter((m: string) => m.toLowerCase() !== ZERO_ADDRESS);
     const seen = new Set<string>();
     for (const m of filtered) {
       const lo = m.toLowerCase();
@@ -177,5 +209,21 @@ export function parseAndValidateSafeYaml(opts: ParseAndValidateSafeYamlOpts): Pa
     }
   }
 
-  return parsed.data;
+  // 7. Normalize the guard value to the canonical `ParsedGuard` object form,
+  //    or null. Bare-address input becomes `{ address }`.
+  const rawGuard = parsed.data.guard;
+  let guard: ParsedGuard | null;
+  if (rawGuard === null) {
+    guard = null;
+  } else if (typeof rawGuard === 'string') {
+    guard = { address: rawGuard };
+  } else {
+    guard = { address: rawGuard.address, timelockDelay: rawGuard.timelock_delay };
+  }
+
+  return {
+    guard,
+    fallback: parsed.data.fallback,
+    modules,
+  };
 }

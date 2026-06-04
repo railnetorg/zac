@@ -1,11 +1,12 @@
 import { dirname } from 'node:path';
+import { createPublicClient, http } from 'viem';
 import { generatedPathFor } from '../discover';
 import type { SafeDir } from '../discover';
 import { findConfig } from '../load/findConfig';
 import { loadAllAliases } from '../load/loadAllAliases';
 import { parseAndValidateSafeYaml } from '../validate/safeConfigSchema';
 import { parseGenerated, type Generated } from './parseGenerated';
-import { planSafeConfig } from './planSafeConfig';
+import { planSafeConfig, type ReadTimelockDelayFn } from './planSafeConfig';
 import { planSafeDirCalls, type PlanApplyFn } from './planSafeDirCalls';
 import { resolveRpcUrl } from './rpc';
 import { initSafe, type SafeInitFn } from './safeApi';
@@ -39,6 +40,11 @@ export interface RunPlanForSafeDirOpts {
   safeInit?: SafeInitFn;
   /** Inject for testability — defaults to `parseGenerated`. */
   parseGenerated?: (p: string) => Generated;
+  /**
+   * Inject for testability — defaults to a viem-backed reader of
+   * `TimelockGuard.timelockDelay(safe)` over the resolved RPC URL.
+   */
+  readTimelockDelay?: ReadTimelockDelayFn;
 }
 
 /**
@@ -117,6 +123,9 @@ export async function runPlanForSafeDir(opts: RunPlanForSafeDirOpts): Promise<Pl
     if (opts.safeInit !== undefined) initArgs.safeInit = opts.safeInit;
     const safe = await initSafe(initArgs);
 
+    const readTimelockDelay: ReadTimelockDelayFn =
+      opts.readTimelockDelay ?? defaultReadTimelockDelay(rpcUrl);
+
     safeCalls = await planSafeConfig({
       safeYaml: parsedSafeYaml,
       safe,
@@ -130,6 +139,7 @@ export async function runPlanForSafeDir(opts: RunPlanForSafeDirOpts): Promise<Pl
               },
             ]
           : [],
+      readTimelockDelay,
     });
   }
 
@@ -149,5 +159,37 @@ export async function runPlanForSafeDir(opts: RunPlanForSafeDirOpts): Promise<Pl
       ? { modifierAddress: opts.safeDir.modifierAddress }
       : {}),
     safeAddress: opts.safeDir.safeAddress,
+  };
+}
+
+/**
+ * Default `readTimelockDelay` implementation: viem `readContract` against
+ * `TimelockGuard.timelockDelay(safe)`. The contract returns 0 when the guard
+ * is not configured for this safe (or the address has no such function);
+ * the read is wrapped to return `undefined` on revert so the caller can
+ * still emit the configure call.
+ */
+function defaultReadTimelockDelay(rpcUrl: string): ReadTimelockDelayFn {
+  const client = createPublicClient({ transport: http(rpcUrl) });
+  return async (guardAddress, safeAddress) => {
+    try {
+      const result = (await client.readContract({
+        address: guardAddress as `0x${string}`,
+        abi: [
+          {
+            type: 'function',
+            name: 'timelockDelay',
+            stateMutability: 'view',
+            inputs: [{ name: '_safe', type: 'address' }],
+            outputs: [{ name: '', type: 'uint256' }],
+          },
+        ] as const,
+        functionName: 'timelockDelay',
+        args: [safeAddress as `0x${string}`],
+      })) as bigint;
+      return result;
+    } catch {
+      return undefined;
+    }
   };
 }
