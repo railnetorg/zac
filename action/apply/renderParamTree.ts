@@ -13,7 +13,9 @@ export interface TreeNode {
 
 interface ParamObj {
   name: string;
-  operator: string;
+  operator?: string;
+  param_type?: string;
+  children?: ParamObj[];
   [k: string]: unknown;
 }
 
@@ -33,6 +35,18 @@ export function renderParamTree(
   addressLabelMap: Record<string, string> | undefined,
 ): TreeNode[] {
   if (fn.inputs.length === 0) return [];
+  // Function-root `or`: render each branch's positional param set under
+  // `option N`, mirroring the on-chain `or(calldataMatches, …)` shape.
+  if (fn.branches && fn.branches.length > 0) {
+    return fn.branches.map((branch, i) => ({
+      label: `option ${i + 1}`,
+      children: renderInputs(
+        fn.inputs,
+        new Map((branch.params ?? []).map((p) => [p.name, p as unknown as ParamObj])),
+        addressLabelMap,
+      ),
+    }));
+  }
   const byName = new Map(fn.params.map((p) => [p.name, p as unknown as ParamObj]));
   return renderInputs(fn.inputs, byName, addressLabelMap);
 }
@@ -100,6 +114,14 @@ function renderCondition(
   addressLabelMap: Record<string, string> | undefined,
   head: string,
 ): TreeNode {
+  // `abi_encoded` decodes the bytes slot into declared children — render the
+  // decoded structure rather than the opaque `bytes` leaf.
+  if (cond.param_type === 'abi_encoded') {
+    return {
+      label: `${head}= abiEncoded`,
+      children: renderAbiEncoded(cond.children ?? [], addressLabelMap),
+    };
+  }
   switch (cond.operator) {
     case 'pass':
       return { label: `${head}*` };
@@ -209,6 +231,26 @@ function renderMatches(
     out.push(renderCondition(conditions[i]!, components[i]!, addressLabelMap, head));
   }
   return out;
+}
+
+/**
+ * Render the decoded children of an `abi_encoded` node. Each child's ABI type
+ * is derived from its `value_type` (or `bytes` for dynamic / nested abi_encoded),
+ * matching the translation + validation rule.
+ */
+function renderAbiEncoded(
+  children: ParamObj[],
+  addressLabelMap: Record<string, string> | undefined,
+): TreeNode[] {
+  const typeOf = (c: ParamObj): string => (c['value_type'] as string | undefined) ?? 'bytes';
+  const typeStrs = children.map(typeOf);
+  const nameStrs = children.map((c) => c.name ?? '');
+  const typeWidth = Math.max(...typeStrs.map((s) => s.length), 0);
+  const nameWidth = Math.max(...nameStrs.map((s) => s.length), 0);
+  return children.map((child, i) => {
+    const head = headPrefix(typeStrs[i]!, nameStrs[i]!, typeWidth, nameWidth);
+    return renderCondition(child, { type: typeStrs[i]! }, addressLabelMap, head);
+  });
 }
 
 function isLeafEq(c: ParamObj): boolean {

@@ -1,0 +1,21 @@
+# Policy fixture for MilkmanRoleMainnetTest. A full deployment config; the
+# ZacForkTest harness substitutes the runtime placeholders before applying:
+#   __MODIFIER__  → the freshly deployed Roles Modifier
+#   __SAFE__      → the freshly deployed Safe
+#   __MEMBER__    → the role member the test authorises
+#   __TEMPLATES__ → the absolute templates/ directory
+roles_modifier_address: "__MODIFIER__"
+safe_address: "__SAFE__"
+chain_id: 1
+name: ZAC milkman policy fork test
+description: In-process policy fork test for milkman.tmpl.
+configs:
+  - template: "__TEMPLATES__/milkman/milkman.tmpl"
+    key: STRATEGY_MANAGER
+    members:
+      - "__MEMBER__"
+    params:
+      from_tokens: ["USDC"]
+      to_tokens:
+        - { token: "PYUSD", max_slippage_bps: 500 }
+        - { token: "RLUSD", max_slippage_bps: 700 }

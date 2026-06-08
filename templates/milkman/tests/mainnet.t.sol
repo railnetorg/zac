@@ -1,239 +1,195 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.13;
+pragma solidity 0.8.34;
 
-import {ZacForkTester} from "zac-test/ZacForkTester.sol";
+import {ZacForkTest, IRoles} from "zac-test/ZacForkTest.sol";
 
+/// @dev Minimal ERC20 surface used by the assertions.
 interface IERC20 {
     function approve(address spender, uint256 amount) external returns (bool);
     function allowance(address owner, address spender) external view returns (uint256);
 }
 
-interface IRolesModifier {
-    function execTransactionWithRole(
-        address to,
-        uint256 value,
-        bytes calldata data,
-        uint8 operation,
-        bytes32 roleKey,
-        bool shouldRevert
-    ) external returns (bool);
-}
-
-/// @dev Exercises the milkman template on Ethereum mainnet.
+/// @title  MilkmanRoleMainnetTest
+/// @notice Mainnet-fork acceptance test for the `templates/milkman/milkman.tmpl` policy
+///         in its per-token-pair slippage-cap form.
+/// @dev    `deployRolesFixture` stands up a Safe + Roles V2 Modifier; `applyConfigFile`
+///         renders + applies the `policy.zac.yaml` fixture against the fresh Modifier.
+///         `RPC_URL` must be set.
 ///
-///      setUp forks mainnet, re-runs `zac generate` + `zac plan` against the
-///      already-deployed Roles V2 modifier, then replays the plan calls so
-///      the on-chain modifier state reflects the current policy.
+///         The fixture configures two pairs with distinct caps:
+///           USDC → PYUSD, slippage ≤ 500 bps
+///           USDC → RLUSD, slippage ≤ 700 bps
+///         so the function root is an `or` of two branches. Each branch pins
+///         (fromToken, toToken, to=avatar, priceChecker) and bounds the swap's
+///         priceCheckerData, which the Chainlink DynamicSlippageChecker ABI-encodes
+///         as (uint256 slippageBps, bytes innerData): slippageBps is capped per pair,
+///         innerData (feed config) is free.
 ///
-///      These tests cover the POLICY GATE only, not Milkman's swap execution.
-///      TF-3 and TF-4 use shouldRevert=false so that Milkman's internal logic
-///      (which needs a live CoW order book) can fail without masking policy errors.
-///
-///      The end-to-end swap (policy → Milkman → CoW settlement) has been proven
-///      on mainnet: tx 0x8fc655d21985dc3af30643aec7d3e3c6ceb3389edc109fb09eeeded9178e69e6
-///      14 USDC → 13.435 PYUSD, fulfilled by a CoW solver.
-///
-///      Policy assertions:
-///        TF-1  USDC  → approved fromToken  (approve to Milkman succeeds)
-///        TF-2  USDT  → blocked  fromToken  (approve to Milkman reverts)
-///        TF-3  PYUSD → approved toToken    (requestSwap passes the policy)
-///        TF-4  RLUSD → approved toToken    (requestSwap passes the policy)
-///        TF-5  WETH  → blocked  toToken    (requestSwap reverts)
-///
-/// Run:
-///   ETH_RPC_URL=<mainnet-rpc> FOUNDRY_PROFILE=zac forge test \
-///     --match-path "zac/templates/milkman/tests/*" -vvv
-contract MilkmanMainnetTest is ZacForkTester {
-    // --- Project addresses ---
-    address constant SAFE = 0x14147ffC6595D1DB7C1797FF0F6AE4455df89BE2;
-    address constant MODIFIER = 0x8284Cb3136c9E1907E0f285c9C20D5b0426d8FB0;
-    address constant STRATEGY_MANAGER = 0xCb0dEd7FCa9dA8d3052C84485B77B5cd7B511760;
+///         Swap "allow" tests use `shouldRevert=false`: the policy gate is the only
+///         assertion. Milkman's inner logic may fail on the fork, but a gate rejection
+///         would revert regardless, so a clean return proves the policy authorised the
+///         call. The end-to-end swap has been proven on mainnet: tx
+///         0x8fc655d21985dc3af30643aec7d3e3c6ceb3389edc109fb09eeeded9178e69e6
+///         (14 USDC → 13.435 PYUSD, filled by a CoW solver).
+contract MilkmanRoleMainnetTest is ZacForkTest {
+    // Mainnet protocol addresses referenced by the policy + assertions.
     address constant MILKMAN = 0x060373D064d0168931dE2AB8DDA7410923d06E88;
     address constant PRICE_CHECKER = 0xe80a1C615F75AFF7Ed8F08c9F21f9d00982D666c;
 
-    // --- Allowed tokens ---
+    // Allowed tokens (fixture pairs: USDC→PYUSD ≤5%, USDC→RLUSD ≤7%).
     address constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48; // fromToken ✓
-    address constant PYUSD = 0x6c3ea9036406852006290770BEdFcAbA0e23A0e8; // toToken   ✓
-    address constant RLUSD = 0x8292Bb45bf1Ee4d140127049757C2E0fF06317eD; // toToken   ✓
+    address constant PYUSD = 0x6c3ea9036406852006290770BEdFcAbA0e23A0e8; // toToken   ✓ (cap 500)
+    address constant RLUSD = 0x8292Bb45bf1Ee4d140127049757C2E0fF06317eD; // toToken   ✓ (cap 700)
 
-    // --- Blocked tokens (not in the policy allow-lists) ---
+    // Blocked tokens (no branch covers them).
     address constant USDT = 0xdAC17F958D2ee523a2206206994597C13D831ec7; // fromToken ✗
     address constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2; // toToken   ✗
 
+    address constant ALICE = 0x1111111111111111111111111111111111111111;
+    address constant NOT_MILKMAN = 0x000000000000000000000000000000000000dEaD;
+    address constant WRONG_CHECKER = 0x000000000000000000000000000000000000bEEF;
+    uint8 constant CALL = 0;
+    uint256 constant AMOUNT = 1_000e6;
+
+    /// @dev `encodeKey('STRATEGY_MANAGER')` — right-padded ASCII bytes32.
     bytes32 constant ROLE_KEY = bytes32("STRATEGY_MANAGER");
 
-    IRolesModifier internal rolesMod = IRolesModifier(MODIFIER);
+    address safeAddr;
+    address modAddr;
 
     function setUp() public {
         vm.createSelectFork(vm.envString("RPC_URL"));
-        zacApply("../examples/mainnet/milkman.yaml");
+
+        RolesFixture memory fx = deployRolesFixture(mainnetSafeConfig(), ALICE);
+        safeAddr = fx.safe;
+        modAddr = fx.modifier_;
+
+        applyConfigFile(fx, ALICE, "milkman/tests/policy.zac.yaml");
     }
 
-    //
-    // // -----------------------------------------------------------------------
-    // // TF-1 — USDC is an allowed fromToken
-    // // -----------------------------------------------------------------------
-    //
-    // /// @notice Strategy manager can approve USDC to Milkman; the Safe's
-    // ///         USDC allowance towards Milkman is updated.
-    // function test_TF1_USDC_allowed_fromToken() public {
-    //     vm.startPrank(STRATEGY_MANAGER);
-    //     bool ok = rolesMod.execTransactionWithRole(
-    //         USDC, 0, abi.encodeWithSelector(IERC20.approve.selector, MILKMAN, 1000e6), 0, ROLE_KEY, true
-    //     );
-    //     vm.stopPrank();
-    //     assertTrue(ok, "approve(USDC, MILKMAN) should pass the policy");
-    //     assertEq(IERC20(USDC).allowance(SAFE, MILKMAN), 1000e6, "allowance not set");
-    // }
-    //
-    // // -----------------------------------------------------------------------
-    // // TF-2 — USDT is NOT in the fromToken allow-list
-    // // -----------------------------------------------------------------------
-    //
-    // /// @notice Attempting to approve USDT to Milkman is rejected by the
-    // ///         Roles modifier because USDT was not declared as a fromToken.
-    // function test_TF2_USDT_blocked_fromToken() public {
-    //     vm.startPrank(STRATEGY_MANAGER);
-    //     vm.expectRevert();
-    //     rolesMod.execTransactionWithRole(
-    //         USDT, 0, abi.encodeWithSelector(IERC20.approve.selector, MILKMAN, 1000e6), 0, ROLE_KEY, true
-    //     );
-    //     vm.stopPrank();
-    // }
-    //
-    // // -----------------------------------------------------------------------
-    // // TF-3 — PYUSD is an allowed toToken
-    // // -----------------------------------------------------------------------
-    //
-    // /// @notice Strategy manager can request a USDC → PYUSD swap through Milkman.
-    // ///         shouldRevert=false: the POLICY must allow the call; Milkman's
-    // ///         internal logic may revert on the fork (no live CoW order book).
-    // ///         priceCheckerData uses the Aave capped USDC/USD + pyUSD/USD feeds.
-    // function test_TF3_PYUSD_allowed_toToken() public {
-    //     deal(USDC, SAFE, 1000e6);
-    //     _approveUSDCToMilkman(1000e6);
-    //
-    //     vm.startPrank(STRATEGY_MANAGER);
-    //     rolesMod.execTransactionWithRole(
-    //         MILKMAN,
-    //         0,
-    //         abi.encodeWithSignature(
-    //             "requestSwapExactTokensForTokens(uint256,address,address,address,bytes32,address,bytes)",
-    //             1000e6,
-    //             USDC,
-    //             PYUSD,
-    //             SAFE,
-    //             bytes32(0), // appData
-    //             PRICE_CHECKER,
-    //             _priceCheckerData()
-    //         ),
-    //         0,
-    //         ROLE_KEY,
-    //         false
-    //     );
-    //     vm.stopPrank();
-    // }
-    //
-    // // -----------------------------------------------------------------------
-    // // TF-4 — RLUSD is an allowed toToken
-    // // -----------------------------------------------------------------------
-    //
-    // /// @notice Strategy manager can request a USDC → RLUSD swap through Milkman.
-    // ///         shouldRevert=false: policy gate is the only assertion here.
-    // ///         priceCheckerData intentionally reuses the PYUSD feed payload —
-    // ///         the policy constrains priceCheckerData with operator: pass, so
-    // ///         any bytes are accepted. Milkman's internal price check may fail
-    // ///         on the fork; that failure does not surface because shouldRevert=false.
-    // ///         For production RLUSD swaps, use the Capped RLUSD/USD feed
-    // ///         (0xf0eaC18E908B34770FDEe46d069c846bDa866759) in priceCheckerData.
-    // function test_TF4_RLUSD_allowed_toToken() public {
-    //     deal(USDC, SAFE, 1000e6);
-    //     _approveUSDCToMilkman(1000e6);
-    //
-    //     vm.startPrank(STRATEGY_MANAGER);
-    //     rolesMod.execTransactionWithRole(
-    //         MILKMAN,
-    //         0,
-    //         abi.encodeWithSignature(
-    //             "requestSwapExactTokensForTokens(uint256,address,address,address,bytes32,address,bytes)",
-    //             1000e6,
-    //             USDC,
-    //             RLUSD,
-    //             SAFE,
-    //             bytes32(0), // appData
-    //             PRICE_CHECKER,
-    //             _priceCheckerData()
-    //         ),
-    //         0,
-    //         ROLE_KEY,
-    //         false
-    //     );
-    //     vm.stopPrank();
-    // }
-    //
-    // // -----------------------------------------------------------------------
-    // // TF-5 — WETH is NOT in the toToken allow-list
-    // // -----------------------------------------------------------------------
-    //
-    // /// @notice Attempting a USDC → WETH swap is rejected by the Roles modifier
-    // ///         because WETH was not declared as a toToken.
-    // function test_TF5_WETH_blocked_toToken() public {
-    //     vm.startPrank(STRATEGY_MANAGER);
-    //     vm.expectRevert();
-    //     rolesMod.execTransactionWithRole(
-    //         MILKMAN,
-    //         0,
-    //         abi.encodeWithSignature(
-    //             "requestSwapExactTokensForTokens(uint256,address,address,address,bytes32,address,bytes)",
-    //             1000e6,
-    //             USDC,
-    //             WETH,
-    //             SAFE,
-    //             bytes32(0), // appData
-    //             PRICE_CHECKER,
-    //             _priceCheckerData()
-    //         ),
-    //         0,
-    //         ROLE_KEY,
-    //         true
-    //     );
-    //     vm.stopPrank();
-    // }
-    //
-    // // -----------------------------------------------------------------------
-    // // Helpers
-    // // -----------------------------------------------------------------------
-    //
-    // function _approveUSDCToMilkman(uint256 amount) internal {
-    //     vm.startPrank(STRATEGY_MANAGER);
-    //     rolesMod.execTransactionWithRole(
-    //         USDC, 0, abi.encodeWithSelector(IERC20.approve.selector, MILKMAN, amount), 0, ROLE_KEY, true
-    //     );
-    //     vm.stopPrank();
-    // }
-    //
-    // /// @dev Builds priceCheckerData for a USDC → PYUSD swap using Aave capped adapters.
-    // ///      Used by TF-3 (PYUSD) and TF-4 (RLUSD, for policy-gate testing only).
-    // ///
-    // ///      IMPORTANT: raw Chainlink aggregators (0x8fFfFfd4... USDC/USD,
-    // ///      0x39E31761... PYUSD/USD) are access-controlled — the
-    // ///      ChainlinkExpectedOutCalculator (0xe23fc1...) is not whitelisted on them,
-    // ///      so any call reaching getExpectedOut silently reverts. Always use the
-    // ///      Aave-deployed capped adapters instead.
-    // ///
-    // ///      Find the capped adapter for a token:
-    // ///        cast call 0x54586bE62E3c3580375aE3723C145253060Ca0C2 \
-    // ///          "getSourceOfAsset(address)(address)" <token> --rpc-url $ETH_RPC_URL
-    // ///
-    // ///      Slippage is set to 200 bps (2%) for test purposes only. Production swaps
-    // ///      have used 700 bps (7%) to ensure CoW solver competitiveness.
-    // function _priceCheckerData() internal pure returns (bytes memory) {
-    //     address[] memory feeds = new address[](2);
-    //     feeds[0] = 0x3f73F03aa83B2A48ed27E964eD0fDb590332095B; // Capped USDC/USD (Aave)
-    //     feeds[1] = 0x36964C0579D02E0a5AaAb89E24Cf8d7CDF3549EE; // Capped pyUSD/USD (Aave)
-    //     bool[] memory reverses = new bool[](2);
-    //     reverses[0] = false; // multiply by USDC/USD
-    //     reverses[1] = true; // divide by pyUSD/USD
-    //     return abi.encode(uint256(200), abi.encode(feeds, reverses)); // 2% slippage
-    // }
+    // ==================== approve: spender == Milkman, amount < uint256.max ====================
+
+    /// TF-1 — allow: approve USDC to Milkman for a normal amount; allowance is set.
+    function test_TF1_ApproveMilkmanAllowed() public {
+        vm.prank(ALICE);
+        IRoles(modAddr).execTransactionWithRole(USDC, 0, _approveCd(MILKMAN, AMOUNT), CALL, ROLE_KEY, true);
+        assertEq(IERC20(USDC).allowance(safeAddr, MILKMAN), AMOUNT, "allowance not set");
+    }
+
+    /// TF-2 — allow: amount == uint256.max - 1 sits just under the cap (`less_than`).
+    function test_TF2_ApproveJustUnderMaxAllowed() public {
+        uint256 amt = type(uint256).max - 1;
+        vm.prank(ALICE);
+        IRoles(modAddr).execTransactionWithRole(USDC, 0, _approveCd(MILKMAN, amt), CALL, ROLE_KEY, true);
+        assertEq(IERC20(USDC).allowance(safeAddr, MILKMAN), amt, "allowance not set");
+    }
+
+    /// TF-3 — deny: amount == uint256.max (infinite approval) breaches the `less_than` cap.
+    function test_TF3_ApproveUnlimitedRejected() public {
+        _expectReject(USDC, _approveCd(MILKMAN, type(uint256).max));
+    }
+
+    /// TF-4 — deny: approving any spender other than Milkman breaches `equal_to`.
+    function test_TF4_ApproveWrongSpenderRejected() public {
+        _expectReject(USDC, _approveCd(NOT_MILKMAN, AMOUNT));
+    }
+
+    // ==================== requestSwap: per-pair branch + slippage cap ====================
+
+    /// TF-5 — allow: USDC → PYUSD at 200 bps, within the 500 bps cap.
+    function test_TF5_SwapPyusdWithinCapAllowed() public {
+        _swapAllowed(USDC, PYUSD, _pcd(200));
+    }
+
+    /// TF-6 — allow: USDC → RLUSD at 600 bps, within the 700 bps cap.
+    function test_TF6_SwapRlusdWithinCapAllowed() public {
+        _swapAllowed(USDC, RLUSD, _pcd(600));
+    }
+
+    /// TF-7 — deny: USDC → PYUSD at 501 bps exceeds the 500 bps cap (`less_than 501`).
+    function test_TF7_SwapPyusdOverCapRejected() public {
+        _expectReject(MILKMAN, _swap(USDC, PYUSD, safeAddr, PRICE_CHECKER, _pcd(501)));
+    }
+
+    /// TF-8 — deny: USDC → PYUSD at 600 bps. 600 is fine for the RLUSD branch (cap 700)
+    ///        but not for PYUSD (cap 500): the cap is correlated to the exact pair, so
+    ///        neither branch matches. This is the per-pair guarantee the `or` provides.
+    function test_TF8_SwapPyusdWithRlusdCapRejected() public {
+        _expectReject(MILKMAN, _swap(USDC, PYUSD, safeAddr, PRICE_CHECKER, _pcd(600)));
+    }
+
+    /// TF-9 — deny: toToken WETH is covered by no branch.
+    function test_TF9_SwapToUnlistedTokenRejected() public {
+        _expectReject(MILKMAN, _swap(USDC, WETH, safeAddr, PRICE_CHECKER, _pcd(200)));
+    }
+
+    /// TF-10 — deny: fromToken USDT is covered by no branch.
+    function test_TF10_SwapFromUnlistedTokenRejected() public {
+        _expectReject(MILKMAN, _swap(USDT, PYUSD, safeAddr, PRICE_CHECKER, _pcd(200)));
+    }
+
+    /// TF-11 — deny: receiver must be the Safe (avatar) in every branch.
+    function test_TF11_SwapToForeignReceiverRejected() public {
+        _expectReject(MILKMAN, _swap(USDC, PYUSD, ALICE, PRICE_CHECKER, _pcd(200)));
+    }
+
+    /// TF-12 — deny: priceChecker is pinned in every branch; a substitute is rejected.
+    function test_TF12_SwapWrongPriceCheckerRejected() public {
+        _expectReject(MILKMAN, _swap(USDC, PYUSD, safeAddr, WRONG_CHECKER, _pcd(200)));
+    }
+
+    /// TF-13 — allow: innerData (the feed config after slippageBps) is unconstrained;
+    ///         a within-cap swap with arbitrary innerData still clears the gate.
+    function test_TF13_SwapFreeInnerDataAllowed() public {
+        bytes memory pcd = abi.encode(uint256(200), abi.encode("arbitrary feed config"));
+        _swapAllowed(USDC, PYUSD, pcd);
+    }
+
+    // ==================== Helpers ====================
+
+    /// @dev Assert `ALICE`'s `execTransactionWithRole(to, 0, data, CALL)` is rejected at the
+    ///      policy gate (reverts with `ConditionViolation`).
+    function _expectReject(address to, bytes memory data) internal {
+        expectPolicyReject(modAddr, ALICE, to, data, CALL, ROLE_KEY);
+    }
+
+    /// @dev Assert a swap clears the policy gate. `shouldRevert=false` so Milkman's inner
+    ///      execution may fail without masking the gate decision; a gate rejection would
+    ///      revert regardless, so a clean return proves the call was authorised.
+    function _swapAllowed(address fromToken, address toToken, bytes memory priceCheckerData) internal {
+        vm.prank(ALICE);
+        IRoles(modAddr).execTransactionWithRole(
+            MILKMAN, 0, _swap(fromToken, toToken, safeAddr, PRICE_CHECKER, priceCheckerData), CALL, ROLE_KEY, false
+        );
+    }
+
+    /// @dev Chainlink DynamicSlippageChecker priceCheckerData: abi.encode(slippageBps, innerData).
+    ///      innerData (feed config) is empty here — the policy leaves it free.
+    function _pcd(uint256 slippageBps) internal pure returns (bytes memory) {
+        return abi.encode(slippageBps, bytes(""));
+    }
+
+    function _approveCd(address spender, uint256 amount) internal pure returns (bytes memory) {
+        return abi.encodeCall(IERC20.approve, (spender, amount));
+    }
+
+    /// @dev requestSwap calldata with a fixed amountIn and empty appData.
+    function _swap(
+        address fromToken,
+        address toToken,
+        address to,
+        address priceChecker,
+        bytes memory priceCheckerData
+    ) internal pure returns (bytes memory) {
+        return abi.encodeWithSignature(
+            "requestSwapExactTokensForTokens(uint256,address,address,address,bytes32,address,bytes)",
+            AMOUNT,
+            fromToken,
+            toToken,
+            to,
+            bytes32(0),
+            priceChecker,
+            priceCheckerData
+        );
+    }
 }

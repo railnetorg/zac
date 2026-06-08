@@ -11,6 +11,7 @@ interface SdkBuilders {
     matches: (scoping: unknown[]) => unknown;
     pass: unknown;
     calldataMatches: (scoping: unknown, abiTypes: readonly string[]) => unknown;
+    abiEncodedMatches: (scoping: unknown, abiTypes: readonly string[]) => unknown;
     avatar: unknown;
   };
   processPermissions: (perms: unknown[]) => { targets: unknown[] };

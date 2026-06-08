@@ -1,30 +1,40 @@
 {#-
-  CowSwap Milkman — submit and cancel price-protected swap orders.
+  CowSwap Milkman — submit price-protected swap orders.
 
   Uses the Chainlink DynamicSlippageChecker (aliases.curator.price_checker) as the
-  pinned price checker. The priceCheckerData payload is left unconstrained (pass) so
-  the strategy manager can tune slippage and feed configuration at runtime.
+  pinned price checker. Its priceCheckerData is ABI-encoded as
+  (uint256 slippageBps, bytes innerData); the policy bounds slippageBps per
+  destination token while leaving innerData (feed configuration) free.
 
   Required params:
-    from_tokens — list of TOKEN alias keys the Safe may swap from (e.g. ["USDC"])
-    to_tokens   — list of TOKEN alias keys the Safe may swap to   (e.g. ["PYUSD"])
+    from_tokens — list of TOKEN alias keys the Safe may approve to Milkman and
+                  swap from (e.g. ["USDC"]).
+    to_tokens   — list of destination tokens, each with its own slippage cap:
+                    - token: <TOKEN key>
+                      max_slippage_bps: <int>   # e.g. 500 ≡ ≤ 5%
+                  The swap allow-list is the cartesian product from_tokens × to_tokens:
+                  one `or` branch per (from, to) combination, with the cap bound to
+                  the exact pair. (A single resulting branch collapses to a plain
+                  match — no redundant `or`.)
 
-  Policy enforced per swap configuration:
-    M1  approve(spender=Milkman, amount < uint256.max) on each from-token
-        Pinning the spender prevents approving arbitrary contracts.
-        Excluding type(uint256).max prevents infinite/standing approvals.
-    M2  requestSwapExactTokensForTokens:
-          amountIn     pass
-          fromToken    ∈ from_tokens (oneOf)
-          toToken      ∈ to_tokens   (oneOf)
-          to           == avatar     (equal_to_avatar — proceeds stay in the Safe)
-          appData      pass          (CoW Protocol order metadata, set at runtime)
-          priceChecker == aliases.curator.price_checker (Chainlink DynamicSlippageChecker)
-          priceCheckerData  pass     (slippage bps and Chainlink feed config set at runtime)
-    Note: cancelSwap is NOT included in this policy. Milkman's cancelSwap must be
-    called on the order clone contract (deployed per-swap), not on the root Milkman.
-    The clone address is unknown at policy-creation time and cannot be pre-authorised.
-    Cancellations must be executed directly through the Safe UI.
+  Policy enforced:
+    approve(spender=Milkman, amount < uint256.max) on each from-token.
+      Pinning the spender prevents approving arbitrary contracts; excluding
+      type(uint256).max prevents infinite/standing approvals.
+    requestSwapExactTokensForTokens, per (from, to) branch:
+      amountIn     pass
+      fromToken    == aliases.tokens[from]
+      toToken      == aliases.tokens[to.token]
+      to           == avatar (proceeds stay in the Safe)
+      appData      pass (CoW Protocol order metadata, set at runtime)
+      priceChecker == aliases.curator.price_checker (Chainlink DynamicSlippageChecker)
+      priceCheckerData → abi_encoded:
+        slippageBps  < to.max_slippage_bps + 1   (i.e. ≤ to.max_slippage_bps)
+        innerData    pass                         (feed config, set at runtime)
+
+    Note: cancelSwap is NOT included. Milkman's cancelSwap targets the per-swap
+    order clone (address unknown at policy-creation time), so it cannot be
+    pre-authorised; cancellations are executed directly through the Safe UI.
 -#}
 roles:
 {%- for token in from_tokens %}
@@ -49,38 +59,40 @@ roles:
     functions:
       - signature: "function requestSwapExactTokensForTokens(uint256 amountIn, address fromToken, address toToken, address to, bytes32 appData, address priceChecker, bytes priceCheckerData)"
         execution_options: "none"
-        params:
-          - name: amountIn
-            param_type: "static"
-            operator: "pass"
-          - name: fromToken
-            param_type: "static"
-            operator: "oneOf"
-            values:
-{%- for token in from_tokens %}
-              - "{{ aliases.tokens[token] }}"
+        operator: "or"
+        branches:
+{%- for from in from_tokens %}
+{%- for to in to_tokens %}
+          - operator: "matches"
+            params:
+              - name: amountIn
+                operator: "pass"
+              - name: fromToken
+                operator: "equal_to"
+                value: "{{ aliases.tokens[from] }}"
+                value_type: "address"
+              - name: toToken
+                operator: "equal_to"
+                value: "{{ aliases.tokens[to.token] }}"
+                value_type: "address"
+              - name: to
+                operator: "equal_to_avatar"
+              - name: appData
+                operator: "pass"
+              - name: priceChecker
+                operator: "equal_to"
+                value: "{{ aliases.curator.price_checker }}"
+                value_type: "address"
+              - name: priceCheckerData
+                param_type: "abi_encoded"
+                children:
+                  - name: slippageBps
+                    param_type: "static"
+                    operator: "less_than"
+                    value: "{{ to.max_slippage_bps + 1 }}"
+                    value_type: "uint256"
+                  - name: innerData
+                    param_type: "dynamic"
+                    operator: "pass"
 {%- endfor %}
-            value_type: "address"
-          - name: toToken
-            param_type: "static"
-            operator: "oneOf"
-            values:
-{%- for token in to_tokens %}
-              - "{{ aliases.tokens[token] }}"
 {%- endfor %}
-            value_type: "address"
-          - name: to
-            param_type: "static"
-            operator: "equal_to_avatar"
-          - name: appData
-            param_type: "static"
-            operator: "pass"
-          - name: priceChecker
-            param_type: "static"
-            operator: "equal_to"
-            value: "{{ aliases.curator.price_checker }}"
-            value_type: "address"
-          - name: priceCheckerData
-            param_type: "dynamic"
-            operator: "pass"
-

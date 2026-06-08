@@ -21,7 +21,11 @@ export interface FunctionParams {
   signature: string;
   fnName: string;
   inputs: AbiInput[];
-  params: Array<Record<string, unknown> & { name: string; operator: string }>;
+  params: Array<Record<string, unknown> & { name: string; operator?: string }>;
+  /** Present when the function root is an `or` of branches (per-branch param sets). */
+  branches?: Array<{
+    params?: Array<Record<string, unknown> & { name: string; operator?: string }>;
+  }>;
 }
 
 /**
@@ -60,11 +64,16 @@ export function buildFunctionParamMap(generatedList: Generated[]): Record<string
           }
           const key = `${addr}:${selector}`;
           if (map[key] !== undefined) continue;
+          const fnAny = fn as unknown as {
+            params?: FunctionParams['params'];
+            branches?: FunctionParams['branches'];
+          };
           map[key] = {
             signature: fn.signature,
             fnName,
             inputs,
-            params: fn.params ?? [],
+            params: fnAny.params ?? [],
+            ...(fnAny.branches !== undefined ? { branches: fnAny.branches } : {}),
           };
         }
       }

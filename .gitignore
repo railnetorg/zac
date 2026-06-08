@@ -27,3 +27,7 @@ action/tests/.tmp-*
 .legion/
 **/.legion/
 .plans/
+
+# Private deployment safe-dir (real Safe + signer; not for the public examples)
+examples/mainnet/0x14147ffC6595D1DB7C1797FF0F6AE4455df89BE2/
+milkman-bot/

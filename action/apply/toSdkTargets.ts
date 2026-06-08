@@ -3,15 +3,33 @@ import { ZacError } from '../errors';
 import type { Generated } from './parseGenerated';
 
 interface ChildOp {
-  operator: string;
+  operator?: string;
+  param_type?: string;
   value?: unknown;
   values?: unknown[];
   value_type?: string;
   conditions?: ChildOp[];
+  /** Decoded fields for a `param_type: abi_encoded` node (ordered). */
+  children?: ParamYaml[];
 }
 
 interface ParamYaml extends ChildOp {
   name: string;
+}
+
+/** One `or` branch at the function root: a full positional param set. */
+interface BranchYaml {
+  operator?: string;
+  params?: ParamYaml[];
+}
+
+/** A function rule — either a single positional `params` set or a root `or` of `branches`. */
+interface FunctionYaml {
+  signature: string;
+  execution_options?: string;
+  params?: ParamYaml[];
+  operator?: string;
+  branches?: BranchYaml[];
 }
 
 /**
@@ -53,9 +71,44 @@ interface SdkBuilders {
     matches: (scoping: unknown[]) => unknown;
     pass: unknown;
     calldataMatches: (scoping: unknown, abiTypes: readonly string[]) => unknown;
+    abiEncodedMatches: (scoping: unknown, abiTypes: readonly string[]) => unknown;
     avatar: unknown;
   };
   processPermissions: (perms: unknown[]) => { targets: unknown[] };
+}
+
+/**
+ * Derive the ABI type of one `abi_encoded` child slot. The bytes payload is
+ * opaque (no signature components to read), so the YAML must declare the type:
+ *   - `value_type` (e.g. uint256, address) wins when present;
+ *   - `param_type: dynamic` → `bytes`;
+ *   - `param_type: abi_encoded` → `bytes` (a nested encoded blob).
+ */
+function abiTypeOfChild(ch: ParamYaml): string {
+  if (ch.value_type) return ch.value_type;
+  if (ch.param_type === 'dynamic') return 'bytes';
+  if (ch.param_type === 'abi_encoded') return 'bytes';
+  throw new ZacError({
+    phase: 'apply',
+    message: `abi_encoded child '${ch.name}' needs a value_type, or param_type dynamic/abi_encoded, to define its ABI type`,
+  });
+}
+
+/**
+ * Build an `abiEncodedMatches` scoping for a `param_type: abi_encoded` node:
+ * decode the bytes against `children`'s declared ABI types and match each slot.
+ */
+function buildAbiEncoded(op: ChildOp, c: SdkBuilders['c']): unknown {
+  const children = op.children ?? [];
+  if (children.length === 0) {
+    throw new ZacError({
+      phase: 'apply',
+      message: `'abi_encoded' requires ≥ 1 child`,
+    });
+  }
+  const abiTypes = children.map(abiTypeOfChild);
+  const scopings = children.map((ch, i) => buildScoping(ch, { type: abiTypes[i]! }, c));
+  return c.abiEncodedMatches(scopings, abiTypes);
 }
 
 /**
@@ -68,6 +121,12 @@ interface SdkBuilders {
  * is paired with the corresponding tuple component.
  */
 function buildScoping(op: ChildOp, abiInput: AbiInput, c: SdkBuilders['c']): unknown {
+  // `abi_encoded` is a param-type, not an operator: decode the bytes slot and
+  // match its declared children. Checked before the operator switch since the
+  // node carries no `operator`.
+  if (op.param_type === 'abi_encoded') {
+    return buildAbiEncoded(op, c);
+  }
   switch (op.operator) {
     case 'pass':
       return c.pass;
@@ -172,6 +231,56 @@ function buildPositionalScoping(
 }
 
 /**
+ * Build the root condition for one function rule, or `null` when the function
+ * is unconstrained (no params / all-pass). Two forms:
+ *   - positional `params` → a single `calldataMatches`;
+ *   - root `or` of `branches` (each a full positional param set) → an `or` of
+ *     `calldataMatches`, one per branch. This lets a constraint on one
+ *     parameter be correlated with constraints on others (e.g. a per-token-pair
+ *     slippage cap), which a single flat scoping cannot express. A single branch
+ *     collapses to a plain `calldataMatches` (an `or` of one is just that one),
+ *     so template-driven branch lists work for a single (from, to) pair too.
+ */
+function buildFunctionCondition(fn: FunctionYaml, c: SdkBuilders['c']): unknown | null {
+  if (fn.operator === 'or' || fn.branches !== undefined) {
+    if (fn.operator !== undefined && fn.operator !== 'or') {
+      throw new ZacError({
+        phase: 'apply',
+        message: `function-level operator '${fn.operator}' unsupported (only 'or' with branches)`,
+      });
+    }
+    const branches = fn.branches ?? [];
+    if (branches.length === 0) {
+      throw new ZacError({
+        phase: 'apply',
+        message: `function-level 'or' requires ≥ 1 branch, got 0`,
+      });
+    }
+    const conditions = branches.map((b, i) => {
+      if (b.operator !== undefined && b.operator !== 'matches') {
+        throw new ZacError({
+          phase: 'apply',
+          message: `'or' branch ${i} operator must be 'matches' (got '${b.operator}')`,
+        });
+      }
+      const sc = buildPositionalScoping(b.params, fn.signature, c);
+      if (sc === null) {
+        throw new ZacError({
+          phase: 'apply',
+          message: `'or' branch ${i} has no constraints (all-pass); each branch must constrain ≥ 1 parameter`,
+        });
+      }
+      return c.calldataMatches(sc.scoping, sc.abiTypes);
+    });
+    // An `or` of one branch is just that branch.
+    return conditions.length === 1 ? conditions[0] : c.or(...conditions);
+  }
+
+  const sc = buildPositionalScoping(fn.params, fn.signature, c);
+  return sc === null ? null : c.calldataMatches(sc.scoping, sc.abiTypes);
+}
+
+/**
  * Translate one role's YAML targets[] into the SDK's on-chain Target[] shape
  * that planApplyRole consumes. Builds flat Permission[] then runs
  * processPermissions to flatten/coerce.
@@ -182,18 +291,14 @@ export function toSdkTargets(generated: Generated, roleKey: string, sdk: SdkBuil
   const permissions: Array<Record<string, unknown>> = [];
   for (const target of role.targets) {
     for (const fn of target.functions) {
-      const scopingResult = buildPositionalScoping(
-        fn.params as ParamYaml[] | undefined,
-        fn.signature,
-        sdk.c,
-      );
+      const condition = buildFunctionCondition(fn as unknown as FunctionYaml, sdk.c);
       const perm: Record<string, unknown> = {
         targetAddress: target.address as `0x${string}`,
         signature: fn.signature,
         ...executionFlags((fn as { execution_options?: string }).execution_options),
       };
-      if (scopingResult !== null) {
-        perm['condition'] = sdk.c.calldataMatches(scopingResult.scoping, scopingResult.abiTypes);
+      if (condition !== null) {
+        perm['condition'] = condition;
       }
       permissions.push(perm);
     }
