@@ -1,0 +1,59 @@
+deployment:
+  chain_id: 1
+  safe_address: "0x14147ffC6595D1DB7C1797FF0F6AE4455df89BE2"
+  roles_modifier_address: "0x8284Cb3136c9E1907E0f285c9C20D5b0426d8FB0"
+roles:
+  STRATEGY_MANAGER:
+    members:
+      - "0xCb0dEd7FCa9dA8d3052C84485B77B5cd7B511760"
+    targets:
+      - address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+        functions:
+          - signature: function approve(address spender, uint256 amount)
+            execution_options: none
+            params:
+              - name: spender
+                param_type: static
+                operator: equal_to
+                value: "0x060373D064d0168931dE2AB8DDA7410923d06E88"
+                value_type: address
+              - name: amount
+                param_type: static
+                operator: less_than
+                value: "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+                value_type: uint256
+      - address: "0x060373D064d0168931dE2AB8DDA7410923d06E88"
+        functions:
+          - signature: function requestSwapExactTokensForTokens(uint256 amountIn, address fromToken, address toToken, address to, bytes32 appData, address priceChecker, bytes priceCheckerData)
+            execution_options: none
+            params:
+              - name: amountIn
+                param_type: static
+                operator: pass
+              - name: fromToken
+                param_type: static
+                operator: oneOf
+                values:
+                  - "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+                value_type: address
+              - name: toToken
+                param_type: static
+                operator: oneOf
+                values:
+                  - "0x6c3ea9036406852006290770BEdFcAbA0e23A0e8"
+                  - "0x8292Bb45bf1Ee4d140127049757C2E0fF06317eD"
+                value_type: address
+              - name: to
+                param_type: static
+                operator: equal_to_avatar
+              - name: appData
+                param_type: static
+                operator: pass
+              - name: priceChecker
+                param_type: static
+                operator: equal_to
+                value: "0xe80a1C615F75AFF7Ed8F08c9F21f9d00982D666c"
+                value_type: address
+              - name: priceCheckerData
+                param_type: dynamic
+                operator: pass

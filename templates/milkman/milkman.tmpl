@@ -1,0 +1,86 @@
+{#-
+  CowSwap Milkman — submit and cancel price-protected swap orders.
+
+  Uses the Chainlink DynamicSlippageChecker (aliases.curator.price_checker) as the
+  pinned price checker. The priceCheckerData payload is left unconstrained (pass) so
+  the strategy manager can tune slippage and feed configuration at runtime.
+
+  Required params:
+    from_tokens — list of TOKEN alias keys the Safe may swap from (e.g. ["USDC"])
+    to_tokens   — list of TOKEN alias keys the Safe may swap to   (e.g. ["PYUSD"])
+
+  Policy enforced per swap configuration:
+    M1  approve(spender=Milkman, amount < uint256.max) on each from-token
+        Pinning the spender prevents approving arbitrary contracts.
+        Excluding type(uint256).max prevents infinite/standing approvals.
+    M2  requestSwapExactTokensForTokens:
+          amountIn     pass
+          fromToken    ∈ from_tokens (oneOf)
+          toToken      ∈ to_tokens   (oneOf)
+          to           == avatar     (equal_to_avatar — proceeds stay in the Safe)
+          appData      pass          (CoW Protocol order metadata, set at runtime)
+          priceChecker == aliases.curator.price_checker (Chainlink DynamicSlippageChecker)
+          priceCheckerData  pass     (slippage bps and Chainlink feed config set at runtime)
+    Note: cancelSwap is NOT included in this policy. Milkman's cancelSwap must be
+    called on the order clone contract (deployed per-swap), not on the root Milkman.
+    The clone address is unknown at policy-creation time and cannot be pre-authorised.
+    Cancellations must be executed directly through the Safe UI.
+-#}
+roles:
+{%- for token in from_tokens %}
+  - address: "{{ aliases.tokens[token] }}"
+    functions:
+      - signature: "function approve(address spender, uint256 amount)"
+        execution_options: "none"
+        params:
+          - name: spender
+            param_type: "static"
+            operator: "equal_to"
+            value: "{{ aliases.curator.milkman }}"
+            value_type: "address"
+          - name: amount
+            param_type: "static"
+            operator: "less_than"
+            value: "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+            value_type: "uint256"
+{%- endfor %}
+
+  - address: "{{ aliases.curator.milkman }}"
+    functions:
+      - signature: "function requestSwapExactTokensForTokens(uint256 amountIn, address fromToken, address toToken, address to, bytes32 appData, address priceChecker, bytes priceCheckerData)"
+        execution_options: "none"
+        params:
+          - name: amountIn
+            param_type: "static"
+            operator: "pass"
+          - name: fromToken
+            param_type: "static"
+            operator: "oneOf"
+            values:
+{%- for token in from_tokens %}
+              - "{{ aliases.tokens[token] }}"
+{%- endfor %}
+            value_type: "address"
+          - name: toToken
+            param_type: "static"
+            operator: "oneOf"
+            values:
+{%- for token in to_tokens %}
+              - "{{ aliases.tokens[token] }}"
+{%- endfor %}
+            value_type: "address"
+          - name: to
+            param_type: "static"
+            operator: "equal_to_avatar"
+          - name: appData
+            param_type: "static"
+            operator: "pass"
+          - name: priceChecker
+            param_type: "static"
+            operator: "equal_to"
+            value: "{{ aliases.curator.price_checker }}"
+            value_type: "address"
+          - name: priceCheckerData
+            param_type: "dynamic"
+            operator: "pass"
+
