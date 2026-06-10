@@ -15,16 +15,19 @@ contracts-format:
 contracts-format-check:
     cd foundry && forge fmt --check
 
+# lint solidity contracts
+contracts-lint:
+    cd foundry && forge lint
+
 # run solidity tests
 contracts-test:
     cd foundry && forge test -vvv
 
-# run the forge fork suites (zac policy + contract) against an <upstream> RPC
+# run the forge fork suite (contract + ZAC policy template tests) against an <upstream> RPC
 # usage: just forge-test-fork "$ETH_RPC_URL"
 forge-test-fork upstream:
     cd foundry && \
-      FOUNDRY_PROFILE=fork RPC_URL="{{upstream}}" forge test -vvv && \
-      FOUNDRY_PROFILE=contracts-fork RPC_URL="{{upstream}}" forge test -vvv
+      FOUNDRY_PROFILE=contracts-fork MAINNET_RPC_URL="{{upstream}}" forge test -vvv
 
 # run action ts tests
 action-test:

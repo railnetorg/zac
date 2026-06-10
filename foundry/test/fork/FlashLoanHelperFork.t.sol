@@ -8,14 +8,8 @@ import {ISafe} from "@safe/interfaces/ISafe.sol";
 import {Enum} from "@safe/interfaces/Enum.sol";
 import {IPool} from "@aave-v3-origin/interfaces/IPool.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {SAFE_SINGLETON_V1_4_1, SAFE_PROXY_FACTORY_V1_4_1, AAVE_V3_POOL, MORPHO, USDC} from "./MainnetAddresses.sol";
-
-/// Minimal subset of the Safe v1.4.1 ProxyFactory ABI used here.
-interface ISafeProxyFactory {
-    function createProxyWithNonce(address singleton, bytes memory initializer, uint256 saltNonce)
-        external
-        returns (address);
-}
+import {SafeDeployer} from "./SafeDeployer.sol";
+import {AAVE_V3_POOL, MORPHO, USDC} from "./chainConfigs/MainnetAddresses.sol";
 
 /// @title  FlashLoanHelperForkTest
 /// @notice End-to-end fork tests against real mainnet Aave V3 + Morpho Blue + Safe v1.4.1.
@@ -26,7 +20,7 @@ interface ISafeProxyFactory {
 ///         freshly deployed each run via the mainnet `SafeProxyFactory`, with this test
 ///         contract as the sole owner so it can sign txns via the pre-validated-signature
 ///         path (v=1).
-contract FlashLoanHelperForkTest is Test {
+contract FlashLoanHelperForkTest is Test, SafeDeployer {
     bytes32 constant FALLBACK_HANDLER_SLOT = 0x6c9a6c4a39284e37ed1cf53d337577d14212a4870fb976a4366c693b939918d5;
 
     // USDC has 6 decimals.
@@ -41,28 +35,10 @@ contract FlashLoanHelperForkTest is Test {
     function setUp() public {
         // Hard-fail if RPC_URL unset — matches the convention in test/zac/ZacForkTest.sol.
         // Fork tests are opt-in via env, and missing env should error, not silently skip.
-        vm.createSelectFork(vm.envString("RPC_URL"));
+        vm.createSelectFork(vm.envString("MAINNET_RPC_URL"));
 
         // Deploy a fresh Safe with this test contract as the sole owner (threshold = 1).
-        address[] memory owners = new address[](1);
-        owners[0] = address(this);
-        bytes memory setupCalldata = abi.encodeWithSignature(
-            "setup(address[],uint256,address,bytes,address,address,uint256,address)",
-            owners,
-            uint256(1),
-            address(0),
-            "",
-            address(0),
-            address(0),
-            uint256(0),
-            address(0)
-        );
-        // `gasleft()` varies across invocations even within the same block, so this avoids
-        // CREATE2 collisions on rapid same-block re-runs (e.g., invariant / fuzz loops).
-        uint256 salt = uint256(keccak256(abi.encodePacked(block.timestamp, address(this), gasleft())));
-        address proxy = ISafeProxyFactory(SAFE_PROXY_FACTORY_V1_4_1)
-            .createProxyWithNonce(SAFE_SINGLETON_V1_4_1, setupCalldata, salt);
-        safe = ISafe(payable(proxy));
+        safe = createSafe();
 
         helper = new FlashLoanHelper();
 

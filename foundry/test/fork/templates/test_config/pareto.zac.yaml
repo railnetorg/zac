@@ -1,0 +1,19 @@
+# Policy fixture for ParetoRoleMainnetTest. A full deployment config; the
+# ZacForkTest harness substitutes the runtime placeholders before applying:
+#   __MODIFIER__  → the freshly deployed Roles Modifier
+#   __SAFE__      → the freshly deployed Safe
+#   __MEMBER__    → the role member the test authorises
+#   __TEMPLATES__ → the absolute templates/ directory
+roles_modifier_address: "__MODIFIER__"
+safe_address: "__SAFE__"
+chain_id: 1
+name: ZAC pareto policy fork test
+description: In-process policy fork test for pareto.tmpl (lender side).
+configs:
+  - template: "__TEMPLATES__/pareto/pareto.tmpl"
+    key: PARETO
+    members:
+      - "__MEMBER__"
+    params:
+      vaults:
+        - "falconx_usdc"

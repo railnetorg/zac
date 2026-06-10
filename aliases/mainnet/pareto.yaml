@@ -1,0 +1,5 @@
+falconx_usdc:
+  address: "0x433d5b175148da32ffe1e1a37a939e1b7e79be4d"
+  aa:      "0xC26A6Fa2C37b38E549a4a1807543801Db684f99C"
+  bb:      "0xacbb25b7DD30B6B2F7131865Dc1023622de3b3D6"
+  asset:   "USDC"

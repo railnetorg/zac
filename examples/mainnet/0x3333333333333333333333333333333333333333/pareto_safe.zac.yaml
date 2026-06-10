@@ -1,0 +1,14 @@
+roles_modifier_address: "{{ aliases.modifiers.my_modifier }}"
+safe_address: "{{ aliases.safes.my_safe }}"
+chain_id: 1
+name: My Safe Pareto Lender
+description: Deposit / request-withdraw / claim on the listed Pareto Credit Vaults (lender side)
+configs:
+  - template: "../../../templates/pareto/pareto.tmpl"
+    key: PARETO
+    members:
+      - "{{ aliases.signers.alice }}"
+      - "{{ aliases.signers.bob }}"
+    params:
+      vaults:
+        - "falconx_usdc"
