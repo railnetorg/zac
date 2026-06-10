@@ -13,8 +13,8 @@ interface IERC20 {
 /// @notice Mainnet-fork acceptance test for the `templates/milkman/milkman.tmpl` policy
 ///         in its per-token-pair slippage-cap form.
 /// @dev    `deployRolesFixture` stands up a Safe + Roles V2 Modifier; `applyConfigFile`
-///         renders + applies the `policy.zac.yaml` fixture against the fresh Modifier.
-///         `RPC_URL` must be set.
+///         renders + applies the `milkman.zac.yaml` fixture (test/fork/templates/test_config/)
+///         `MAINNET_RPC_URL` must be set.
 ///
 ///         The fixture configures two pairs with distinct caps:
 ///           USDC → PYUSD, slippage ≤ 500 bps
@@ -64,19 +64,19 @@ contract MilkmanRoleMainnetTest is ZacForkTest {
     uint256 constant AMOUNT = 1_000e6;
 
     /// @dev `encodeKey('STRATEGY_MANAGER')` — right-padded ASCII bytes32.
-    bytes32 constant ROLE_KEY = bytes32("STRATEGY_MANAGER");
+    bytes32 constant ROLE_KEY = 0x53545241544547595f4d414e4147455200000000000000000000000000000000;
 
     address safeAddr;
     address modAddr;
 
     function setUp() public {
-        vm.createSelectFork(vm.envString("RPC_URL"));
+        vm.createSelectFork(vm.envString("MAINNET_RPC_URL"));
 
         RolesFixture memory fx = deployRolesFixture(mainnetSafeConfig(), ALICE);
         safeAddr = fx.safe;
         modAddr = fx.modifier_;
 
-        applyConfigFile(fx, ALICE, "milkman/tests/policy.zac.yaml");
+        applyConfigFile(fx, ALICE, "milkman.zac.yaml");
     }
 
     // ==================== approve: spender == Milkman, amount < uint256.max ====================
@@ -234,9 +234,10 @@ contract MilkmanRoleMainnetTest is ZacForkTest {
     ///      revert regardless, so a clean return proves the call was authorised.
     function _swapAllowed(address fromToken, address toToken, bytes memory priceCheckerData) internal {
         vm.prank(ALICE);
-        IRoles(modAddr).execTransactionWithRole(
-            MILKMAN, 0, _swap(fromToken, toToken, safeAddr, PRICE_CHECKER, priceCheckerData), CALL, ROLE_KEY, false
-        );
+        IRoles(modAddr)
+            .execTransactionWithRole(
+                MILKMAN, 0, _swap(fromToken, toToken, safeAddr, PRICE_CHECKER, priceCheckerData), CALL, ROLE_KEY, false
+            );
     }
 
     /// @dev Chainlink DynamicSlippageChecker priceCheckerData: abi.encode(slippageBps, innerData).
@@ -270,13 +271,11 @@ contract MilkmanRoleMainnetTest is ZacForkTest {
     }
 
     /// @dev requestSwap calldata with a fixed amountIn and empty appData.
-    function _swap(
-        address fromToken,
-        address toToken,
-        address to,
-        address priceChecker,
-        bytes memory priceCheckerData
-    ) internal pure returns (bytes memory) {
+    function _swap(address fromToken, address toToken, address to, address priceChecker, bytes memory priceCheckerData)
+        internal
+        pure
+        returns (bytes memory)
+    {
         return abi.encodeWithSignature(
             "requestSwapExactTokensForTokens(uint256,address,address,address,bytes32,address,bytes)",
             AMOUNT,
