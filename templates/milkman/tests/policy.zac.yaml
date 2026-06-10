@@ -17,5 +17,21 @@ configs:
     params:
       from_tokens: ["USDC"]
       to_tokens:
-        - { token: "PYUSD", max_slippage_bps: 500 }
-        - { token: "RLUSD", max_slippage_bps: 700 }
+        # feeds/reverses pin the price oracle the slippage cap is measured against
+        # (USDC/USD → {dest}/USD path; reverses [false, true]). These are the Aave
+        # PriceCapAdapterStable feeds, NOT the raw Chainlink aggregators: the raw
+        # aggregators block the Milkman calculator's read, so a swap pinned to them
+        # would never settle. The capped adapters wrap the same aggregators with
+        # public reads (Aave V3 Ethereum asset oracles).
+        - token: "PYUSD"
+          max_slippage_bps: 500
+          feeds:
+            - "0x3f73F03aa83B2A48ed27E964eD0fDb590332095B" # USDC/USD (Aave capped)
+            - "0x36964C0579D02E0a5AaAb89E24Cf8d7CDF3549EE" # PYUSD/USD (Aave capped)
+          reverses: [false, true]
+        - token: "RLUSD"
+          max_slippage_bps: 700
+          feeds:
+            - "0x3f73F03aa83B2A48ed27E964eD0fDb590332095B" # USDC/USD (Aave capped)
+            - "0xf0eaC18E908B34770FDEe46d069c846bDa866759" # RLUSD/USD (Aave capped)
+          reverses: [false, true]

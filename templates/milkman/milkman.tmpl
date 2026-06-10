@@ -3,19 +3,34 @@
 
   Uses the Chainlink DynamicSlippageChecker (aliases.curator.price_checker) as the
   pinned price checker. Its priceCheckerData is ABI-encoded as
-  (uint256 slippageBps, bytes innerData); the policy bounds slippageBps per
-  destination token while leaving innerData (feed configuration) free.
+  (uint256 slippageBps, bytes innerData), where innerData is itself
+  abi.encode(address[] feeds, bool[] reverses) — the price oracle the slippage
+  check measures the swap against. The policy bounds slippageBps per destination
+  token AND pins innerData to the exact feed configuration for the pair.
+
+  Pinning innerData is load-bearing, not cosmetic: the slippage cap is a bound
+  relative to whatever price the feeds report. If innerData were left free, a
+  compromised role member could supply a feed reporting a fair price of ~0, so
+  "lose no more than slippageBps" would permit swapping the Safe's tokens for
+  ~nothing and still clear the gate. Nothing downstream (Milkman, the checker,
+  its calculator) restricts the feed addresses, so the policy must.
 
   Required params:
     from_tokens — list of TOKEN alias keys the Safe may approve to Milkman and
                   swap from (e.g. ["USDC"]).
-    to_tokens   — list of destination tokens, each with its own slippage cap:
+    to_tokens   — list of destination tokens, each with its own slippage cap and
+                  the exact Chainlink feed path used to price the swap:
                     - token: <TOKEN key>
-                      max_slippage_bps: <int>   # e.g. 500 ≡ ≤ 5%
+                      max_slippage_bps: <int>      # e.g. 500 ≡ ≤ 5%
+                      feeds: [<feed addr>, ...]    # the price path, in order
+                      reverses: [<bool>, ...]      # one per feed; same length
+                  feeds/reverses must equal exactly what the swap submits for this
+                  pair (see RequestMilkmanSwap): e.g. USDC → PYUSD uses
+                  feeds: [USDC/USD, PYUSD/USD], reverses: [false, true].
                   The swap allow-list is the cartesian product from_tokens × to_tokens:
-                  one `or` branch per (from, to) combination, with the cap bound to
-                  the exact pair. (A single resulting branch collapses to a plain
-                  match — no redundant `or`.)
+                  one `or` branch per (from, to) combination, with the cap and feeds
+                  bound to the exact pair. (A single resulting branch collapses to a
+                  plain match — no redundant `or`.)
 
   Policy enforced:
     approve(spender=Milkman, amount < uint256.max) on each from-token.
@@ -30,7 +45,10 @@
       priceChecker == aliases.curator.price_checker (Chainlink DynamicSlippageChecker)
       priceCheckerData → abi_encoded:
         slippageBps  < to.max_slippage_bps + 1   (i.e. ≤ to.max_slippage_bps)
-        innerData    pass                         (feed config, set at runtime)
+        innerData    == abi.encode(to.feeds, to.reverses)
+                                                  (the feed path is pinned, so the
+                                                   cap is measured against a fixed
+                                                   oracle, not a caller-chosen one)
 
     Note: cancelSwap is NOT included. Milkman's cancelSwap targets the per-swap
     order clone (address unknown at policy-creation time), so it cannot be
@@ -93,6 +111,13 @@ roles:
                     value_type: "uint256"
                   - name: innerData
                     param_type: "dynamic"
-                    operator: "pass"
+                    operator: "equal_to"
+                    value: "{{ [to.feeds, to.reverses] | abi_encode(['address[]', 'bool[]']) }}"
+                    value_type: "bytes"
+                    # display-only: lets `zac plan` decode the pinned blob back to
+                    # (feeds, reverses) instead of printing opaque hex.
+                    display_decode:
+                      - { name: feeds, type: "address[]" }
+                      - { name: reverses, type: "bool[]" }
 {%- endfor %}
 {%- endfor %}
