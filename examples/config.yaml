@@ -10,6 +10,7 @@ aliases:
     tokens: ../aliases/mainnet/tokens.yaml
     metamorpho: ../aliases/mainnet/metamorpho.yaml
     morpho_blue: ../aliases/mainnet/morpho_blue.yaml
+    pendle: ../aliases/mainnet/pendle.yaml
     ondo_gm: ../aliases/mainnet/ondo_gm.yaml
     ondo_ousg: ../aliases/mainnet/ondo_ousg.yaml
     lagoon: ../aliases/mainnet/lagoon.yaml
