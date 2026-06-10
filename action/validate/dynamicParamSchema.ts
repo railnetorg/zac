@@ -260,10 +260,11 @@ function validateAbiEncodedParam(
     }
     // Schema-shape check (required fields per operator) on the operator object,
     // mirroring runValidate's top-level loop.
-    const { name: _n, param_type: _pt, children: _ch, ...opObj } = child;
+    const { name: _n, param_type: _pt, children: _ch, display_decode: _dd, ...opObj } = child;
     void _n;
     void _pt;
     void _ch;
+    void _dd;
     OperatorSchema.parse(opObj);
     checkParamSanity(
       child as { operator: string; value?: unknown; value_type?: string },

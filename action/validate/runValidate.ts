@@ -80,9 +80,12 @@ function validateParamsSet(params: ParamYaml[], parsed: ReturnType<typeof parseS
     // `name` is a param-level concern handled by `checkParamCoverage`.
     // `param_type` is a spec-§2 hint (e.g. "static", "dynamic") that is
     // documented in templates but not enforced by ZAC's operator schemas.
-    const { name: _name, param_type: _paramType, ...opObj } = p;
+    // `display_decode` is a plan-visualization hint (ABI layout of a pinned
+    // `bytes` value); like `param_type` it isn't part of the operator taxonomy.
+    const { name: _name, param_type: _paramType, display_decode: _displayDecode, ...opObj } = p;
     void _name;
     void _paramType;
+    void _displayDecode;
     OperatorSchema.parse(opObj);
     checkParamSanity(p as { operator: string; value?: unknown; value_type?: string }, p.name);
   }

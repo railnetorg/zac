@@ -1,3 +1,4 @@
+import { decodeAbiParameters } from 'viem';
 import type { AbiInput, FunctionParams } from './buildFunctionParamMap';
 
 /**
@@ -125,10 +126,16 @@ function renderCondition(
   switch (cond.operator) {
     case 'pass':
       return { label: `${head}*` };
-    case 'equal_to':
+    case 'equal_to': {
+      // A `display_decode` hint means this pinned `bytes` value is itself an
+      // abi.encode(...) blob — decode it for the reader instead of dumping the
+      // opaque hex (e.g. a Milkman price-checker innerData = (feeds, reverses)).
+      const decoded = renderDisplayDecode(cond, addressLabelMap);
+      if (decoded !== null) return { label: `${head}= abiEncoded`, children: decoded };
       return {
         label: `${head}= ${formatValue(cond['value'], (cond['value_type'] as string) ?? input.type, addressLabelMap)}`,
       };
+    }
     case 'equal_to_avatar':
       return { label: `${head}= <avatar>` };
     case 'greater_than':
@@ -251,6 +258,68 @@ function renderAbiEncoded(
     const head = headPrefix(typeStrs[i]!, nameStrs[i]!, typeWidth, nameWidth);
     return renderCondition(child, { type: typeStrs[i]! }, addressLabelMap, head);
   });
+}
+
+interface DecodeField {
+  name?: string;
+  type: string;
+}
+
+/**
+ * Render the decoded view of a pinned `bytes` value when the param carries a
+ * `display_decode` hint — an ordered `[{ name, type }]` list describing the
+ * ABI layout of the blob (e.g. `[{name: feeds, type: 'address[]'}, …]`). This
+ * is display-only: the on-chain condition still pins the exact bytes via
+ * `equal_to`; we just abi.decode the constant so the reader sees the structure
+ * rather than a wall of hex. Returns `null` (caller falls back to the raw hex
+ * leaf) when there's no hint or the value can't be decoded against it.
+ */
+function renderDisplayDecode(
+  cond: ParamObj,
+  addressLabelMap: Record<string, string> | undefined,
+): TreeNode[] | null {
+  const spec = cond['display_decode'];
+  const value = cond['value'];
+  if (!Array.isArray(spec) || spec.length === 0) return null;
+  if (typeof value !== 'string' || !value.startsWith('0x')) return null;
+  const fields = spec as DecodeField[];
+  if (!fields.every((f) => typeof f?.type === 'string')) return null;
+
+  let decoded: readonly unknown[];
+  try {
+    decoded = decodeAbiParameters(
+      fields.map((f) => ({ type: f.type })),
+      value as `0x${string}`,
+    );
+  } catch {
+    return null; // malformed hint or value — fall back to the raw hex leaf.
+  }
+
+  const typeStrs = fields.map((f) => f.type);
+  const nameStrs = fields.map((f) => f.name ?? '');
+  const typeWidth = Math.max(...typeStrs.map((s) => s.length), 0);
+  const nameWidth = Math.max(...nameStrs.map((s) => s.length), 0);
+  return fields.map((_f, i) => {
+    const head = headPrefix(typeStrs[i]!, nameStrs[i]!, typeWidth, nameWidth);
+    return { label: `${head}= ${formatDecodedValue(decoded[i], typeStrs[i]!, addressLabelMap)}` };
+  });
+}
+
+/**
+ * Format a decoded ABI value for display. Arrays render as `[a, b, …]` with
+ * each element formatted by its element type; scalars defer to `formatValue`
+ * (so addresses still get the `0x….… (label)` treatment, bools read true/false).
+ */
+function formatDecodedValue(
+  v: unknown,
+  type: string,
+  addressLabelMap: Record<string, string> | undefined,
+): string {
+  if (type.endsWith('[]') && Array.isArray(v)) {
+    const elementType = stripArraySuffix(type);
+    return `[${v.map((e) => formatDecodedValue(e, elementType, addressLabelMap)).join(', ')}]`;
+  }
+  return formatValue(v, type, addressLabelMap);
 }
 
 function isLeafEq(c: ParamObj): boolean {
