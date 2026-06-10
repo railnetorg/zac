@@ -1,0 +1,17 @@
+name: contracts-lint
+
+on: [push]
+
+jobs:
+  contracts-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - uses: foundry-rs/foundry-toolchain@v1
+
+      - uses: extractions/setup-just@v4
+
+      - run: just contracts-lint

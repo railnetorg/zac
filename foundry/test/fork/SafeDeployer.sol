@@ -40,8 +40,8 @@ abstract contract SafeDeployer {
         // `gasleft()` varies across invocations even within the same block, so this avoids
         // CREATE2 collisions on rapid same-block re-runs (e.g., invariant / fuzz loops).
         uint256 salt = uint256(keccak256(abi.encodePacked(block.timestamp, address(this), gasleft())));
-        address proxy =
-            ISafeProxyFactory(SAFE_PROXY_FACTORY_V1_4_1).createProxyWithNonce(SAFE_SINGLETON_V1_4_1, setupCalldata, salt);
+        address proxy = ISafeProxyFactory(SAFE_PROXY_FACTORY_V1_4_1)
+            .createProxyWithNonce(SAFE_SINGLETON_V1_4_1, setupCalldata, salt);
         return ISafe(payable(proxy));
     }
 }

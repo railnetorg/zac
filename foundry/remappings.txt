@@ -5,3 +5,4 @@ src/=src/
 @safe/=lib/safe-smart-account/contracts/
 @openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/
 @halmos-cheatcodes/=lib/halmos-cheatcodes/src/
+zac-test/=test/zac/

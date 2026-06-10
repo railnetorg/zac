@@ -82,9 +82,8 @@ contract ParetoRoleMainnetTest is ZacForkTest {
     /// happy: approve the in-scope vault to pull USDC. This one executes for real.
     function test_approve_happy_vault() public {
         vm.prank(ALICE);
-        bool ok = IRoles(modAddr).execTransactionWithRole(
-            USDC, 0, abi.encodeCall(IERC20.approve, (VAULT, AMOUNT)), CALL, ROLE_KEY, true
-        );
+        bool ok = IRoles(modAddr)
+            .execTransactionWithRole(USDC, 0, abi.encodeCall(IERC20.approve, (VAULT, AMOUNT)), CALL, ROLE_KEY, true);
         assertTrue(ok, "execTransactionWithRole returned false");
         assertEq(IERC20(USDC).allowance(safeAddr, VAULT), AMOUNT, "Safe -> vault allowance did not update");
     }

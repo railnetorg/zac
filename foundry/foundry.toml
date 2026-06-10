@@ -19,11 +19,11 @@ test = "test/fork"
 no_match_path = "__never_match__"
 # `test/fork/templates/` holds ZAC policy fork tests that drive the ZAC CLI over FFI
 # (render + plan a `.zac.yaml`, apply the role-state-update calls). They import the
-# shared `ZacForkTest` harness via the `zac-test/` remapping, read their `.zac.yaml`
-# fixtures from `test/fork/templates/test_config/`, and resolve `template:` paths into
-# the repo `templates/` dir.
+# shared `ZacForkTest` harness via the `zac-test/` remapping (in remappings.txt so the
+# default profile can compile them too), read their `.zac.yaml` fixtures from
+# `test/fork/templates/test_config/`, and resolve `template:` paths into the repo
+# `templates/` dir.
 ffi = true
-remappings = ["zac-test/=test/zac/"]
 fs_permissions = [
   { access = "read-write", path = "../examples" },
   { access = "read", path = "../action" },

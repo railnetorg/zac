@@ -15,6 +15,10 @@ contracts-format:
 contracts-format-check:
     cd foundry && forge fmt --check
 
+# lint solidity contracts
+contracts-lint:
+    cd foundry && forge lint
+
 # run solidity tests
 contracts-test:
     cd foundry && forge test -vvv
