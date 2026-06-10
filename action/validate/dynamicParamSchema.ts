@@ -69,8 +69,13 @@ export function validateOperatorAgainstAbi(
 ): void {
   const operator = op.operator;
 
-  // Tuple param: only `matches` (and any-type composites) allowed.
+  // Tuple param: `pass` (leave the whole tuple unscoped — the SDK applies the
+  // same slot-skip to tuples as to scalars/arrays), `matches`, or any-type
+  // composites. `tuple[]` lands here too via the `startsWith('tuple')` prefix;
+  // `pass` is valid for it as well (the matches-recursion in the caller only
+  // fires for an exact `tuple` type).
   if (abiType.startsWith('tuple')) {
+    if (operator === 'pass') return;
     if (operator === 'matches') {
       // Children validated per tuple field by the caller.
       return;
