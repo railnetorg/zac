@@ -55,12 +55,12 @@ contract HelperRoleMainnetTest is ZacForkTest {
     address modAddr;
 
     function setUp() public {
-        vm.createSelectFork(vm.envString("RPC_URL"));
+        vm.createSelectFork(vm.envString("MAINNET_RPC_URL"));
 
         RolesFixture memory fx = deployRolesFixture(mainnetSafeConfig(), ALICE);
         modAddr = fx.modifier_;
 
-        applyConfigFile(fx, ALICE, "helper/tests/policy.zac.yaml");
+        applyConfigFile(fx, ALICE, "helper.zac.yaml");
     }
 
     // ==================== Acceptance: allow / deny ====================

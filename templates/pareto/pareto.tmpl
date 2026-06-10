@@ -1,0 +1,121 @@
+{#-
+  Pareto Credit Vaults (Idle CDO epoch variant) — LENDER side.
+
+  Each entry in `vaults` is a vault alias KEY. The template resolves it
+  via aliases.pareto[<key>] with NO existence guard. If the alias is
+  missing on the active chain, rendering throws — there is no silent
+  fall-through. To grant the Safe access to a vault, add the key to
+  `vaults` AND ensure the matching entry exists in
+  aliases/<chain>/pareto.yaml.
+
+  Each resolved alias entry must declare:
+    address — the Credit Vault (IdleCDO) contract
+    aa      — the AATranche (senior) tranche-token address
+    bb      — the BBTranche (junior) tranche-token address. OPTIONAL: omit it
+              for senior-only vaults. When absent, `depositBB` is not emitted
+              and `requestWithdraw`'s `_tranche` is pinned to AA via `equal_to`
+              instead of a `oneOf` over both tranches.
+    asset   — the TOKEN ALIAS KEY of the vault's underlying (e.g. "USDC");
+              resolved via aliases.tokens[<asset>], also with no guard.
+
+  Required template params:
+    vaults — list of vault alias keys, e.g. ["falconx_usdc"].
+             - aliases.pareto[<key>]               must exist
+             - aliases.tokens[<resolved asset>]    must exist
+             Either lookup missing ⇒ render-time error.
+
+  Lender flow (epoch-based, request-then-claim):
+    Deposit:
+      1. depositAA(amount)  — into the senior tranche
+      2. depositBB(amount)  — into the junior tranche (only when `bb` is set)
+      (the tranche is selected by the function, not a parameter)
+    Exit:
+      1. requestWithdraw(amount, tranche)  — queue the redemption; amount==0
+         means "all". The vault routes to instant-withdraw internally when
+         the APR dropped, otherwise the request settles next epoch.
+      2. claimWithdrawRequest()            — claim a standard request after
+         at least one epoch has passed.
+      3. claimInstantWithdrawRequest()     — claim an instant request while
+         the epoch is running.
+
+  Output shape:
+    - One approve role per UNIQUE underlying. Multiple vaults sharing an
+      underlying are aggregated into a single
+      approve(spender = oneOf(vault_addresses)) role. This is required —
+      the emit-phase merger rejects duplicate (address, signature) pairs
+      within a role key.
+    - One role per vault. No deposit/withdraw function on the epoch variant
+      takes a receiver/owner address, so funds can only ever return to the
+      caller (the Safe); the only scoped address is `_tranche`, pinned to
+      oneOf(this vault's AA/BB tranche tokens).
+-#}
+{%- from "_macros/common.tmpl" import approve -%}
+{#- Pass 1: build the unique list of underlying token alias keys -#}
+{%- set assets = [] -%}
+{%- for key in vaults -%}
+  {%- set vault = aliases.pareto[key] -%}
+  {%- if vault.asset not in assets -%}
+    {%- set _ = assets.push(vault.asset) -%}
+  {%- endif -%}
+{%- endfor -%}
+roles:
+{%- for asset in assets %}
+  {#- Pass 2: gather every vault address whose underlying == asset -#}
+  {%- set spenders = [] -%}
+  {%- for k in vaults -%}
+    {%- set v = aliases.pareto[k] -%}
+    {%- if v.asset == asset -%}
+      {%- set _ = spenders.push(v.address) -%}
+    {%- endif -%}
+  {%- endfor %}
+  {{ approve(aliases.tokens[asset], spenders) | indent(2) }}
+{%- endfor %}
+{%- for key in vaults %}
+{%- set vault = aliases.pareto[key] %}
+
+  - address: "{{ vault.address }}"
+    functions:
+      - signature: "function depositAA(uint256 _amount)"
+        execution_options: "none"
+        params:
+          - name: _amount
+            param_type: "static"
+            operator: "pass"
+
+{%- if vault.bb %}
+      - signature: "function depositBB(uint256 _amount)"
+        execution_options: "none"
+        params:
+          - name: _amount
+            param_type: "static"
+            operator: "pass"
+{%- endif %}
+
+      - signature: "function requestWithdraw(uint256 _amount, address _tranche)"
+        execution_options: "none"
+        params:
+          - name: _amount
+            param_type: "static"
+            operator: "pass"
+{%- if vault.bb %}
+          - name: _tranche
+            param_type: "static"
+            operator: "oneOf"
+            values:
+              - "{{ vault.aa }}"
+              - "{{ vault.bb }}"
+            value_type: "address"
+{%- else %}
+          - name: _tranche
+            param_type: "static"
+            operator: "equal_to"
+            value: "{{ vault.aa }}"
+            value_type: "address"
+{%- endif %}
+
+      - signature: "function claimWithdrawRequest()"
+        execution_options: "none"
+
+      - signature: "function claimInstantWithdrawRequest()"
+        execution_options: "none"
+{%- endfor %}

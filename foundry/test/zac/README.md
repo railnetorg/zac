@@ -15,17 +15,17 @@ anvil-specific cheats, no out-of-band transactions).
 just forge-test-fork https://your-upstream-rpc.example
 ```
 
-That runs the `fork` profile (ZAC policy tests under `templates/**/tests/`) and
-the `contracts-fork` profile (contract tests under `foundry/test/fork/`) against
-the given RPC. Or directly:
+That runs the `contracts-fork` profile against the given RPC. It covers both the
+contract fork tests (`foundry/test/fork/`) and the ZAC policy template tests
+(`foundry/test/fork/templates/`, which share this harness). Or directly:
 
 ```
-cd foundry && FOUNDRY_PROFILE=fork RPC_URL=https://your-upstream-rpc.example forge test -vvv
+cd foundry && FOUNDRY_PROFILE=contracts-fork MAINNET_RPC_URL=https://your-upstream-rpc.example forge test -vvv
 ```
 
-If `RPC_URL` is unset, tests hard-fail at `vm.envString("RPC_URL")` in `setUp`.
-That is intended: fork tests are opt-in via env, and missing env should error,
-not silently skip.
+If `MAINNET_RPC_URL` is unset, tests hard-fail at `vm.envString("MAINNET_RPC_URL")`
+in `setUp`. That is intended: fork tests are opt-in via env, and missing env
+should error, not silently skip.
 
 ## The harness (`ZacForkTest.sol`)
 
@@ -37,17 +37,17 @@ not silently skip.
 - `mainnetSafeConfig()` / `baseSafeConfig()` — per-chain `SafeConfig`s (the Safe
   + Zodiac factory/mastercopy addresses). They are CREATE2-deterministic, so a
   chain that ever diverges overrides just its own entry.
-- `applyConfigFile(RolesFixture fx, address member, string fixtureRelPath)` —
-  reads a policy fixture (see below), substitutes the runtime placeholders,
-  renders + plans it via the ZAC CLI (`generate` then `plan` over FFI), and
-  executes each planned role-state-update call in-process as the Safe (the
-  Modifier's owner).
+- `applyConfigFile(RolesFixture fx, address member, string fixtureName)` —
+  reads a policy fixture from `test/fork/templates/test_config/<fixtureName>`
+  (see below), substitutes the runtime placeholders, renders + plans it via the
+  ZAC CLI (`generate` then `plan` over FFI), and executes each planned
+  role-state-update call in-process as the Safe (the Modifier's owner).
 
 ## Policy fixtures
 
-Each test folder holds a `policy.zac.yaml` — a full deployment config with
-placeholders for the values only known at runtime, which `applyConfigFile`
-substitutes:
+Fixtures live in `foundry/test/fork/templates/test_config/`, one `<name>.zac.yaml`
+per test — a full deployment config with placeholders for the values only known
+at runtime, which `applyConfigFile` substitutes:
 
 | Placeholder     | Replaced with                                  |
 | --------------- | ---------------------------------------------- |
@@ -58,9 +58,9 @@ substitutes:
 
 ## Adding a new fork test
 
-1. Drop a `policy.zac.yaml` next to your test (see an existing one for the
-   placeholder shape).
-2. Write the test:
+1. Drop a `<name>.zac.yaml` in `foundry/test/fork/templates/test_config/` (see an
+   existing one for the placeholder shape).
+2. Add the test under `foundry/test/fork/templates/`:
 
 ```solidity
 import {ZacForkTest} from "zac-test/ZacForkTest.sol";
@@ -69,9 +69,9 @@ contract MyTest is ZacForkTest {
     address constant ALICE = 0x1111111111111111111111111111111111111111;
 
     function setUp() public {
-        vm.createSelectFork(vm.envString("RPC_URL"));
+        vm.createSelectFork(vm.envString("MAINNET_RPC_URL"));
         RolesFixture memory fx = deployRolesFixture(mainnetSafeConfig(), ALICE);
-        applyConfigFile(fx, ALICE, "my_template/tests/policy.zac.yaml");
+        applyConfigFile(fx, ALICE, "my_template.zac.yaml");
         // assert allow/deny via fx.modifier_.execTransactionWithRole(...)
     }
 }

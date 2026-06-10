@@ -28,13 +28,13 @@ contract AaveV3RoleMainnetTest is ZacForkTest {
     address modAddr;
 
     function setUp() public {
-        vm.createSelectFork(vm.envString("RPC_URL"));
+        vm.createSelectFork(vm.envString("MAINNET_RPC_URL"));
 
         RolesFixture memory fx = deployRolesFixture(mainnetSafeConfig(), ALICE);
         safeAddr = fx.safe;
         modAddr = fx.modifier_;
 
-        applyConfigFile(fx, ALICE, "aave_v3/tests/policy.zac.yaml");
+        applyConfigFile(fx, ALICE, "aave_v3.zac.yaml");
     }
 
     /// TF-1 — happy: a role member approves the Aave pool to pull USDC. The scoped spender is

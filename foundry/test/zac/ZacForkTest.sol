@@ -108,19 +108,21 @@ abstract contract ZacForkTest is Test {
         fx = RolesFixture({safe: safe, modifier_: modifier_});
     }
 
-    /// @notice Apply a deployment-config fixture (a `.zac.yaml` under `templates/`) to the
-    ///         fresh fixture. The file is a full deployment config with placeholders for the
-    ///         values only known at runtime, substituted here:
+    /// @notice Apply a deployment-config fixture (a `.zac.yaml` under
+    ///         `test/fork/templates/test_config/`) to the fresh fixture. The file is a full
+    ///         deployment config with placeholders for the values only known at runtime,
+    ///         substituted here:
     ///           `__MODIFIER__`  → the deployed Roles Modifier
     ///           `__SAFE__`      → the deployed Safe
     ///           `__MEMBER__`    → `member` (the role member the policy authorises)
     ///           `__TEMPLATES__` → the absolute `templates/` dir (for the `template:` path)
-    /// @param  fixtureRelPath path of the fixture under `templates/`, e.g.
-    ///         "helper/tests/policy.zac.yaml".
-    function applyConfigFile(RolesFixture memory fx, address member, string memory fixtureRelPath) internal {
+    /// @param  fixtureName file name of the fixture under
+    ///         `test/fork/templates/test_config/`, e.g. "helper.zac.yaml".
+    function applyConfigFile(RolesFixture memory fx, address member, string memory fixtureName) internal {
         string memory templatesDir = string.concat(vm.projectRoot(), "/../templates");
 
-        string memory cfg = vm.readFile(string.concat(templatesDir, "/", fixtureRelPath));
+        string memory cfg =
+            vm.readFile(string.concat(vm.projectRoot(), "/test/fork/templates/test_config/", fixtureName));
         cfg = vm.replace(cfg, "__MODIFIER__", vm.toString(fx.modifier_));
         cfg = vm.replace(cfg, "__SAFE__", vm.toString(fx.safe));
         cfg = vm.replace(cfg, "__MEMBER__", vm.toString(member));
