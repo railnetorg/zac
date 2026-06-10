@@ -1,0 +1,20 @@
+# Policy fixture for PendleRoleMainnetTest. A full deployment config; the
+# ZacForkTest harness substitutes the runtime placeholders before applying:
+#   __MODIFIER__  → the freshly deployed Roles Modifier
+#   __SAFE__      → the freshly deployed Safe
+#   __MEMBER__    → the role member the test authorises
+#   __TEMPLATES__ → the absolute templates/ directory
+roles_modifier_address: "__MODIFIER__"
+safe_address: "__SAFE__"
+chain_id: 1
+name: ZAC pendle policy fork test
+description: In-process policy fork test for pendle.tmpl.
+configs:
+  - template: "__TEMPLATES__/pendle/pendle.tmpl"
+    key: STRATEGY_MANAGER
+    members:
+      - "__MEMBER__"
+    params:
+      markets:
+        - "susde_2026_08_13"
+        - "susds_2026_11_26"
