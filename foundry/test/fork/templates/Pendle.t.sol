@@ -114,9 +114,11 @@ contract PendleRoleMainnetTest is ZacForkTest {
     address constant SUSDE_YT = 0x45A699A11A4a17fe0931EF3ceA4BFc3235e659F2;
     address constant SUSDE = 0x9D39A5DE30e57443BfF2A8307A4256c8797A3497; // underlying
 
-    // Fixture market #2 — PT-sUSDS (Sky), maturity 2026-11-26.
+    // Fixture market #2 — PT-sUSDS (Sky), maturity 2026-11-26. The policy pins
+    // USDS (not sUSDS) as this market's underlying: SY-sUSDS mints/redeems USDS
+    // directly at the savings rate (see aliases/mainnet/pendle.yaml).
     address constant SUSDS_MARKET = 0x9C560eBaF78e596cbcC27411d633a74D628dd7dC;
-    address constant SUSDS = 0xa3931d71877C0E7a3148CB7Eb4463524FEc27fbD; // underlying
+    address constant USDS = 0xdC035D45d973E3EC169d2276DDab16f1e407384F; // underlying
 
     // Off-policy values.
     address constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48; // not a listed underlying
@@ -172,7 +174,7 @@ contract PendleRoleMainnetTest is ZacForkTest {
 
     /// TF-5 — allow: the second configured market (PT-sUSDS) is covered by its own branch.
     function test_TF5_BuyPtSusdsAllowed() public {
-        _allow(_buyPt(safeAddr, SUSDS_MARKET, SUSDS, address(0)));
+        _allow(_buyPt(safeAddr, SUSDS_MARKET, USDS, address(0)));
     }
 
     /// TF-6 — deny: an unlisted market is covered by no branch.
