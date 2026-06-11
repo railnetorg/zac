@@ -11,7 +11,11 @@
 #   underlying — the SY redeem/mint token the policy pins as
 #                TokenInput.tokenIn / TokenOutput.tokenOut, so Pendle's internal
 #                aggregator is bypassed and USDC <-> underlying goes through the
-#                milkman (CoW) template instead
+#                milkman (CoW) template instead. Not necessarily the SY's yield
+#                token: pick, from the SY's getTokensIn()/getTokensOut() sets,
+#                the token with the cleanest USDC conversion — Chainlink/Aave
+#                priceable for the CoW leg, present in BOTH sets (so entry and
+#                exit use the same pin), and free of exit cooldowns
 #   maturity   — PT expiry (informational; redeemPyToToken is 1:1 after this)
 #
 # Demo set: two blue-chip stablecoin PTs at staggered maturities.
@@ -32,5 +36,9 @@ markets:
     pt: "0xdC169AbE56461A2E0c034Da431Ac2a3ebf596094"
     yt: "0xC7B8551C6B286Ce0b44952320e940Bd3Dee58A09"
     sy: "0xBe3d4ec488A0a042BB86F9176C24f8CD54018BA7"
-    underlying: "0xa3931d71877C0E7a3148CB7Eb4463524FEc27fbD"  # sUSDS (Sky)
+    # USDS, not sUSDS: SY-sUSDS mints/redeems USDS at the Sky savings rate in
+    # both directions (getTokensIn == getTokensOut == [DAI, USDS, sUSDS]), and
+    # no sUSDS/USD Chainlink/Aave feed exists to price a CoW leg against —
+    # USDC <-> USDS is the priceable pair (Aave-capped USDC/USD + USDS/USD).
+    underlying: "0xdC035D45d973E3EC169d2276DDab16f1e407384F"  # USDS (Sky)
     maturity: "2026-11-26"
