@@ -29,13 +29,22 @@
       explicitly (zac's validator requires every signature param to be
       covered); the all-pass optimization in `toSdkTargets` then
       collapses this to `allowFunction` on-chain.
-    - Six functions covered (see Lagoon docs §Smart-Contract Reference):
+    - Seven functions covered (see Lagoon docs §Smart-Contract Reference):
+      • updateNewTotalAssets(uint256)     — propose a new NAV value
       • settleDeposit(uint256)            — confirm NAV + settle pending deposits
       • settleRedeem(uint256)             — confirm NAV + settle pending redemptions
       • expireTotalAssets()               — force the current NAV value to expire
       • updateTotalAssetsLifespan(uint128)— adjust how long a posted NAV stays valid
       • claimSharesOnBehalf(address[])    — push minted shares to depositors post-settlement
       • claimAssetsOnBehalf(address[])    — push redeemed assets to redeemers post-settlement
+
+  Settlement on the vault (v0.6.0) is a two-step flow: the vault's
+  valuationManager proposes a NAV via updateNewTotalAssets(x), then the
+  vault's safe confirms it by calling settleDeposit(x) / settleRedeem(x)
+  with the SAME value — the vault reverts on a mismatch or when no
+  proposal is pending. updateNewTotalAssets only executes through the
+  Roles modifier when the Safe itself is the vault's valuationManager;
+  for vaults with an external valuationManager the permission is inert.
 -#}
 {%- from "_macros/common.tmpl" import approve -%}
 roles:
@@ -43,6 +52,13 @@ roles:
 
   - address: "{{ vault }}"
     functions:
+      - signature: "function updateNewTotalAssets(uint256 _newTotalAssets)"
+        execution_options: "none"
+        params:
+          - name: _newTotalAssets
+            param_type: "static"
+            operator: "pass"
+
       - signature: "function settleDeposit(uint256 _newTotalAssets)"
         execution_options: "none"
         params:
