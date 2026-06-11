@@ -284,9 +284,9 @@ function warnIfFileFlagNoOp(
 
 /**
  * Within each safe-dir, reject the mixed-style condition: a safe-dir must
- * contain EITHER one `<safe-address>.plan.json` (aggregated, per-modifier
- * mode) OR one-or-more `<stem>.plan.json` files matching a sibling
- * `<stem>.zac.yaml` (legacy per-file mode) — never both. This catches the
+ * contain EITHER one `<network>.<safe-address>.plan.json` (aggregated,
+ * per-modifier mode) OR one-or-more `<stem>.plan.json` files matching a
+ * sibling `<stem>.zac.yaml` (legacy per-file mode) — never both. This catches the
  * case where the user runs `plan` once with each flag value and the
  * resulting plan files coexist; bundling both styles would duplicate
  * calls in the proposed Safe transaction.
@@ -306,12 +306,16 @@ function assertNoMixedSafeDirPlans(planPaths: string[]): void {
   }
   for (const [dir, paths] of byDir) {
     const dirAddrLower = basename(dir).toLowerCase();
-    let hasAggregated = false;
+    const aggregatedNames: string[] = [];
     const perFileStems: string[] = [];
     for (const p of paths) {
       const stem = basename(p).slice(0, -'.plan.json'.length);
-      if (stem.toLowerCase() === dirAddrLower) {
-        hasAggregated = true;
+      const stemLower = stem.toLowerCase();
+      // Aggregated (per-modifier) plans are named `<network>.<safe-address>.plan.json`
+      // (current) or `<safe-address>.plan.json` (legacy) — either way the stem
+      // ends with the dir's safe address.
+      if (stemLower === dirAddrLower || stemLower.endsWith(`.${dirAddrLower}`)) {
+        aggregatedNames.push(basename(p));
         continue;
       }
       const sibling = resolve(dir, `${stem}.zac.yaml`);
@@ -319,10 +323,10 @@ function assertNoMixedSafeDirPlans(planPaths: string[]): void {
         perFileStems.push(stem);
       }
     }
-    if (hasAggregated && perFileStems.length > 0) {
+    if (aggregatedNames.length > 0 && perFileStems.length > 0) {
       throw new ZacError({
         phase: 'apply',
-        message: `safe-dir ${dir} contains BOTH legacy per-file plan(s) (${perFileStems.map((s) => `${s}.plan.json`).join(', ')}) AND an aggregated plan (${dirAddrLower}.plan.json); these are mutually exclusive — delete one set or re-run plan with the desired mode`,
+        message: `safe-dir ${dir} contains BOTH legacy per-file plan(s) (${perFileStems.map((s) => `${s}.plan.json`).join(', ')}) AND an aggregated plan (${aggregatedNames.join(', ')}); these are mutually exclusive — delete one set or re-run plan with the desired mode`,
       });
     }
   }
@@ -421,7 +425,7 @@ export function buildProgram(): Command {
   program
     .command('plan <path>')
     .description(
-      "compute role-state-update calls + Safe TX hash; output as JSON (no signing, no posting). <path> is a `*.zac.yaml` file or a directory (walked recursively — sources must live at `<network>/<safe-address>/<name>.zac.yaml`). By default (`--revoke-unmentioned=true`) in directory mode, plans are aggregated per safe-dir and the SDK's `planApply` emits revoke calls for any role on the modifier not in the aggregated set; output is `<safe-address>.plan.json` inside each safe-dir. Safe-dir mode is also the only mode that consults `safe.yaml` for Safe-level config (guard/fallback/modules). Pass `--revoke-unmentioned=false` to opt into the legacy per-file flow: each source produces a `<stem>.plan.json` via `planApplyRole` with no revokes, and `safe.yaml` is ignored. RPC URL is resolved per-chainId via `<NETWORK>_RPC_URL` (e.g. `MAINNET_RPC_URL`, `BASE_RPC_URL`), falling back to `RPC_URL`.",
+      "compute role-state-update calls + Safe TX hash; output as JSON (no signing, no posting). <path> is a `*.zac.yaml` file or a directory (walked recursively — sources must live at `<network>/<safe-address>/<name>.zac.yaml`). By default (`--revoke-unmentioned=true`) in directory mode, plans are aggregated per safe-dir and the SDK's `planApply` emits revoke calls for any role on the modifier not in the aggregated set; output is `<network>.<safe-address>.plan.json` inside each safe-dir. Safe-dir mode is also the only mode that consults `safe.yaml` for Safe-level config (guard/fallback/modules). Pass `--revoke-unmentioned=false` to opt into the legacy per-file flow: each source produces a `<stem>.plan.json` via `planApplyRole` with no revokes, and `safe.yaml` is ignored. RPC URL is resolved per-chainId via `<NETWORK>_RPC_URL` (e.g. `MAINNET_RPC_URL`, `BASE_RPC_URL`), falling back to `RPC_URL`.",
     )
     .option(
       '--rpc-url <url>',

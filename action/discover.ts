@@ -63,11 +63,28 @@ export function planPathFor(generatedPath: string): string {
 
 /**
  * Plan file path for a whole safe-dir (per-modifier plan):
- * `<safeDir.dirPath>/<safeAddress lowercase>.plan.json`. Each safe-dir
+ * `<safeDir.dirPath>/<network>.<safeAddress lowercase>.plan.json`. Each safe-dir
  * produces exactly one plan file via the per-modifier `planApply` path.
+ *
+ * The basename is qualified by `network` (not just the safe address) so it is
+ * GLOBALLY unique, not merely unique within its directory. The same Safe
+ * address is commonly deployed on multiple chains (CREATE2), giving safe-dirs
+ * `<root>/mainnet/0xA/` and `<root>/base/0xA/`. With an address-only basename
+ * both plans are `0xa….plan.json` — distinct on disk but COLLIDING the moment
+ * a consumer flattens them into one namespace (e.g. uploading every plan file
+ * under `config/` as GitHub release assets, which are keyed by basename). The
+ * network prefix preserves the disambiguating path segment in the name itself,
+ * so the artifact is self-describing and never collides.
  */
-export function safeDirPlanPathFor(safeDir: { dirPath: string; safeAddress: string }): string {
-  return join(safeDir.dirPath, safeDir.safeAddress.toLowerCase() + PLAN_SUFFIX);
+export function safeDirPlanPathFor(safeDir: {
+  dirPath: string;
+  safeAddress: string;
+  network: string;
+}): string {
+  return join(
+    safeDir.dirPath,
+    `${safeDir.network}.${safeDir.safeAddress.toLowerCase()}${PLAN_SUFFIX}`,
+  );
 }
 
 function toAbs(p: string): string {
