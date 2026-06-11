@@ -559,4 +559,42 @@ describe('toSdkTargets', () => {
       expect((e as ZacError).message).toContain("unsupported operator 'and'");
     }
   });
+
+  it('TC-16: an `or` branch that omits a signature parameter throws ZacError(phase=apply)', () => {
+    const r = recordingC();
+    // branch 0 pins both params; branch 1 omits `toToken` — which would otherwise
+    // leave that slot unconstrained, widening the whole `or` to any toToken.
+    const gen = makeGenerated({
+      address: '0xmilkman',
+      functions: [
+        {
+          signature: 'function requestSwap(address fromToken, address toToken)',
+          operator: 'or',
+          branches: [
+            {
+              operator: 'matches',
+              params: [
+                { name: 'fromToken', operator: 'equal_to', value: '0xusdc', value_type: 'address' },
+                { name: 'toToken', operator: 'equal_to', value: '0xpyusd', value_type: 'address' },
+              ],
+            },
+            {
+              operator: 'matches',
+              params: [
+                { name: 'fromToken', operator: 'equal_to', value: '0xusdc', value_type: 'address' },
+                // toToken intentionally missing
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    try {
+      toSdkTargets(gen, 'ROLE', r);
+      throw new Error('expected toSdkTargets to throw');
+    } catch (e) {
+      expect(e).toBeInstanceOf(ZacError);
+      expect((e as ZacError).message).toContain("branch 1 does not constrain parameter 'toToken'");
+    }
+  });
 });

@@ -32,10 +32,23 @@
                   bound to the exact pair. (A single resulting branch collapses to a
                   plain match — no redundant `or`.)
 
+  Optional params:
+    max_approval — exclusive upper bound (in base units) for the approve `amount`
+                   on every from-token, emitted as `less_than max_approval`.
+                   Defaults to uint256.max, which only rules out the literal
+                   infinite-approval sentinel and does NOT bound exposure. Set it to
+                   a realistic operational ceiling to cap how much the role can
+                   approve to Milkman in one shot. A single value applies to all
+                   from_tokens, so it is most precise with one from-token (the
+                   common case); with mixed decimals, pick a bound valid for each.
+
   Policy enforced:
-    approve(spender=Milkman, amount < uint256.max) on each from-token.
-      Pinning the spender prevents approving arbitrary contracts; excluding
-      type(uint256).max prevents infinite/standing approvals.
+    approve(spender=Milkman, amount < max_approval) on each from-token.
+      Pinning the spender prevents approving arbitrary contracts. The amount bound
+      is an EXCLUSIVE ceiling: by default it is uint256.max, which only excludes the
+      infinite-approval sentinel — it does NOT limit exposure (any amount below it,
+      up to the whole Safe balance, is allowed, and `amountIn` on the swap is `pass`).
+      Set `max_approval` to a realistic ceiling to bound standing/per-swap exposure.
     requestSwapExactTokensForTokens, per (from, to) branch:
       amountIn     pass
       fromToken    == aliases.tokens[from]
@@ -69,7 +82,7 @@ roles:
           - name: amount
             param_type: "static"
             operator: "less_than"
-            value: "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+            value: "{{ max_approval | default('115792089237316195423570985008687907853269984665640564039457584007913129639935') }}"
             value_type: "uint256"
 {%- endfor %}
 

@@ -71,11 +71,17 @@ describe('milkman/milkman.tmpl', () => {
     );
   });
 
-  it('TMK-3: approve pins spender == Milkman and bars infinite approval', () => {
+  it('TMK-3: approve pins spender == Milkman; amount ceiling defaults to uint256.max', () => {
     const out = render();
     expect(out).toContain(`value: "${MILKMAN}"`); // spender == milkman
     expect(out).toContain('operator: "less_than"');
-    expect(out).toContain(`value: "${UINT256_MAX}"`); // amount < type(uint256).max
+    expect(out).toContain(`value: "${UINT256_MAX}"`); // default ceiling (sentinel only)
+  });
+
+  it('TMK-3b: max_approval, when set, replaces the approve ceiling', () => {
+    const out = render({ ...params, max_approval: '20000000' }); // 20 USDC
+    expect(out).toContain('value: "20000000"');
+    expect(out).not.toContain(`value: "${UINT256_MAX}"`);
   });
 
   it('TMK-4: requestSwap is an `or` of one `matches` branch per (from, to) pair', () => {

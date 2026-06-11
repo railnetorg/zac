@@ -231,6 +231,38 @@ function buildPositionalScoping(
 }
 
 /**
+ * Mirror of validate's per-branch coverage check (`runValidate`'s
+ * `checkParamCoverage`) on the apply path. Each `or` branch is an access-control
+ * boundary: a branch that omits a parameter leaves that calldata slot
+ * unconstrained — `buildPositionalScoping` maps a missing param to `undefined`
+ * (no scoping), silently widening the whole `or` to allow any value there.
+ * `generate` already rejects this via `validateRenderedTemplate`, but
+ * `apply`/`plan` consume the generated YAML through `parseGenerated` with no
+ * re-validation, so a hand-edited or out-of-band file could otherwise apply the
+ * widened permission with no error. Throw instead. (Only enforced for `or`
+ * branches; the single-`params` path intentionally treats a missing param as
+ * `pass` and collapses an all-pass set to "unconstrained".)
+ */
+function assertBranchCoverage(
+  params: ParamYaml[] | undefined,
+  signature: string,
+  branchIdx: number,
+): void {
+  const item = parseAbiItem(signature) as unknown as { inputs: AbiInput[] };
+  const inputs = item.inputs ?? [];
+  const names = new Set((params ?? []).map((p) => p.name));
+  for (const inp of inputs) {
+    const name = inp.name ?? '';
+    if (!names.has(name)) {
+      throw new ZacError({
+        phase: 'apply',
+        message: `'or' branch ${branchIdx} does not constrain parameter '${name}' of '${signature}'; every branch must address each parameter (an unconstrained slot silently widens the whole 'or')`,
+      });
+    }
+  }
+}
+
+/**
  * Build the root condition for one function rule, or `null` when the function
  * is unconstrained (no params / all-pass). Two forms:
  *   - positional `params` → a single `calldataMatches`;
@@ -263,6 +295,7 @@ function buildFunctionCondition(fn: FunctionYaml, c: SdkBuilders['c']): unknown 
           message: `'or' branch ${i} operator must be 'matches' (got '${b.operator}')`,
         });
       }
+      assertBranchCoverage(b.params, fn.signature, i);
       const sc = buildPositionalScoping(b.params, fn.signature, c);
       if (sc === null) {
         throw new ZacError({
