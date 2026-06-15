@@ -1,0 +1,112 @@
+{#-
+  Spiko tokenized funds (T-Bills MMFs + Smart Cash / SAFO) — INVESTOR side.
+
+  Covers every Spiko share token: the T-Bills money-market funds (EUTBL,
+  USTBL) AND the Smart Cash / SAFO classes (eurSAFO, usdSAFO, gbpSAFO,
+  chfSAFO — the Spiko Amundi Overnight Swap Fund behind "Spiko Smart Cash").
+  All are the same transfer-restricted ERC-20 + ERC-1363 "Token" contract
+  redeeming into ONE shared per-chain Redemption contract, so a single
+  template + role set covers them uniformly — list whichever keys apply in
+  the `funds` param.
+
+  Spiko funds are permissioned, transfer-restricted ERC-20 share tokens.
+  There is NO on-chain subscribe/mint for investors: subscription is an
+  off-chain fiat / stablecoin deposit followed by an operator-only mint to
+  the (KYC-allowlisted) Safe. The ONLY investor-initiated on-chain write is
+  redemption, performed via ERC-1363 `transferAndCall` ON THE SHARE TOKEN —
+  no prior ERC-20 approve is needed:
+
+    transferAndCall(to = Redemption, value = shares, data = abi.encode(output, salt))
+
+  The token escrows the shares to the shared Redemption contract and logs a
+  PENDING request; Spiko's operator later settles the payout to the caller.
+  If the operator never settles before the on-chain deadline, anyone — the
+  Safe included — may call the permissionless `cancelRedemption` to refund
+  the escrowed shares to `user`.
+
+  Each entry in `funds` is a fund alias KEY, resolved via aliases.spiko[<key>]
+  with NO existence guard. If the alias is missing on the active chain,
+  rendering throws — there is no silent fall-through. To grant the Safe
+  redemption of a fund, add the key to `funds` AND ensure the matching entry
+  exists in aliases/<chain>/spiko.yaml. Each resolved entry must declare:
+    address — the fund's share-token contract (EUTBL / USTBL)
+
+  The shared Redemption contract is canonical-per-chain and is resolved from
+  aliases.spiko.redemption.address — NOT passed as a param.
+
+  Required template params:
+    funds — list of fund alias keys, e.g. ["eutbl", "ustbl"].
+            aliases.spiko[<key>] must exist ⇒ render-time error otherwise.
+
+  Output shape:
+    - One role per fund token: redeem via transferAndCall, with `to` pinned to
+      the Redemption contract (equal_to). `value` (shares) and `data` (the
+      abi-encoded output+salt blob) pass — the on-chain Redemption guard
+      enforces that `output` is a Spiko-registered output for this token (on
+      the live mainnet contract that output is the zero address — actual
+      stablecoin settlement is performed off-chain) and that the caller is
+      allowlisted, while pinning `to` guarantees shares can only ever be
+      escrowed to the canonical Redemption contract.
+    - One role on the Redemption contract: cancelRedemption, with `user`
+      pinned to the avatar (refunds can only ever return to the Safe) and
+      `input` pinned to the fund(s) in scope.
+
+  NOT emitted (delegated-redemption path): transferFromAndCall / approve /
+  permit. Those are only needed when a Spiko relayer redeems on the Safe's
+  behalf via an allowance; that flow needs a Spiko-specific spender address
+  and is out of scope for this self-service template.
+-#}
+{%- set redemption = aliases.spiko.redemption -%}
+roles:
+{%- for key in funds %}
+{%- set fund = aliases.spiko[key] %}
+
+  - address: "{{ fund.address }}"
+    functions:
+      - signature: "function transferAndCall(address to, uint256 value, bytes data)"
+        execution_options: "none"
+        params:
+          - name: to
+            param_type: "static"
+            operator: "equal_to"
+            value: "{{ redemption.address }}"
+            value_type: "address"
+          - name: value
+            param_type: "static"
+            operator: "pass"
+          - name: data
+            param_type: "dynamic"
+            operator: "pass"
+{%- endfor %}
+
+  - address: "{{ redemption.address }}"
+    functions:
+      - signature: "function cancelRedemption(address user, address input, address output, uint256 inputValue, bytes32 salt)"
+        execution_options: "none"
+        params:
+          - name: user
+            param_type: "static"
+            operator: "equal_to_avatar"
+          - name: input
+            param_type: "static"
+{%- if funds | length == 1 %}
+            operator: "equal_to"
+            value: "{{ aliases.spiko[funds[0]].address }}"
+            value_type: "address"
+{%- else %}
+            operator: "oneOf"
+            values:
+{%- for key in funds %}
+              - "{{ aliases.spiko[key].address }}"
+{%- endfor %}
+            value_type: "address"
+{%- endif %}
+          - name: output
+            param_type: "static"
+            operator: "pass"
+          - name: inputValue
+            param_type: "static"
+            operator: "pass"
+          - name: salt
+            param_type: "static"
+            operator: "pass"

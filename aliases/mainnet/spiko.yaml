@@ -1,0 +1,39 @@
+# Spiko tokenized funds — investor (redeem) side.
+#
+# Covers BOTH Spiko product lines, which share one transfer-restricted
+# ERC-20 + ERC-1363 "Token" contract and ONE shared per-chain Redemption
+# contract. Verified on-chain: every token's authority() equals the
+# Redemption's authority() (the same PermissionManager), and an eurSAFO
+# redemption was decoded settling into the shared Redemption below.
+#   - T-Bills money-market funds:   EUTBL (EU), USTBL (US)
+#   - Smart Cash / SAFO classes:    eurSAFO, usdSAFO, gbpSAFO, chfSAFO
+#     (SAFO = Spiko Amundi Overnight Swap Fund — the on-chain fund behind
+#      the "Spiko Smart Cash" product)
+#
+# Subscription is off-chain (an operator mints shares after a fiat /
+# stablecoin deposit), so the only on-chain investor write is redemption,
+# done via ERC-1363 transferAndCall on the share token and escrowed to the
+# shared Redemption contract. See templates/spiko/spiko.tmpl.
+#
+# `redemption` is the canonical-per-chain Redemption contract (resolved by
+# the template, not passed as a param). Each fund entry's `address` is the
+# fund's transfer-restricted share-token contract. All entries below are
+# Ethereum mainnet, 5 decimals, verified on Etherscan.
+redemption:
+  address: "0xDA5599f04e9b437C8394b0c2BC68B502A66ebFe8" # Spiko: Redemption Manager (shared by all funds)
+
+# --- T-Bills money-market funds ---
+eutbl:
+  address: "0xa0769f7A8fC65e47dE93797b4e21C073c117Fc80" # Spiko EU T-Bills MMF
+ustbl:
+  address: "0xe4880249745eAc5F1eD9d8F7DF844792D560e750" # Spiko US T-Bills MMF
+
+# --- Smart Cash / SAFO (Spiko Amundi Overnight Swap Fund) ---
+eursafo:
+  address: "0x0990b149e915cb08E2143a5c6f669c907edDC8B0" # eurSAFO (EUR class)
+usdsafo:
+  address: "0xcBaDe7D9BdEe88411CB6cbCbB29952b742036992" # usdSAFO (USD class; on-chain symbol is bare "SAFO")
+gbpsafo:
+  address: "0xC273986a91e4BFC543610a5cb5860b7Cfefb6cC0" # gbpSAFO (GBP class)
+chfsafo:
+  address: "0x18B5C15e5196a38A162b1787875295B76e4313Fb" # chfSAFO (CHF class)

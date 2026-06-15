@@ -1,0 +1,17 @@
+roles_modifier_address: "{{ aliases.modifiers.my_modifier }}"
+safe_address: "{{ aliases.safes.my_safe }}"
+chain_id: 1
+name: My Safe Spiko Redeemer
+description: Redeem Spiko fund shares — T-Bills MMFs (EUTBL/USTBL) and Smart Cash / SAFO (eurSAFO/usdSAFO) — via the shared Redemption contract
+configs:
+  - template: "../../../templates/spiko/spiko.tmpl"
+    key: SPIKO
+    members:
+      - "{{ aliases.signers.alice }}"
+      - "{{ aliases.signers.bob }}"
+    params:
+      funds:
+        - "eutbl"
+        - "ustbl"
+        - "eursafo"
+        - "usdsafo"
