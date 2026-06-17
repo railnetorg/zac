@@ -32,8 +32,13 @@
           netTokenIn/minTokenOut    pass            (slippage set + validated by the
                                                       executor: Tenderly sim + validator)
         guessPtOut (ApproxParams)   pass
-        limit (LimitOrderData)      pass            (holds dynamic arrays; output still
-                                                      lands at receiver == avatar)
+        limit (LimitOrderData):
+          limitRouter             == address(0)   ← Pendle's _fillLimit infinite-approves the
+                                                    in-flight token to `limitRouter` then calls it,
+                                                    so an arbitrary value drains funds. Pinning 0
+                                                    forbids limit orders (AMM-only); empty-limit
+                                                    swaps — the path we use — leave it unused.
+          epsSkipMarket / normalFills / flashFills / optData  pass
 
     A single configured market collapses the `or` to a plain match (zodiac-roles
     rejects an `or` of one), handled natively by the apply layer.
@@ -105,7 +110,16 @@ roles:
               - name: input
                 {{ token_io(m.underlying, ZERO) | indent(16) }}
               - name: limit
-                operator: "pass"
+                param_type: "tuple"
+                operator: "matches"
+                conditions:
+                  - operator: "equal_to"
+                    value: "{{ ZERO }}"
+                    value_type: "address"
+                  - operator: "pass"
+                  - operator: "pass"
+                  - operator: "pass"
+                  - operator: "pass"
 {%- endfor %}
 
       - signature: "function swapExactPtForToken(address receiver, address market, uint256 exactPtIn, {{ TKN }} output, {{ LIMIT }} limit)"
@@ -127,7 +141,16 @@ roles:
               - name: output
                 {{ token_io(m.underlying, ZERO) | indent(16) }}
               - name: limit
-                operator: "pass"
+                param_type: "tuple"
+                operator: "matches"
+                conditions:
+                  - operator: "equal_to"
+                    value: "{{ ZERO }}"
+                    value_type: "address"
+                  - operator: "pass"
+                  - operator: "pass"
+                  - operator: "pass"
+                  - operator: "pass"
 {%- endfor %}
 
       - signature: "function redeemPyToToken(address receiver, address YT, uint256 netPyIn, {{ TKN }} output)"
