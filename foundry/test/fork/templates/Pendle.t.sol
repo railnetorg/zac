@@ -226,6 +226,20 @@ contract PendleRoleMainnetTest is ZacForkTest {
         _expectReject(ROUTER, _redeem(ALICE, SUSDE_YT, SUSDE, address(0)));
     }
 
+    // ==================== limit.limitRouter pin ====================
+
+    /// TF-15 — deny: a non-zero `limit.limitRouter` on entry. Pendle's `_fillLimit`
+    ///         infinite-approves the in-flight token to `limitRouter` and then calls it, so the
+    ///         policy pins it to address(0); any other value is rejected at the gate.
+    function test_TF15_BuyPtNonZeroLimitRouterRejected() public {
+        _expectReject(ROUTER, _buyPtBadLimit(safeAddr, SUSDE_MARKET, SUSDE));
+    }
+
+    /// TF-16 — deny: same guard on the exit leg.
+    function test_TF16_SellPtNonZeroLimitRouterRejected() public {
+        _expectReject(ROUTER, _sellPtBadLimit(safeAddr, SUSDE_MARKET, SUSDE));
+    }
+
     // ==================== Helpers ====================
 
     /// @dev Assert a call clears the policy gate. `shouldRevert=false` so the inner Pendle
@@ -252,6 +266,26 @@ contract PendleRoleMainnetTest is ZacForkTest {
     function _limit() internal pure returns (LimitOrderData memory l) {
         l.normalFills = new FillOrderParams[](0);
         l.flashFills = new FillOrderParams[](0);
+    }
+
+    /// @dev LimitOrderData with a non-zero `limitRouter` (empty fills) — the policy pins it to 0.
+    function _limitBad() internal pure returns (LimitOrderData memory l) {
+        l.limitRouter = DEAD;
+        l.normalFills = new FillOrderParams[](0);
+        l.flashFills = new FillOrderParams[](0);
+    }
+
+    function _buyPtBadLimit(address receiver, address market, address tokenIn) internal pure returns (bytes memory) {
+        return abi.encodeCall(
+            IPendleRouter.swapExactTokenForPt,
+            (receiver, market, 0, _approx(), _input(tokenIn, address(0)), _limitBad())
+        );
+    }
+
+    function _sellPtBadLimit(address receiver, address market, address tokenOut) internal pure returns (bytes memory) {
+        return abi.encodeCall(
+            IPendleRouter.swapExactPtForToken, (receiver, market, AMOUNT, _output(tokenOut, address(0)), _limitBad())
+        );
     }
 
     /// @dev TokenInput pinning tokenIn == tokenMintSy; swapData left empty (swapType NONE).
