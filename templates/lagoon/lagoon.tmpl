@@ -1,17 +1,25 @@
 {#-
-  Lagoon — NAV settlement and operations on Lagoon vault(s).
+  Lagoon — approve + NAV settlement and operations on a single Lagoon vault.
 
-  Each entry in `vaults` is a RESOLVED vault contract address — pass it
-  as a literal `0x…` string or a template expression (`{{ aliases.lagoon.<key> }}`
-  if you've defined one). The template does no further alias lookup;
-  vaults are case-specific so the registry doesn't ship globals.
+  ONE vault per config. Pass the RESOLVED vault contract address and the
+  RESOLVED underlying asset token address — each a literal `0x…` string or
+  a template expression (`{{ aliases.lagoon.<key> }}` for the vault,
+  `{{ aliases.tokens.<SYM> }}` for the asset). The template does no further
+  alias lookup; vaults are case-specific so the registry ships no globals.
 
   Required template params:
-    vaults — list of 0x-prefixed vault contract addresses, e.g.
-             ["{{ aliases.lagoon.my_vault }}", "0xabc…"].
+    vault — the 0x-prefixed Lagoon vault contract address.
+    asset — the 0x-prefixed underlying asset token (the vault's `asset()`):
+            the ERC-20 the vault pulls from the Safe on deposit. The role is
+            granted approve(spender = vault, amount = *) on this token ONLY.
 
   Output shape:
-    - One target per vault, with six allowed functions, all
+    - One approve role on `asset`: erc20.approve(spender, amount) with the
+      spender pinned to `vault` (equal_to) and amount left `pass`. This lets
+      the Safe authorize the vault to pull its underlying on deposit, and
+      authorize nothing else — the spender is hard-scoped to the vault, and
+      approve on any other token is not granted.
+    - One vault role on `vault`, with six allowed functions, all
       execution_options: "none". Every parameter is declared `pass`
       explicitly (zac's validator requires every signature param to be
       covered); the all-pass optimization in `toSdkTargets` then
@@ -24,8 +32,9 @@
       • claimSharesOnBehalf(address[])    — push minted shares to depositors post-settlement
       • claimAssetsOnBehalf(address[])    — push redeemed assets to redeemers post-settlement
 -#}
+{%- from "_macros/common.tmpl" import approve -%}
 roles:
-{%- for vault in vaults %}
+  {{ approve(asset, vault) | indent(2) }}
 
   - address: "{{ vault }}"
     functions:
@@ -66,4 +75,3 @@ roles:
           - name: controllers
             param_type: "dynamic"
             operator: "pass"
-{%- endfor %}
