@@ -16,6 +16,8 @@ export interface RunApplyOpts {
    * universal fallback. See `resolveRpcUrl`.
    */
   rpcUrl?: string;
+  /** Explicit Safe-tx nonce override; when omitted, resolved next-after-pending. */
+  nonce?: number;
   planApplyRole?: PlanApplyRoleFn;
   encodeKey?: (key: string) => `0x${string}`;
   safeInit?: SafeInitFn;
@@ -51,6 +53,7 @@ export async function runApply(opts: RunApplyOpts): Promise<{ safeTxHash: string
   };
   if (apiKey !== undefined) submitArgs.apiKey = apiKey;
   if (opts.rpcUrl !== undefined) submitArgs.rpcUrl = opts.rpcUrl;
+  if (opts.nonce !== undefined) submitArgs.nonce = opts.nonce;
   if (opts.safeInit !== undefined) submitArgs.safeInit = opts.safeInit;
   if (opts.apiKitCtor !== undefined) submitArgs.apiKitCtor = opts.apiKitCtor;
   return runSubmit(submitArgs);

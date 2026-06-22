@@ -261,6 +261,36 @@ function parseBool(name: string, value: string): boolean {
 }
 
 /**
+ * `commander` flag parser for `--nonce <n>`. Accepts a non-negative integer
+ * (the Safe-tx nonce to propose at). Anything else is rejected with a clear
+ * `phase=load` error.
+ */
+function parseNonce(value: string): number {
+  if (!/^[0-9]+$/.test(value)) {
+    throw new ZacError({
+      phase: 'load',
+      message: `--nonce must be a non-negative integer; got '${value}'`,
+    });
+  }
+  return Number(value);
+}
+
+/**
+ * `--nonce` pins ONE nonce, but each Safe has an independent nonce space — so
+ * an override is only ever meaningful for a single target Safe. Reject (rather
+ * than silently queue-replace all-but-one) when the run resolves to more than
+ * one proposal. `targetCount` is the number of distinct Safe proposals the
+ * input expands to (groups in submit; safe-dirs / generated files in apply).
+ */
+function assertSingleTargetForNonceOverride(nonce: number | undefined, targetCount: number): void {
+  if (nonce === undefined || targetCount <= 1) return;
+  throw new ZacError({
+    phase: 'apply',
+    message: `--nonce was given but this input resolves to ${targetCount} Safe proposals; each Safe has its own nonce space, so pass --nonce only when targeting a single Safe (or omit it to auto-resolve the next nonce per Safe)`,
+  });
+}
+
+/**
  * Emit a one-line warning when the user explicitly passed
  * `--revoke-unmentioned=true` in file-mode, where the flag is a no-op.
  * Without this, the flag silently downgrades to legacy and the user has
@@ -554,9 +584,14 @@ export function buildProgram(): Command {
   program
     .command('submit <path>')
     .description(
-      'sign + post plan JSON files to Safe Transaction Service (signed by ZAC_PROPOSER_PRIVATE_KEY env var; optional SAFE_API_KEY). <path> is a `.plan.json` file (posted as-is) or a directory (walked recursively — plans are auto-bundled per Safe so each Safe gets ONE proposal regardless of how many plan files target it). RPC URL is resolved per-chainId via `<NETWORK>_RPC_URL` (e.g. `MAINNET_RPC_URL`, `BASE_RPC_URL`), falling back to `RPC_URL`.',
+      'sign + post plan JSON files to Safe Transaction Service (signed by ZAC_PROPOSER_PRIVATE_KEY env var; optional SAFE_API_KEY). <path> is a `.plan.json` file (posted as-is) or a directory (walked recursively — plans are auto-bundled per Safe so each Safe gets ONE proposal regardless of how many plan files target it). The proposal nonce is resolved from the Safe Transaction Service (next nonce AFTER any pending queued proposal) unless `--nonce` is given. RPC URL is resolved per-chainId via `<NETWORK>_RPC_URL` (e.g. `MAINNET_RPC_URL`, `BASE_RPC_URL`), falling back to `RPC_URL`.',
     )
-    .action(async (inputPath: string) => {
+    .option(
+      '--nonce <n>',
+      'propose at this exact Safe nonce instead of the auto-resolved next-after-pending nonce (e.g. to replace a specific pending proposal). In directory-mode the same nonce is applied to EVERY per-Safe bundle, so only pass it when targeting a single Safe.',
+      parseNonce,
+    )
+    .action(async (inputPath: string, options: { nonce?: number }) => {
       const { runSubmit, runBundledSubmit } = await import('./apply/runSubmit');
       const { parsePlan } = await import('./apply/planSchema');
       const { computeSafeTxMessageHash } = await import('./apply/safeApi');
@@ -589,6 +624,7 @@ export function buildProgram(): Command {
         };
         const apiKey = process.env['SAFE_API_KEY'];
         if (apiKey !== undefined) submitArgs.apiKey = apiKey;
+        if (options.nonce !== undefined) submitArgs.nonce = options.nonce;
         // RPC URL is resolved per-chainId inside runSubmit (see resolveRpcUrl).
         const result = await runSubmit(submitArgs);
         const messageHash = computeSafeTxMessageHash(result.safeTxData);
@@ -614,6 +650,7 @@ export function buildProgram(): Command {
       assertNoMixedSafeDirPlans(planPaths);
       const plans = planPaths.map((p) => parsePlan(readFileSync(p, 'utf8')));
       const groups = groupPlansBySafe(plans);
+      assertSingleTargetForNonceOverride(options.nonce, groups.length);
       const { ok } = await runGroupBatch(groups, 'submit', async (group) => {
         const submitArgs: Parameters<typeof runBundledSubmit>[0] = {
           plans: group.plans,
@@ -621,6 +658,7 @@ export function buildProgram(): Command {
         };
         const apiKey = process.env['SAFE_API_KEY'];
         if (apiKey !== undefined) submitArgs.apiKey = apiKey;
+        if (options.nonce !== undefined) submitArgs.nonce = options.nonce;
         // RPC URL is resolved per-chainId inside runBundledSubmit (see resolveRpcUrl).
         const result = await runBundledSubmit(submitArgs);
         const messageHash = computeSafeTxMessageHash(result.safeTxData);
@@ -657,10 +695,15 @@ export function buildProgram(): Command {
       (v: string) => parseBool('--revoke-unmentioned', v),
       true,
     )
+    .option(
+      '--nonce <n>',
+      'propose at this exact Safe nonce instead of the auto-resolved next-after-pending nonce (e.g. to replace a specific pending proposal). In directory-mode the same nonce is applied to EVERY safe-dir, so only pass it when targeting a single Safe.',
+      parseNonce,
+    )
     .action(
       async (
         inputPath: string,
-        options: { rpcUrl?: string; revokeUnmentioned: boolean },
+        options: { rpcUrl?: string; revokeUnmentioned: boolean; nonce?: number },
         command: Command,
       ) => {
         // `apply` is `plan + submit` chained internally. We dispatch the
@@ -700,6 +743,7 @@ export function buildProgram(): Command {
 
         if (useSafeDirMode) {
           const safeDirs = findSafeDirs(inputPath);
+          assertSingleTargetForNonceOverride(options.nonce, safeDirs.length);
           const { ok } = await runSafeDirBatch(safeDirs, 'apply', async (sd) => {
             const planOpts: Parameters<typeof runPlanForSafeDir>[0] = { safeDir: sd };
             if (options.rpcUrl !== undefined) planOpts.rpcUrl = options.rpcUrl;
@@ -732,6 +776,7 @@ export function buildProgram(): Command {
             };
             if (apiKey !== undefined) submitArgs.apiKey = apiKey;
             if (options.rpcUrl !== undefined) submitArgs.rpcUrl = options.rpcUrl;
+            if (options.nonce !== undefined) submitArgs.nonce = options.nonce;
             const result = await runSubmit(submitArgs);
             process.stdout.write(
               `applied safe=${sd.safeAddress} chain=${sd.chainId} (${sd.sources.length} source${sd.sources.length === 1 ? '' : 's'}): safeTxHash ${result.safeTxHash}\n`,
@@ -745,6 +790,7 @@ export function buildProgram(): Command {
 
         // Legacy per-file flow.
         const generated = resolveGeneratedInputs(inputPath, inputIsFile, absInput);
+        assertSingleTargetForNonceOverride(options.nonce, generated.length);
         const { ok } = await runBatch(generated, 'apply', async (genPath) => {
           const planOpts: Parameters<typeof runPlan>[0] = { generatedPath: genPath };
           const plan = await runPlan(planOpts);
@@ -775,6 +821,7 @@ export function buildProgram(): Command {
           };
           if (apiKey !== undefined) submitArgs.apiKey = apiKey;
           if (options.rpcUrl !== undefined) submitArgs.rpcUrl = options.rpcUrl;
+          if (options.nonce !== undefined) submitArgs.nonce = options.nonce;
           const result = await runSubmit(submitArgs);
           process.stdout.write(
             `applied ${displayPath(genPath)}: safeTxHash ${result.safeTxHash}\n`,

@@ -136,6 +136,36 @@ describe('cli plan + submit', () => {
     expect(stderr).toContain('mutually exclusive');
   });
 
+  it('TM-7i: submit <dir> resolving to >1 Safe with --nonce → phase=apply rejection before any network call', async () => {
+    // Two distinct safe-dirs (two Safe addresses) each with one aggregated
+    // plan. `--nonce` pins a single nonce, which can only be correct for one
+    // Safe — the CLI must refuse rather than queue-replace the other.
+    const root = makeTempDir();
+    const mkPlan = (safe: string) => ({
+      calls: [{ to: '0x4444444444444444444444444444444444444444', value: '0', data: '0xdeadbeef' }],
+      callsCount: 1,
+      chainId: 1,
+      modifierAddress: '0x4444444444444444444444444444444444444444',
+      safeAddress: safe,
+    });
+    for (const safe of [
+      '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    ]) {
+      const dir = join(root, 'mainnet', safe);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, `${safe}.plan.json`), JSON.stringify(mkPlan(safe)));
+    }
+    const env = { ...process.env };
+    env['ZAC_PROPOSER_PRIVATE_KEY'] =
+      '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
+    const { code, stderr } = await runCli(['submit', root, '--nonce', '5'], env);
+    expect(code).toBe(1);
+    expect(stderr).toContain('phase=apply');
+    expect(stderr).toContain('2 Safe proposals');
+    expect(stderr).toContain('--nonce');
+  });
+
   it('TM-7e: submit with a syntactically-valid plan but no ZAC_PROPOSER_PRIVATE_KEY → phase=apply error', async () => {
     const d = makeTempDir();
     const planPath = join(d, 'plan.json');

@@ -2,6 +2,7 @@ import { ZacError } from '../errors';
 import { resolveRpcUrl } from './rpc';
 import {
   buildSafeTransaction,
+  resolveProposalNonce,
   signAndPropose,
   type SafeApiKitCtor,
   type SafeInitFn,
@@ -18,6 +19,12 @@ export interface RunSubmitOpts {
    * universal fallback. See `resolveRpcUrl`.
    */
   rpcUrl?: string;
+  /**
+   * Explicit Safe-tx nonce override (CLI `--nonce`). When omitted, the nonce
+   * is resolved from the Safe Transaction Service (next-after-pending). See
+   * `resolveProposalNonce`.
+   */
+  nonce?: number;
   safeInit?: SafeInitFn;
   apiKitCtor?: SafeApiKitCtor;
 }
@@ -48,6 +55,7 @@ export async function runSubmit(opts: RunSubmitOpts): Promise<SubmitResult> {
   };
   if (opts.apiKey !== undefined) bundledArgs.apiKey = opts.apiKey;
   if (opts.rpcUrl !== undefined) bundledArgs.rpcUrl = opts.rpcUrl;
+  if (opts.nonce !== undefined) bundledArgs.nonce = opts.nonce;
   if (opts.safeInit !== undefined) bundledArgs.safeInit = opts.safeInit;
   if (opts.apiKitCtor !== undefined) bundledArgs.apiKitCtor = opts.apiKitCtor;
   return runBundledSubmit(bundledArgs);
@@ -64,6 +72,11 @@ export interface RunBundledSubmitOpts {
    * universal fallback. See `resolveRpcUrl`.
    */
   rpcUrl?: string;
+  /**
+   * Explicit Safe-tx nonce override (CLI `--nonce`). When omitted, resolved
+   * from the Safe Transaction Service (next-after-pending).
+   */
+  nonce?: number;
   safeInit?: SafeInitFn;
   apiKitCtor?: SafeApiKitCtor;
 }
@@ -100,6 +113,18 @@ export async function runBundledSubmit(opts: RunBundledSubmitOpts): Promise<Subm
   if (opts.rpcUrl !== undefined) resolveArgs.overrideUrl = opts.rpcUrl;
   const rpcUrl = resolveRpcUrl(resolveArgs);
 
+  // Resolve the nonce from the Safe Transaction Service (next-after-pending)
+  // BEFORE building, so the bundled tx appends to the queue instead of
+  // colliding with a pending proposal at the on-chain nonce.
+  const nonceArgs: Parameters<typeof resolveProposalNonce>[0] = {
+    chainId: first.chainId,
+    safeAddress: first.safeAddress,
+  };
+  if (opts.apiKey !== undefined) nonceArgs.apiKey = opts.apiKey;
+  if (opts.apiKitCtor !== undefined) nonceArgs.apiKitCtor = opts.apiKitCtor;
+  if (opts.nonce !== undefined) nonceArgs.nonceOverride = opts.nonce;
+  const nonce = await resolveProposalNonce(nonceArgs);
+
   const buildArgs: Parameters<typeof buildSafeTransaction>[0] = {
     chainId: first.chainId,
     safeAddress: first.safeAddress,
@@ -107,6 +132,7 @@ export async function runBundledSubmit(opts: RunBundledSubmitOpts): Promise<Subm
     rpcUrl,
   };
   if (opts.safeInit !== undefined) buildArgs.safeInit = opts.safeInit;
+  if (nonce !== undefined) buildArgs.nonce = nonce;
   const { safeTxHash, safeTxData } = await buildSafeTransaction(buildArgs);
 
   const submitArgs: Parameters<typeof signAndPropose>[0] = {
