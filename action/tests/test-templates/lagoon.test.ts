@@ -17,8 +17,10 @@ describe('lagoon/lagoon.tmpl', () => {
     { throwOnUndefined: true },
   );
   env.addFilter('keccak', keccak);
+  // `asset` is a token alias KEY resolved via aliases.tokens[<key>].
+  env.addGlobal('aliases', { tokens: { USDC: ASSET } });
 
-  const params = { vault: VAULT, asset: ASSET };
+  const params = { vault: VAULT, asset: 'USDC' };
 
   it('TL-1: renders without error', () => {
     expect(() => env.render('lagoon/lagoon.tmpl', params)).not.toThrow();
@@ -74,5 +76,9 @@ describe('lagoon/lagoon.tmpl', () => {
 
   it('TL-4: a missing asset throws (fail-fast — asset is required)', () => {
     expect(() => env.render('lagoon/lagoon.tmpl', { vault: VAULT })).toThrow();
+  });
+
+  it('TL-5: an asset key absent from the token registry throws (loud-fail)', () => {
+    expect(() => env.render('lagoon/lagoon.tmpl', { vault: VAULT, asset: 'NOPE' })).toThrow();
   });
 });

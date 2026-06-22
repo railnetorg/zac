@@ -15,6 +15,6 @@ configs:
       vault: "0x30a3699e0dcea6bdc8bb2c13e74a2324e0b20116"
       # The vault's underlying asset token (its `asset()`): the ERC-20 the
       # vault pulls on deposit. The role is granted approve(spender = vault)
-      # on THIS token only. Replace with the vault's actual underlying — pass
-      # a literal 0x… string or a token alias (aliases.tokens.<SYM>).
-      asset: "{{ aliases.tokens.USDC }}"
+      # on THIS token only. Pass the token alias KEY (resolved via
+      # aliases.tokens[<key>]) — replace with the vault's actual underlying.
+      asset: "USDC"

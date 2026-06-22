@@ -6,9 +6,9 @@
 # the standard alias syntax (aliases.lagoon.<your_key>).
 #
 # The lagoon template takes ONE vault per config (params: `vault` + `asset`).
-# The vault's underlying `asset` is an ERC-20 token — reference it directly
-# (a literal 0x… string) or via the shared token aliases (aliases.tokens.<SYM>,
-# defined in aliases/<chain>/tokens.yaml). It does not belong here.
+# `asset` is NOT a vault alias and does not belong here: it is a TOKEN ALIAS
+# KEY (e.g. "USDC"), resolved inside the template via aliases.tokens[<key>]
+# from aliases/<chain>/tokens.yaml. A raw 0x… address is NOT accepted there.
 #
 # Lagoon docs: https://docs.lagoon.finance/developer-hub/smart-contract-reference
 #

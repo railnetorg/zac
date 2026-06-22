@@ -1,24 +1,29 @@
 {#-
   Lagoon — approve + NAV settlement and operations on a single Lagoon vault.
 
-  ONE vault per config. Pass the RESOLVED vault contract address and the
-  RESOLVED underlying asset token address — each a literal `0x…` string or
-  a template expression (`{{ aliases.lagoon.<key> }}` for the vault,
-  `{{ aliases.tokens.<SYM> }}` for the asset). The template does no further
-  alias lookup; vaults are case-specific so the registry ships no globals.
+  ONE vault per config. Pass the RESOLVED vault contract address (a literal
+  `0x…` string or `{{ aliases.lagoon.<key> }}`) — the template does no
+  further lookup on the vault, as Lagoon vaults are case-specific and the
+  registry ships no globals. The `asset`, by contrast, is a TOKEN ALIAS KEY
+  (e.g. "USDC") resolved via aliases.tokens[<key>] INSIDE the template — the
+  same way aave_v3 / compound_v3 / ondo_* take their deposit/payment assets.
 
   Required template params:
     vault — the 0x-prefixed Lagoon vault contract address.
-    asset — the 0x-prefixed underlying asset token (the vault's `asset()`):
-            the ERC-20 the vault pulls from the Safe on deposit. The role is
-            granted approve(spender = vault, amount = *) on this token ONLY.
+    asset — the token alias KEY of the vault's underlying (the vault's
+            `asset()`), e.g. "USDC". Resolved via aliases.tokens[<asset>]
+            with NO existence guard ⇒ render-time error if missing. The role
+            is granted approve(spender = vault, amount = *) on this token ONLY.
+
+  Resolved from aliases (NOT passed as a raw address):
+    aliases.tokens[asset] — the underlying ERC-20 the vault pulls on deposit.
 
   Output shape:
-    - One approve role on `asset`: erc20.approve(spender, amount) with the
-      spender pinned to `vault` (equal_to) and amount left `pass`. This lets
-      the Safe authorize the vault to pull its underlying on deposit, and
-      authorize nothing else — the spender is hard-scoped to the vault, and
-      approve on any other token is not granted.
+    - One approve role on the resolved asset token: erc20.approve(spender,
+      amount) with the spender pinned to `vault` (equal_to) and amount left
+      `pass`. This lets the Safe authorize the vault to pull its underlying
+      on deposit, and authorize nothing else — the spender is hard-scoped to
+      the vault, and approve on any other token is not granted.
     - One vault role on `vault`, with six allowed functions, all
       execution_options: "none". Every parameter is declared `pass`
       explicitly (zac's validator requires every signature param to be
@@ -34,7 +39,7 @@
 -#}
 {%- from "_macros/common.tmpl" import approve -%}
 roles:
-  {{ approve(asset, vault) | indent(2) }}
+  {{ approve(aliases.tokens[asset], vault) | indent(2) }}
 
   - address: "{{ vault }}"
     functions:
