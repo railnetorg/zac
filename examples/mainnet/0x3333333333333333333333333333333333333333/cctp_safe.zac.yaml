@@ -1,0 +1,19 @@
+roles_modifier_address: "{{ aliases.modifiers.my_modifier }}"
+safe_address: "{{ aliases.safes.my_safe }}"
+chain_id: 1
+name: My Safe CCTP USDC Bridge
+description: Bridge USDC from this Safe to the destination-chain Safe over Circle CCTP v2; mintRecipient pinned to the destination Safe.
+configs:
+  - template: "../../../templates/cctp/cctp.tmpl"
+    # Bridging is a treasury-movement operation, not a protocol position — it
+    # lives under the same role as CowSwap swaps (see milkman_safe.zac.yaml).
+    key: STRATEGY_MANAGER
+    members:
+      - "{{ aliases.signers.alice }}"
+    params:
+      # Destination chain CCTP domain. Base = 6 (Ethereum = 0).
+      destination_domain: 6
+      # The destination Safe on Base. Pinned as mintRecipient (encoded to bytes32
+      # by the template), so a burn can only ever credit this address. Replace
+      # with your own Base Safe before deploying.
+      destination_safe: "0x4B6F1D37D2561C71355E5b63dBFfAaf372D30Da3"

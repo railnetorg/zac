@@ -1,0 +1,96 @@
+{#-
+  Circle CCTP v2 — bridge USDC from the home Safe to a destination-chain Safe.
+
+  Model A (direct per-chain control): the policy scopes only the burn on the home
+  Safe. The destination mint is permissionless (a keeper/relayer calls
+  receiveMessage with Circle's attestation) and the destination Safe receives
+  passively, so it needs no Role. Scope therefore stops at depositForBurn.
+
+  Contracts are canonical-per-chain, resolved from aliases.cctp (NOT params):
+    token_messenger_v2 — burn entrypoint; pinned as the approve spender AND the
+                          depositForBurn call target.
+    usdc               — burn token; pinned as the approve token AND `burnToken`.
+
+  Required template params:
+    destination_domain — CCTP domain of the destination chain (uint32). Base = 6.
+    destination_safe   — the destination Safe (an address on the destination
+                         chain). Pinned as `mintRecipient`, encoded as CCTP
+                         expects: bytes32(uint160(address)) — the address
+                         right-aligned in 32 bytes.
+
+  Policy enforced:
+    approve(spender = token_messenger_v2) on USDC, so the messenger can pull the
+      USDC it burns. amount is `pass` (the messenger only ever pulls exactly the
+      burn amount; bounding it would block legitimate larger bridges).
+
+    depositForBurn — the load-bearing pins are mintRecipient (funds can only land
+      in the destination Safe), burnToken (USDC only), and destinationDomain
+      (the destination chain only). These are the CCTP analogue of Milkman's
+      pinned recipient.
+        amount               pass
+        destinationDomain    == destination_domain
+        mintRecipient        == bytes32(destination_safe)  ← redirect guard
+        burnToken            == usdc                        ← USDC only
+        destinationCaller    == bytes32(0)                  ← permissionless mint;
+                                                              anyone may relay, so
+                                                              no caller is pinned
+                                                              on the far side
+        maxFee               pass
+        minFinalityThreshold == 2000                        ← Standard transfer
+                                                              (finalized attestation;
+                                                              Fast = 1000 is not
+                                                              permitted)
+
+    Only depositForBurn is scoped on the messenger. The hook variant
+    (depositForBurnWithHook) and any other selector are not authorised.
+
+  Verified (cast + Circle docs, 2026-06-23): depositForBurn v2 selector
+  0x8e0250ee; Standard finality threshold 2000; v2 addresses identical across
+  EVM chains.
+-#}
+{%- from "_macros/common.tmpl" import approve -%}
+{%- set messenger = aliases.cctp.token_messenger_v2 -%}
+{%- set usdc = aliases.cctp.usdc -%}
+{%- set ZERO32 = "0x0000000000000000000000000000000000000000000000000000000000000000" -%}
+{#- CCTP encodes recipients as bytes32(uint160(address)): the 20-byte address
+    right-aligned in a 32-byte word (12 leading zero bytes = 24 hex zeros). -#}
+{%- set mint_recipient = "0x000000000000000000000000" ~ (destination_safe | replace("0x", "")) -%}
+roles:
+  {{ approve(usdc, messenger) | indent(2) }}
+
+  - address: "{{ messenger }}"
+    functions:
+      - signature: "function depositForBurn(uint256 amount, uint32 destinationDomain, bytes32 mintRecipient, address burnToken, bytes32 destinationCaller, uint256 maxFee, uint32 minFinalityThreshold)"
+        execution_options: "none"
+        params:
+          - name: amount
+            param_type: "static"
+            operator: "pass"
+          - name: destinationDomain
+            param_type: "static"
+            operator: "equal_to"
+            value: {{ destination_domain }}
+            value_type: "uint32"
+          - name: mintRecipient
+            param_type: "static"
+            operator: "equal_to"
+            value: "{{ mint_recipient }}"
+            value_type: "bytes32"
+          - name: burnToken
+            param_type: "static"
+            operator: "equal_to"
+            value: "{{ usdc }}"
+            value_type: "address"
+          - name: destinationCaller
+            param_type: "static"
+            operator: "equal_to"
+            value: "{{ ZERO32 }}"
+            value_type: "bytes32"
+          - name: maxFee
+            param_type: "static"
+            operator: "pass"
+          - name: minFinalityThreshold
+            param_type: "static"
+            operator: "equal_to"
+            value: 2000
+            value_type: "uint32"
