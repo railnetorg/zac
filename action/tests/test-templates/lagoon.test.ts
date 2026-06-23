@@ -26,11 +26,12 @@ describe('lagoon/lagoon.tmpl', () => {
     expect(() => env.render('lagoon/lagoon.tmpl', params)).not.toThrow();
   });
 
-  it('TL-2: rendered output parses + has approve + the 6 NAV functions', () => {
+  it('TL-2: rendered output parses + has approve + the 7 NAV functions', () => {
     const out = env.render('lagoon/lagoon.tmpl', params);
     const doc = parseDocument(out);
     expect(doc.errors).toEqual([]);
     expect(out).toContain('function approve(address spender, uint256 amount)');
+    expect(out).toContain('function updateNewTotalAssets(uint256 _newTotalAssets)');
     expect(out).toContain('function settleDeposit(uint256 _newTotalAssets)');
     expect(out).toContain('function settleRedeem(uint256 _newTotalAssets)');
     expect(out).toContain('function expireTotalAssets()');
@@ -69,9 +70,9 @@ describe('lagoon/lagoon.tmpl', () => {
     const amount = approveFn.params!.find((p) => p.name === 'amount')!;
     expect(amount.operator).toBe('pass');
 
-    // The NAV role lives on the vault and carries the six settlement functions.
+    // The NAV role lives on the vault and carries the seven settlement functions.
     const vaultRole = doc.roles.find((r) => r.address.toLowerCase() === VAULT.toLowerCase())!;
-    expect(vaultRole.functions).toHaveLength(6);
+    expect(vaultRole.functions).toHaveLength(7);
   });
 
   it('TL-4: a missing asset throws (fail-fast — asset is required)', () => {
