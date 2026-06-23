@@ -1,9 +1,20 @@
 import { ZacError } from '../errors';
+import { OperatorSchema } from './operatorSchemas';
+import { checkParamSanity } from './sanityChecks';
 
 export interface AbiInput {
   name?: string;
   type: string;
   components?: AbiInput[];
+}
+
+interface AbiEncodedChild {
+  name?: string;
+  param_type?: string;
+  operator?: string;
+  value_type?: string;
+  children?: AbiEncodedChild[];
+  [k: string]: unknown;
 }
 
 interface OperatorObj {
@@ -146,6 +157,15 @@ export function validateParamAgainstInput(
       message: `param name mismatch: got '${param.name}', expected '${input.name ?? '<unnamed>'}'`,
     });
   }
+
+  // `param_type: abi_encoded` decodes a dynamic `bytes` slot into declared
+  // children. It carries `children` instead of an `operator`, so it bypasses
+  // the operator-family check and validates its children's ABI types instead.
+  if ((param as { param_type?: string }).param_type === 'abi_encoded') {
+    validateAbiEncodedParam(param, input);
+    return;
+  }
+
   const op = param as unknown as OperatorObj;
 
   if (op.operator === 'matches' && input.type === 'tuple' && Array.isArray(input.components)) {
@@ -192,4 +212,64 @@ export function validateParamAgainstInput(
   }
 
   validateOperatorAgainstAbi(op, input.type, input.name ?? '');
+}
+
+/**
+ * Derive the ABI type of one `abi_encoded` child slot. Mirrors the same rule in
+ * `apply/toSdkTargets.ts` (kept in lockstep): `value_type` wins, else
+ * `param_type: dynamic` / `abi_encoded` → `bytes`.
+ */
+function abiTypeOfChild(ch: AbiEncodedChild): string {
+  if (ch.value_type) return ch.value_type;
+  if (ch.param_type === 'dynamic') return 'bytes';
+  if (ch.param_type === 'abi_encoded') return 'bytes';
+  throw new ZacError({
+    phase: 'validate',
+    message: `abi_encoded child '${ch.name ?? '<unnamed>'}' needs a value_type, or param_type dynamic/abi_encoded, to define its ABI type`,
+  });
+}
+
+/**
+ * Validate a `param_type: abi_encoded` param. The param must sit on a dynamic
+ * `bytes` input (the opaque encoded payload). Each ordered child declares its
+ * own ABI type; the child operator is schema- and family-checked against it,
+ * recursing for nested `abi_encoded` children.
+ */
+function validateAbiEncodedParam(
+  param: { name: string; [k: string]: unknown },
+  input: AbiInput,
+): void {
+  if (input.type !== 'bytes') {
+    throw new ZacError({
+      phase: 'validate',
+      message: `'abi_encoded' param '${param.name}' must sit on a 'bytes' input, got '${input.type}'`,
+    });
+  }
+  const children = (param as { children?: AbiEncodedChild[] }).children;
+  if (!Array.isArray(children) || children.length === 0) {
+    throw new ZacError({
+      phase: 'validate',
+      message: `'abi_encoded' param '${param.name}' requires a non-empty 'children' list`,
+    });
+  }
+  for (const child of children) {
+    const abiType = abiTypeOfChild(child);
+    if (child.param_type === 'abi_encoded') {
+      validateAbiEncodedParam({ ...child, name: child.name ?? '' }, { type: 'bytes' });
+      continue;
+    }
+    // Schema-shape check (required fields per operator) on the operator object,
+    // mirroring runValidate's top-level loop.
+    const { name: _n, param_type: _pt, children: _ch, display_decode: _dd, ...opObj } = child;
+    void _n;
+    void _pt;
+    void _ch;
+    void _dd;
+    OperatorSchema.parse(opObj);
+    checkParamSanity(
+      child as { operator: string; value?: unknown; value_type?: string },
+      child.name ?? '',
+    );
+    validateOperatorAgainstAbi(child as OperatorObj, abiType, child.name ?? '');
+  }
 }

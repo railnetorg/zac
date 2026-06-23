@@ -8,16 +8,20 @@ const Address = z.string().refine((s) => isAddress(s), {
   message: 'must be a valid Ethereum address',
 });
 
-// Param entries forward extra fields (value, value_type, values, ...) through
-// to planApplyRole — passthrough so we don't have to re-encode the operator
-// taxonomy validated by the Phase 6 schemas.
+// Param entries forward extra fields (value, value_type, values, children, ...)
+// through to planApplyRole — passthrough so we don't have to re-encode the
+// operator taxonomy validated by the Phase 6 schemas. `operator` is optional
+// because a `param_type: abi_encoded` node carries `children` instead.
 const Param = z
   .object({
     name: z.string(),
-    operator: z.string(),
+    operator: z.string().optional(),
   })
   .passthrough();
 
+// A function rule is either a positional `params` set or a root `or` of
+// `branches`. The extra `operator` / `branches` keys pass through (passthrough);
+// the operator taxonomy is enforced in the validate phase + `toSdkTargets`.
 const FunctionRule = z
   .object({
     signature: z.string(),

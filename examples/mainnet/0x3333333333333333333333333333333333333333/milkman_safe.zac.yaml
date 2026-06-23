@@ -1,0 +1,38 @@
+roles_modifier_address: "{{ aliases.modifiers.my_modifier }}"
+safe_address: "{{ aliases.safes.my_safe }}"
+chain_id: 1
+name: My Safe Milkman Swap Manager
+description: Price-protected USDC → PYUSD / RLUSD swaps via CowSwap Milkman, with per-pair slippage caps.
+configs:
+  - template: "../../../templates/milkman/milkman.tmpl"
+    key: STRATEGY_MANAGER
+    members:
+      - "{{ aliases.signers.alice }}"
+    params:
+      # Tokens the Safe may approve to Milkman and swap from.
+      from_tokens:
+        - USDC
+      # Destination tokens, each with its own slippage cap (bps) and the exact
+      # feed path the cap is measured against. The swap allow-list is
+      # from_tokens × to_tokens — one `or` branch per (from, to), with the cap
+      # AND the feeds bound to the exact pair. feeds/reverses must match what the
+      # swap submits (USDC/USD → {dest}/USD, reverses [false, true]); pinning them
+      # stops a caller from supplying a feed that reports a fake price.
+      #
+      # These are the Aave PriceCapAdapterStable feeds, NOT the raw Chainlink
+      # aggregators — the raw aggregators block the Milkman calculator's read so a
+      # swap pinned to them would never settle; the capped adapters wrap the same
+      # aggregators with public reads.
+      to_tokens:
+        - token: PYUSD
+          max_slippage_bps: 500 # ≤ 5%
+          feeds:
+            - "0x3f73F03aa83B2A48ed27E964eD0fDb590332095B" # USDC/USD (Aave capped)
+            - "0x36964C0579D02E0a5AaAb89E24Cf8d7CDF3549EE" # PYUSD/USD (Aave capped)
+          reverses: [false, true]
+        - token: RLUSD
+          max_slippage_bps: 700 # ≤ 7%
+          feeds:
+            - "0x3f73F03aa83B2A48ed27E964eD0fDb590332095B" # USDC/USD (Aave capped)
+            - "0xf0eaC18E908B34770FDEe46d069c846bDa866759" # RLUSD/USD (Aave capped)
+          reverses: [false, true]

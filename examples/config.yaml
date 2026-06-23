@@ -14,6 +14,7 @@ aliases:
     ondo_ousg: ../aliases/mainnet/ondo_ousg.yaml
     lagoon: ../aliases/mainnet/lagoon.yaml
     helper: ../aliases/mainnet/helper.yaml
+    curator: ../aliases/mainnet/curator.yaml
     safes: ./aliases/mainnet/safes.yaml
     modifiers: ./aliases/mainnet/modifiers.yaml
   sepolia:

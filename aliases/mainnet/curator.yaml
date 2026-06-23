@@ -1,0 +1,4 @@
+# CoW Protocol Milkman router + the Chainlink DynamicSlippageChecker the
+# milkman.tmpl policy pins as priceChecker. Mainnet deployments.
+milkman: "0x060373D064d0168931dE2AB8DDA7410923d06E88"
+price_checker: "0xe80a1C615F75AFF7Ed8F08c9F21f9d00982D666c"
