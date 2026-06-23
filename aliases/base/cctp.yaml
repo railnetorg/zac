@@ -1,0 +1,16 @@
+# Circle CCTP v2 — Cross-Chain Transfer Protocol contracts on Base mainnet
+# (CCTP domain 6).
+#
+# For the Ethereum → Base PoC, Base is the DESTINATION chain: USDC is minted here
+# by a keeper/relayer calling message_transmitter_v2.receiveMessage with Circle's
+# attestation, and the destination Safe receives it passively. None of these are
+# scoped by a Roles policy on the destination side.
+#
+# Provided for destination-side reference and for future Base-as-home bridging,
+# where token_messenger_v2 + usdc would be pinned exactly as on mainnet.
+#
+# v2 addresses are identical across EVM chains. Verified against Circle docs
+# (developers.circle.com/cctp/evm-smart-contracts) on 2026-06-23.
+token_messenger_v2: "0x28b5a0e9C621a5BadaA536219b3a228C8168cf5d"
+message_transmitter_v2: "0x81D40F21F12A8F0E3252Bccb954D722d4c464B64"
+usdc: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
