@@ -1,0 +1,15 @@
+roles_modifier_address: "{{ aliases.modifiers.my_modifier }}"
+safe_address: "{{ aliases.safes.my_safe }}"
+chain_id: 1
+name: My Safe Pendle PT
+description: Buy / sell / redeem curated Pendle PTs; receiver pinned to avatar
+configs:
+  - template: "../../../templates/pendle/pendle.tmpl"
+    key: PENDLE_PT
+    members:
+      - "{{ aliases.signers.alice }}"
+      - "{{ aliases.signers.bob }}"
+    params:
+      markets:
+        - "susde_2026_08_13"
+        - "susds_2026_11_26"

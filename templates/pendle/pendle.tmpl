@@ -1,0 +1,174 @@
+{#-
+  Pendle V3 — buy / sell / redeem Principal Tokens on a curated market set.
+
+  Router is canonical-per-chain, resolved from aliases.pendle.router (NOT a
+  param). Markets are referenced by alias KEY under aliases.pendle.markets.
+  Each market entry must declare: market, pt, yt, sy, underlying.
+
+  Required template params:
+    markets — list of market alias keys, e.g. ["susde_2026_08_13", ...].
+              Each resolved via aliases.pendle.markets[<key>].
+
+  Policy enforced:
+    approve(spender = router) on each market's `underlying` (to buy PT) and
+      `pt` (to sell / redeem PT). YT is not approved: redemption is done at
+      maturity, where redeemPyToToken consumes PT only.
+
+    swapExactTokenForPt / swapExactPtForToken / redeemPyToToken — one `or`
+      branch per market, so `market` (or `YT`) is correlated with the exact
+      `underlying`. Per branch:
+        receiver  == avatar               (proceeds stay in the Safe)
+        market    == markets[key].market  (YT for redeemPyToToken)
+        input/output (a TokenInput/TokenOutput tuple):
+          tokenIn/tokenOut          == underlying
+          tokenMintSy/tokenRedeemSy == underlying
+          pendleSwap                == address(0)   ← forbids Pendle's internal
+                                                       aggregator: the SY<->underlying
+                                                       leg can't route through an
+                                                       external swapper (no AMM
+                                                       slippage path). USDC<->underlying
+                                                       is handled by the milkman template.
+          swapData                  pass            (empty when pendleSwap == 0)
+          netTokenIn/minTokenOut    pass            (slippage set + validated by the
+                                                      executor: Tenderly sim + validator)
+        guessPtOut (ApproxParams)   pass
+        limit (LimitOrderData):
+          limitRouter             == address(0)   ← Pendle's _fillLimit infinite-approves the
+                                                    in-flight token to `limitRouter` then calls it,
+                                                    so an arbitrary value drains funds. Pinning 0
+                                                    forbids limit orders (AMM-only); empty-limit
+                                                    swaps — the path we use — leave it unused.
+          epsSkipMarket / normalFills / flashFills / optData  pass
+
+    A single configured market collapses the `or` to a plain match (zodiac-roles
+    rejects an `or` of one), handled natively by the apply layer.
+
+  Verified selectors (cast + 4byte.directory): swapExactTokenForPt 0xc81f847a,
+  swapExactPtForToken 0x594a88cc, redeemPyToToken 0x47f1de22.
+-#}
+{%- from "_macros/common.tmpl" import approve -%}
+{%- set router = aliases.pendle.router -%}
+{%- set ZERO = "0x0000000000000000000000000000000000000000" -%}
+{#- ABI fragments shared across signatures (kept DRY to avoid selector drift) -#}
+{%- set APX = "(uint256,uint256,uint256,uint256,uint256)" -%}
+{%- set TKN = "(address,uint256,address,address,(uint8,address,bytes,bool))" -%}
+{%- set FOP = "((uint256,uint256,uint256,uint8,address,address,address,address,uint256,uint256,uint256,bytes),bytes,uint256)" -%}
+{%- set LIMIT = "(address,uint256," ~ FOP ~ "[]," ~ FOP ~ "[],bytes)" -%}
+{#- A TokenInput/TokenOutput tuple matcher: pin token + bypass the aggregator. -#}
+{%- macro token_io(underlying, zero) -%}
+param_type: "tuple"
+operator: "matches"
+conditions:
+  - operator: "equal_to"
+    value: "{{ underlying }}"
+    value_type: "address"
+  - operator: "pass"
+  - operator: "equal_to"
+    value: "{{ underlying }}"
+    value_type: "address"
+  - operator: "equal_to"
+    value: "{{ zero }}"
+    value_type: "address"
+  - operator: "pass"
+{%- endmacro -%}
+{#- Collect unique underlyings + PTs across the configured markets for approves -#}
+{%- set underlyings = [] -%}
+{%- set pts = [] -%}
+{%- for key in markets -%}
+  {%- set m = aliases.pendle.markets[key] -%}
+  {%- if m.underlying not in underlyings -%}{%- set _ = underlyings.push(m.underlying) -%}{%- endif -%}
+  {%- if m.pt not in pts -%}{%- set _ = pts.push(m.pt) -%}{%- endif -%}
+{%- endfor -%}
+roles:
+{%- for token in underlyings %}
+  {{ approve(token, router) | indent(2) }}
+{%- endfor %}
+{%- for token in pts %}
+  {{ approve(token, router) | indent(2) }}
+{%- endfor %}
+
+  - address: "{{ router }}"
+    functions:
+      - signature: "function swapExactTokenForPt(address receiver, address market, uint256 minPtOut, {{ APX }} guessPtOut, {{ TKN }} input, {{ LIMIT }} limit)"
+        execution_options: "none"
+        operator: "or"
+        branches:
+{%- for key in markets %}
+{%- set m = aliases.pendle.markets[key] %}
+          - operator: "matches"
+            params:
+              - name: receiver
+                operator: "equal_to_avatar"
+              - name: market
+                operator: "equal_to"
+                value: "{{ m.market }}"
+                value_type: "address"
+              - name: minPtOut
+                operator: "pass"
+              - name: guessPtOut
+                operator: "pass"
+              - name: input
+                {{ token_io(m.underlying, ZERO) | indent(16) }}
+              - name: limit
+                param_type: "tuple"
+                operator: "matches"
+                conditions:
+                  - operator: "equal_to"
+                    value: "{{ ZERO }}"
+                    value_type: "address"
+                  - operator: "pass"
+                  - operator: "pass"
+                  - operator: "pass"
+                  - operator: "pass"
+{%- endfor %}
+
+      - signature: "function swapExactPtForToken(address receiver, address market, uint256 exactPtIn, {{ TKN }} output, {{ LIMIT }} limit)"
+        execution_options: "none"
+        operator: "or"
+        branches:
+{%- for key in markets %}
+{%- set m = aliases.pendle.markets[key] %}
+          - operator: "matches"
+            params:
+              - name: receiver
+                operator: "equal_to_avatar"
+              - name: market
+                operator: "equal_to"
+                value: "{{ m.market }}"
+                value_type: "address"
+              - name: exactPtIn
+                operator: "pass"
+              - name: output
+                {{ token_io(m.underlying, ZERO) | indent(16) }}
+              - name: limit
+                param_type: "tuple"
+                operator: "matches"
+                conditions:
+                  - operator: "equal_to"
+                    value: "{{ ZERO }}"
+                    value_type: "address"
+                  - operator: "pass"
+                  - operator: "pass"
+                  - operator: "pass"
+                  - operator: "pass"
+{%- endfor %}
+
+      - signature: "function redeemPyToToken(address receiver, address YT, uint256 netPyIn, {{ TKN }} output)"
+        execution_options: "none"
+        operator: "or"
+        branches:
+{%- for key in markets %}
+{%- set m = aliases.pendle.markets[key] %}
+          - operator: "matches"
+            params:
+              - name: receiver
+                operator: "equal_to_avatar"
+              - name: YT
+                operator: "equal_to"
+                value: "{{ m.yt }}"
+                value_type: "address"
+              - name: netPyIn
+                operator: "pass"
+              - name: output
+                {{ token_io(m.underlying, ZERO) | indent(16) }}
+{%- endfor %}

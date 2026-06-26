@@ -1,0 +1,44 @@
+# Pendle V3 — router + curated PT markets for the Markov PT-only vault.
+#
+# `router` is the canonical-per-chain Pendle V3 Router (IPAllActionV3); the
+# pendle.tmpl policy pins it as the call target and as the approve spender.
+#
+# Each `markets` entry pins the addresses the policy scopes a PT trade against:
+#   market     — the Pendle market (LP) contract for this PT / maturity
+#   pt         — the Principal Token the Safe holds
+#   yt         — the Yield Token; `redeemPyToToken` keys off the YT address
+#   sy         — the Standardized Yield wrapper for this market
+#   underlying — the SY redeem/mint token the policy pins as
+#                TokenInput.tokenIn / TokenOutput.tokenOut, so Pendle's internal
+#                aggregator is bypassed and USDC <-> underlying goes through the
+#                milkman (CoW) template instead. Not necessarily the SY's yield
+#                token: pick, from the SY's getTokensIn()/getTokensOut() sets,
+#                the token with the cleanest USDC conversion — Chainlink/Aave
+#                priceable for the CoW leg, present in BOTH sets (so entry and
+#                exit use the same pin), and free of exit cooldowns
+#   maturity   — PT expiry (informational; redeemPyToToken is 1:1 after this)
+#
+# Demo set: two blue-chip stablecoin PTs at staggered maturities.
+# Addresses sourced from the Pendle API (api-v2.pendle.finance) on 2026-06-09.
+router: "0x888888888889758F76e7103c6CbF23ABbF58F946"
+
+markets:
+  susde_2026_08_13:
+    market: "0x177768caf9D0e036725A51D3f60d7E20F2D4D194"
+    pt: "0x5A19fa369F2895dCD8d2cEE62E4Ceae58eF92BBb"
+    yt: "0x45A699A11A4a17fe0931EF3ceA4BFc3235e659F2"
+    sy: "0xBF98480425A29197e5d99D003017f63a1e595D02"
+    underlying: "0x9D39A5DE30e57443BfF2A8307A4256c8797A3497"  # sUSDe (Ethena)
+    maturity: "2026-08-13"
+
+  susds_2026_11_26:
+    market: "0x9C560eBaF78e596cbcC27411d633a74D628dd7dC"
+    pt: "0xdC169AbE56461A2E0c034Da431Ac2a3ebf596094"
+    yt: "0xC7B8551C6B286Ce0b44952320e940Bd3Dee58A09"
+    sy: "0xBe3d4ec488A0a042BB86F9176C24f8CD54018BA7"
+    # USDS, not sUSDS: SY-sUSDS mints/redeems USDS at the Sky savings rate in
+    # both directions (getTokensIn == getTokensOut == [DAI, USDS, sUSDS]), and
+    # no sUSDS/USD Chainlink/Aave feed exists to price a CoW leg against —
+    # USDC <-> USDS is the priceable pair (Aave-capped USDC/USD + USDS/USD).
+    underlying: "0xdC035D45d973E3EC169d2276DDab16f1e407384F"  # USDS (Sky)
+    maturity: "2026-11-26"
