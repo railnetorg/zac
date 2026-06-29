@@ -46,8 +46,11 @@ export interface PrintPlanDiffOpts {
    */
   addressLabelMap?: Record<string, string>;
   /**
-   * Optional `<target_lower>:<selector_lower>` → source-side function
-   * data (built via `buildFunctionParamMap`). When present, every matching
+   * Optional `<roleKey>:<target_lower>:<selector_lower>` → source-side
+   * function data (built via `buildFunctionParamMap`). Keyed by role so that
+   * different roles scoping the same function on the same target (e.g. each
+   * protocol's `approve(USDC)` with its own spender) render their OWN
+   * constraints. When present, every matching
    * `scopeFunction` planned call expands into a foundry-style subtree
    * showing each scoped argument's type, name, and constraint. Missing
    * entries fall back to a leaf call node.
@@ -119,7 +122,9 @@ function callNode(
       return { label: `${call.kind}(${addrWithLabel(call.target, opts.addressLabelMap)})` };
     case 'scopeFunction': {
       const fn =
-        opts.functionParamMap?.[`${call.target.toLowerCase()}:${call.fnSelector.toLowerCase()}`];
+        opts.functionParamMap?.[
+          `${call.roleKey}:${call.target.toLowerCase()}:${call.fnSelector.toLowerCase()}`
+        ];
       // Source-side fnName fills in when the selectorMap didn't cover it —
       // both maps originate from the same generated YAMLs, so falling back
       // is consistent (and avoids showing the raw selector when we just
@@ -135,7 +140,9 @@ function callNode(
     case 'revokeFunction':
     case 'unscopeFunction': {
       const fn =
-        opts.functionParamMap?.[`${call.target.toLowerCase()}:${call.fnSelector.toLowerCase()}`];
+        opts.functionParamMap?.[
+          `${call.roleKey}:${call.target.toLowerCase()}:${call.fnSelector.toLowerCase()}`
+        ];
       const fnNameDisplay = call.fnName ?? fn?.fnName;
       return {
         label: `${call.kind}(${addrWithLabel(call.target, opts.addressLabelMap)}, ${fnIdent(call.fnSelector, fnNameDisplay)})`,

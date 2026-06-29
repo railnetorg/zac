@@ -316,7 +316,9 @@ describe('printPlanDiff', () => {
     // 0x445df08b. Wire up a source-side entry simulating what
     // buildFunctionParamMap would have produced from the generated YAML.
     const paramMap = {
-      '0x2c158bc456e027b2affccadf1bdbd9f5fc4c5c8c:0x445df08b': {
+      // Role-keyed: the fixture decodes to roleKey ONDO_GM (target 0x2c15…5C8C,
+      // selector 0x445df08b).
+      'ONDO_GM:0x2c158bc456e027b2affccadf1bdbd9f5fc4c5c8c:0x445df08b': {
         signature: 'function subscribe(address asset, uint256 amount, address receiver)',
         fnName: 'subscribe',
         inputs: [
@@ -354,6 +356,53 @@ describe('printPlanDiff', () => {
     expect(out).toMatch(/├─ address asset\s+= 0xA0b8…eB48 \(tokens\.USDC\)/);
     expect(out).toMatch(/├─ uint256 amount\s+\*/);
     expect(out).toMatch(/└─ address receiver\s+= <avatar>/);
+  });
+
+  it('functionParamMap: a colliding (target, selector) entry from ANOTHER role is NOT used — lookup is role-keyed', async () => {
+    const sdk = await loadSdk();
+    // The fixture decodes to roleKey ONDO_GM. Provide a DECOY entry under a
+    // different role (AAVE_V3) for the SAME target:selector — pre-fix the
+    // target:selector-only key collided and the decoy could shadow the real
+    // one (the actual "every approve shows aave.pool" bug). The renderer must
+    // pick the ONDO_GM entry by role.
+    const target = '0x2c158bc456e027b2affccadf1bdbd9f5fc4c5c8c';
+    const realEntry = {
+      signature: 'function subscribe(address asset, uint256 amount, address receiver)',
+      fnName: 'subscribe',
+      inputs: [
+        { type: 'address', name: 'asset' },
+        { type: 'uint256', name: 'amount' },
+        { type: 'address', name: 'receiver' },
+      ],
+      params: [
+        { name: 'asset', operator: 'equal_to', value: target, value_type: 'address' },
+        { name: 'amount', operator: 'pass' },
+        { name: 'receiver', operator: 'equal_to_avatar' },
+      ],
+    };
+    const decoyEntry = {
+      signature: 'function decoyFn(address shouldNotRender)',
+      fnName: 'decoyFn',
+      inputs: [{ type: 'address', name: 'shouldNotRender' }],
+      params: [{ name: 'shouldNotRender', operator: 'pass' }],
+    };
+    const paramMap = {
+      [`ONDO_GM:${target}:0x445df08b`]: realEntry,
+      [`AAVE_V3:${target}:0x445df08b`]: decoyEntry,
+    };
+    const plan = makePlan([FIX_SCOPE_FUNCTION_ONDO_GM_445DF08B]);
+    const { sink, text } = captureSink();
+    printPlanDiff(plan, {
+      planPath: 'safe.plan.json',
+      safeAddress: plan.safeAddress,
+      out: sink,
+      sdk,
+      functionParamMap: paramMap,
+    });
+    const out = text();
+    expect(out).toContain('subscribe'); // the ONDO_GM entry was used
+    expect(out).not.toContain('decoyFn'); // the AAVE_V3 collision did NOT leak
+    expect(out).not.toContain('shouldNotRender');
   });
 
   it('functionParamMap: scopeFunction with no matching entry falls back to leaf rendering (no param subtree)', async () => {
