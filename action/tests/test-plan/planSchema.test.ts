@@ -48,4 +48,27 @@ describe('planSchema', () => {
     delete bad['callsCount'];
     expect(() => PlanSchema.parse(bad)).toThrow();
   });
+
+  it('nestedSigners: serialize→parse round-trip preserves the array', () => {
+    const plan: Plan = {
+      ...makePlan(2),
+      nestedSigners: [
+        '0x1111111111111111111111111111111111111111',
+        '0x2222222222222222222222222222222222222222',
+      ],
+    };
+    const reparsed = parsePlan(serializePlan(plan));
+    expect(reparsed.nestedSigners).toEqual(plan.nestedSigners);
+  });
+
+  it('nestedSigners: omitted from JSON entirely when empty', () => {
+    const plan: Plan = { ...makePlan(2), nestedSigners: [] };
+    const parsed = JSON.parse(serializePlan(plan)) as Record<string, unknown>;
+    expect('nestedSigners' in parsed).toBe(false);
+  });
+
+  it('nestedSigners: omitted from JSON entirely when undefined', () => {
+    const parsed = JSON.parse(serializePlan(makePlan(2))) as Record<string, unknown>;
+    expect('nestedSigners' in parsed).toBe(false);
+  });
 });

@@ -56,6 +56,39 @@ export interface PrintPlanDiffOpts {
    * entries fall back to a leaf call node.
    */
   functionParamMap?: Record<string, FunctionParams>;
+  /**
+   * Optional LIVE preview of the PARENT (main) Safe tx's three
+   * Ledger-visible hashes. RPC-free here: the CLI plan/apply action builds
+   * the live Safe tx (it has the RPC + the plan's calls) and passes the
+   * values in. `messageHash` / `safeTxHash` are present only when the live
+   * tx was built; `domainHash` is offline-computable so it may appear even
+   * in the degraded form. Rendered AFTER the diff, BEFORE the nested
+   * signers section, as a `Safe tx (preview ...)` block.
+   */
+  mainTxPreview?: {
+    domainHash: string;
+    messageHash?: string;
+    safeTxHash?: string;
+    nonce?: number | string;
+  };
+  /**
+   * Optional LIVE nested-signer preview rows, one per parent-Safe owner
+   * that is itself a Safe (from `plan.nestedSigners`). RPC-free: the CLI
+   * plan/apply action computes these against the live Safe (it has the
+   * RPC + the plan's calls) and passes them in already-built. When present
+   * and non-empty, a `Nested signers (N)` section is rendered AFTER the
+   * diff. `domainHash` is offline-computable so it always appears; a row
+   * WITHOUT `messageHash`/`nestedHash` is the degraded form (the live Safe
+   * tx couldn't be built — e.g. RPC unavailable) and notes that the
+   * message/final hash is finalized at submit.
+   */
+  nestedPreview?: Array<{
+    child: string;
+    label?: string;
+    domainHash: string;
+    messageHash?: string;
+    nestedHash?: string;
+  }>;
 }
 
 const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
@@ -361,5 +394,54 @@ export function printPlanDiff(plan: Plan, opts: PrintPlanDiffOpts): void {
   const lines: string[] = [];
   lines.push(`plan: ${opts.planPath} (${plan.calls.length} calls)`);
   lines.push(...renderTreeLines(topNodes, ''));
+
+  // Ledger-hash preview — rendered AFTER the diff. All values are
+  // nonce-derived (preview only — re-verify at submit), supplied by the
+  // caller (pure: no viem/RPC here). A Ledger shows EIP-712 signing as a
+  // "Domain hash" + "Message hash" pair, plus the final digest; we surface
+  // all three for the parent Safe tx AND for each nested signer so a user
+  // can cross-check the device.
+  const hasMain = opts.mainTxPreview !== undefined;
+  const hasNested = opts.nestedPreview !== undefined && opts.nestedPreview.length > 0;
+  if (hasMain || hasNested) {
+    // A single nonce drives both blocks (the parent nonce); take it from
+    // whichever preview carries it.
+    const nonce = opts.mainTxPreview?.nonce;
+    const nonceNote =
+      nonce !== undefined
+        ? `(preview @ nonce ${nonce} — re-verify at submit)`
+        : `(preview — re-verify at submit)`;
+    lines.push(`  (verify Domain hash / Message hash on your Ledger)`);
+    if (opts.mainTxPreview !== undefined) {
+      const main = opts.mainTxPreview;
+      lines.push(`Safe tx ${nonceNote}`);
+      lines.push(`    domainHash   ${main.domainHash}`);
+      if (main.messageHash !== undefined) {
+        lines.push(`    messageHash  ${main.messageHash}`);
+      } else {
+        lines.push(`    ↳ message hash finalized at submit`);
+      }
+      if (main.safeTxHash !== undefined) {
+        lines.push(`    safeTxHash   ${main.safeTxHash}`);
+      } else {
+        lines.push(`    ↳ final hash finalized at submit`);
+      }
+    }
+    if (opts.nestedPreview !== undefined && opts.nestedPreview.length > 0) {
+      lines.push(`Nested signers (${opts.nestedPreview.length})   ${nonceNote}`);
+      for (const row of opts.nestedPreview) {
+        const label = row.label !== undefined ? ` (${row.label})` : '';
+        lines.push(`  ${row.child}${label}`);
+        lines.push(`      domainHash   ${row.domainHash}`);
+        if (row.messageHash !== undefined && row.nestedHash !== undefined) {
+          lines.push(`      messageHash  ${row.messageHash}`);
+          lines.push(`      nestedHash   ${row.nestedHash}`);
+        } else {
+          lines.push(`      ↳ message/final hash finalized at submit`);
+        }
+      }
+    }
+  }
+
   out.write(lines.join('\n') + '\n');
 }

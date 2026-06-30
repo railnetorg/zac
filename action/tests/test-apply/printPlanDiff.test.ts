@@ -609,4 +609,94 @@ describe('printPlanDiff', () => {
     });
     expect(text()).toMatch(/setGuard\(0x1234…7890 \(security\.guard\)\)/);
   });
+
+  // --- Ledger-hash preview section (Safe tx + nested signers) ---
+
+  const DOM_MAIN = '0xd00d0000000000000000000000000000000000000000000000000000000000d0';
+  const MSG_MAIN = '0xddee0000000000000000000000000000000000000000000000000000000000d1';
+  const TX_MAIN = '0xddff0000000000000000000000000000000000000000000000000000000000d2';
+  const DOM_CHILD = '0xc11d0000000000000000000000000000000000000000000000000000000000c0';
+  const MSG_CHILD = '0xc12d0000000000000000000000000000000000000000000000000000000000c1';
+  const NEST_CHILD = '0xc13d0000000000000000000000000000000000000000000000000000000000c2';
+
+  it('mainTxPreview + nestedPreview with full hashes → Safe tx block + per-child domain/message/nested, nonce note, label, Ledger legend', async () => {
+    const sdk = await loadSdk();
+    const plan = makePlan([FIX_REVOKE_TARGET_LAGOON]);
+    const child = '0x1111111111111111111111111111111111111111';
+    const { sink, text } = captureSink();
+    printPlanDiff(plan, {
+      planPath: 'safe.plan.json',
+      safeAddress: plan.safeAddress,
+      out: sink,
+      sdk,
+      mainTxPreview: { domainHash: DOM_MAIN, messageHash: MSG_MAIN, safeTxHash: TX_MAIN, nonce: 7 },
+      nestedPreview: [
+        {
+          child,
+          label: 'signers.treasury',
+          domainHash: DOM_CHILD,
+          messageHash: MSG_CHILD,
+          nestedHash: NEST_CHILD,
+        },
+      ],
+    });
+    const out = text();
+    // Ledger legend.
+    expect(out).toContain('(verify Domain hash / Message hash on your Ledger)');
+    // Parent Safe tx block.
+    expect(out).toContain('Safe tx (preview @ nonce 7 — re-verify at submit)');
+    expect(out).toMatch(new RegExp(`domainHash\\s+${DOM_MAIN}`));
+    expect(out).toMatch(new RegExp(`messageHash\\s+${MSG_MAIN}`));
+    expect(out).toMatch(new RegExp(`safeTxHash\\s+${TX_MAIN}`));
+    // Nested signers block.
+    expect(out).toContain('Nested signers (1)   (preview @ nonce 7 — re-verify at submit)');
+    expect(out).toContain(`${child} (signers.treasury)`);
+    expect(out).toMatch(new RegExp(`domainHash\\s+${DOM_CHILD}`));
+    expect(out).toMatch(new RegExp(`messageHash\\s+${MSG_CHILD}`));
+    expect(out).toMatch(new RegExp(`nestedHash\\s+${NEST_CHILD}`));
+    expect(out).not.toContain('finalized at submit');
+  });
+
+  it('degraded preview (domain hashes only) → Safe tx domain + "finalized at submit" notes, child domain + "message/final hash finalized at submit", no nonce', async () => {
+    const sdk = await loadSdk();
+    const plan = makePlan([FIX_REVOKE_TARGET_LAGOON]);
+    const child = '0x2222222222222222222222222222222222222222';
+    const { sink, text } = captureSink();
+    printPlanDiff(plan, {
+      planPath: 'safe.plan.json',
+      safeAddress: plan.safeAddress,
+      out: sink,
+      sdk,
+      mainTxPreview: { domainHash: DOM_MAIN },
+      nestedPreview: [{ child, domainHash: DOM_CHILD }],
+    });
+    const out = text();
+    // No nonce → generic preview note on both blocks.
+    expect(out).toContain('Safe tx (preview — re-verify at submit)');
+    expect(out).not.toContain('@ nonce');
+    expect(out).toMatch(new RegExp(`domainHash\\s+${DOM_MAIN}`));
+    expect(out).toContain('↳ message hash finalized at submit');
+    expect(out).toContain('↳ final hash finalized at submit');
+    // Child: domain present, message/nested folded into one degraded note.
+    expect(out).toMatch(new RegExp(`domainHash\\s+${DOM_CHILD}`));
+    expect(out).toContain('↳ message/final hash finalized at submit');
+    // Bare child (no label parenthetical).
+    expect(out).toMatch(new RegExp(`  ${child}\\n`));
+  });
+
+  it('no preview options → no Safe tx / Nested signers section', async () => {
+    const sdk = await loadSdk();
+    const plan = makePlan([FIX_REVOKE_TARGET_LAGOON]);
+    const { sink, text } = captureSink();
+    printPlanDiff(plan, {
+      planPath: 'safe.plan.json',
+      safeAddress: plan.safeAddress,
+      out: sink,
+      sdk,
+    });
+    const out = text();
+    expect(out).not.toContain('Nested signers');
+    expect(out).not.toContain('Safe tx (preview');
+    expect(out).not.toContain('verify Domain hash');
+  });
 });

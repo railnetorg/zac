@@ -63,7 +63,7 @@ function buildSafeStub(state: { guard?: string; fallback?: string; modules?: str
 }
 
 function yaml(over: Partial<ParsedSafeYaml>): ParsedSafeYaml {
-  return { guard: null, fallback: null, modules: null, ...over };
+  return { guard: null, fallback: null, modules: null, nestedSigners: [], ...over };
 }
 
 describe('planSafeConfig', () => {
