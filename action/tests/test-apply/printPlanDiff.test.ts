@@ -617,9 +617,9 @@ describe('printPlanDiff', () => {
   const TX_MAIN = '0xddff0000000000000000000000000000000000000000000000000000000000d2';
   const DOM_CHILD = '0xc11d0000000000000000000000000000000000000000000000000000000000c0';
   const MSG_CHILD = '0xc12d0000000000000000000000000000000000000000000000000000000000c1';
-  const NEST_CHILD = '0xc13d0000000000000000000000000000000000000000000000000000000000c2';
+  const TX_CHILD = '0xc13d0000000000000000000000000000000000000000000000000000000000c2';
 
-  it('mainTxPreview + nestedPreview with full hashes → Safe tx block + per-child domain/message/nested, nonce note, label, Ledger legend', async () => {
+  it('mainTxPreview + nestedPreview with full hashes → Safe tx block + per-child domain/message/safeTxHash, nonce notes, label, Ledger legend', async () => {
     const sdk = await loadSdk();
     const plan = makePlan([FIX_REVOKE_TARGET_LAGOON]);
     const child = '0x1111111111111111111111111111111111111111';
@@ -636,7 +636,8 @@ describe('printPlanDiff', () => {
           label: 'signers.treasury',
           domainHash: DOM_CHILD,
           messageHash: MSG_CHILD,
-          nestedHash: NEST_CHILD,
+          safeTxHash: TX_CHILD,
+          nonce: 3,
         },
       ],
     });
@@ -648,12 +649,14 @@ describe('printPlanDiff', () => {
     expect(out).toMatch(new RegExp(`domainHash\\s+${DOM_MAIN}`));
     expect(out).toMatch(new RegExp(`messageHash\\s+${MSG_MAIN}`));
     expect(out).toMatch(new RegExp(`safeTxHash\\s+${TX_MAIN}`));
-    // Nested signers block.
-    expect(out).toContain('Nested signers (1)   (preview @ nonce 7 — re-verify at submit)');
-    expect(out).toContain(`${child} (signers.treasury)`);
+    // Nested signers block — each child approves via approveHash().
+    expect(out).toContain(
+      'Nested signers (1) — each approves via approveHash(); its owners sign the child tx below',
+    );
+    expect(out).toContain(`${child} (signers.treasury)  (child nonce 3)`);
     expect(out).toMatch(new RegExp(`domainHash\\s+${DOM_CHILD}`));
     expect(out).toMatch(new RegExp(`messageHash\\s+${MSG_CHILD}`));
-    expect(out).toMatch(new RegExp(`nestedHash\\s+${NEST_CHILD}`));
+    expect(out).toMatch(new RegExp(`safeTxHash\\s+${TX_CHILD}`));
     expect(out).not.toContain('finalized at submit');
   });
 
@@ -671,15 +674,17 @@ describe('printPlanDiff', () => {
       nestedPreview: [{ child, domainHash: DOM_CHILD }],
     });
     const out = text();
-    // No nonce → generic preview note on both blocks.
+    // No nonce → generic preview note on the parent block.
     expect(out).toContain('Safe tx (preview — re-verify at submit)');
     expect(out).not.toContain('@ nonce');
     expect(out).toMatch(new RegExp(`domainHash\\s+${DOM_MAIN}`));
     expect(out).toContain('↳ message hash finalized at submit');
     expect(out).toContain('↳ final hash finalized at submit');
-    // Child: domain present, message/nested folded into one degraded note.
+    // Child: domain present, message/final folded into one degraded note; no
+    // child-nonce parenthetical in the degraded form.
     expect(out).toMatch(new RegExp(`domainHash\\s+${DOM_CHILD}`));
     expect(out).toContain('↳ message/final hash finalized at submit');
+    expect(out).not.toContain('child nonce');
     // Bare child (no label parenthetical).
     expect(out).toMatch(new RegExp(`  ${child}\\n`));
   });

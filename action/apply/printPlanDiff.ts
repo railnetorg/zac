@@ -73,21 +73,26 @@ export interface PrintPlanDiffOpts {
   };
   /**
    * Optional LIVE nested-signer preview rows, one per parent-Safe owner
-   * that is itself a Safe (from `plan.nestedSigners`). RPC-free: the CLI
-   * plan/apply action computes these against the live Safe (it has the
-   * RPC + the plan's calls) and passes them in already-built. When present
-   * and non-empty, a `Nested signers (N)` section is rendered AFTER the
-   * diff. `domainHash` is offline-computable so it always appears; a row
-   * WITHOUT `messageHash`/`nestedHash` is the degraded form (the live Safe
-   * tx couldn't be built — e.g. RPC unavailable) and notes that the
-   * message/final hash is finalized at submit.
+   * that is itself a Safe (from `plan.nestedSigners`). Each such child
+   * approves the parent tx by executing `parentSafe.approveHash(...)`; its
+   * OWN owners sign that child tx. RPC-free here: the CLI plan/apply action
+   * computes these against the live Safes (it has the RPC + the plan's
+   * calls + each child's live nonce) and passes them in already-built. When
+   * present and non-empty, a `Nested signers (N)` section is rendered AFTER
+   * the diff. `domainHash` is offline-computable so it always appears; a row
+   * WITHOUT `messageHash`/`safeTxHash` is the degraded form (the live Safe
+   * tx couldn't be built or the child nonce couldn't be read — e.g. RPC
+   * unavailable) and notes that the message/final hash is finalized at
+   * submit. `nonce` is the child Safe's live nonce (present only in the full
+   * form).
    */
   nestedPreview?: Array<{
     child: string;
     label?: string;
     domainHash: string;
     messageHash?: string;
-    nestedHash?: string;
+    safeTxHash?: string;
+    nonce?: number | string;
   }>;
 }
 
@@ -428,14 +433,17 @@ export function printPlanDiff(plan: Plan, opts: PrintPlanDiffOpts): void {
       }
     }
     if (opts.nestedPreview !== undefined && opts.nestedPreview.length > 0) {
-      lines.push(`Nested signers (${opts.nestedPreview.length})   ${nonceNote}`);
+      lines.push(
+        `Nested signers (${opts.nestedPreview.length}) — each approves via approveHash(); its owners sign the child tx below`,
+      );
       for (const row of opts.nestedPreview) {
         const label = row.label !== undefined ? ` (${row.label})` : '';
-        lines.push(`  ${row.child}${label}`);
+        const childNonceNote = row.nonce !== undefined ? `  (child nonce ${row.nonce})` : '';
+        lines.push(`  ${row.child}${label}${childNonceNote}`);
         lines.push(`      domainHash   ${row.domainHash}`);
-        if (row.messageHash !== undefined && row.nestedHash !== undefined) {
+        if (row.messageHash !== undefined && row.safeTxHash !== undefined) {
           lines.push(`      messageHash  ${row.messageHash}`);
-          lines.push(`      nestedHash   ${row.nestedHash}`);
+          lines.push(`      safeTxHash   ${row.safeTxHash}`);
         } else {
           lines.push(`      ↳ message/final hash finalized at submit`);
         }
