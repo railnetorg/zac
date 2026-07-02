@@ -3,12 +3,12 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Writable } from 'node:stream';
-import { buildProgram } from '../../cli';
+import { buildProgram, emitNestedSignerLines } from '../../cli';
 import {
-  computeNestedSafeMessageDetails,
+  computeNestedApproveHashDetails,
   computeSafeDomainSeparator,
 } from '../../apply/nestedSafeHash';
-import { computeSafeTxMessageHash } from '../../apply/safeApi';
+import { computeSafeTxMessageHash, type ReadSafeNonceFn } from '../../apply/safeApi';
 import type { SafeTxData } from '../../apply/planSchema';
 
 const tempDirs: string[] = [];
@@ -25,7 +25,7 @@ const SAFE = '0x3333333333333333333333333333333333333333';
 const CHILD_A = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const CHILD_B = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 // Known safeTxHash returned by the stubbed Safe.getTransactionHash — this is
-// the parent's `safeTxHash` the nested signing hash wraps.
+// the parent's `safeTxHash` the nested approveHash tx approves.
 const KNOWN_SAFE_TX_HASH = '0x' + 'cd'.repeat(32);
 const TEST_KEY = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
 
@@ -138,12 +138,90 @@ function writePlan(nestedSigners?: string[]): string {
   return planPath;
 }
 
+describe('emitNestedSignerLines (nested approveHash flow)', () => {
+  const RPC = 'http://stub.invalid';
+  const args = {
+    safe: SAFE,
+    chainId: 1,
+    safeTxHash: KNOWN_SAFE_TX_HASH,
+    safeTxData: STUB_TX_DATA,
+    rpcUrl: RPC,
+  };
+
+  it('emits one main-tx line + one nested-signer line per child with nonce= and safeTxHash= computed from the child nonce', async () => {
+    // Stub the child-nonce reader (child A nonce = 1, child B nonce = 2).
+    const nonceByChild: Record<string, bigint> = {
+      [CHILD_A]: 1n,
+      [CHILD_B]: 2n,
+    };
+    const readNonce: ReadSafeNonceFn = async (_rpc, child) => nonceByChild[child]!;
+    const { stdout } = await captureStdout(async () => {
+      await emitNestedSignerLines({ ...args, nestedSigners: [CHILD_A, CHILD_B] }, readNonce);
+    });
+
+    // ONE main-tx line with the parent's three hashes.
+    expect(stdout).toContain(
+      `main-tx safe=${SAFE} chain=1 ` +
+        `domainHash=${PARENT_DOMAIN_HASH} messageHash=${PARENT_MESSAGE_HASH} safeTxHash=${KNOWN_SAFE_TX_HASH}`,
+    );
+
+    const a = computeNestedApproveHashDetails({
+      parentSafe: SAFE,
+      parentSafeTxHash: KNOWN_SAFE_TX_HASH,
+      childSafe: CHILD_A,
+      childNonce: 1,
+      chainId: 1,
+    });
+    const b = computeNestedApproveHashDetails({
+      parentSafe: SAFE,
+      parentSafeTxHash: KNOWN_SAFE_TX_HASH,
+      childSafe: CHILD_B,
+      childNonce: 2,
+      chainId: 1,
+    });
+    // Child field is now `safeTxHash=` (not `nestedHash=`) plus a new `nonce=`.
+    expect(stdout).toContain(
+      `nested-signer safe=${SAFE} chain=1 child=${CHILD_A} nonce=1 ` +
+        `domainHash=${a.domainHash} messageHash=${a.messageHash} safeTxHash=${a.safeTxHash}`,
+    );
+    expect(stdout).toContain(
+      `nested-signer safe=${SAFE} chain=1 child=${CHILD_B} nonce=2 ` +
+        `domainHash=${b.domainHash} messageHash=${b.messageHash} safeTxHash=${b.safeTxHash}`,
+    );
+    // The old `nestedHash=` field is gone.
+    expect(stdout).not.toContain('nestedHash=');
+  });
+
+  it('a child whose nonce read throws is skipped with a WARN — never throws', async () => {
+    const readNonce: ReadSafeNonceFn = async (_rpc, child) => {
+      if (child === CHILD_B) throw new Error('rpc boom');
+      return 1n;
+    };
+    const { stdout, stderr } = await captureStdout(async () => {
+      await emitNestedSignerLines({ ...args, nestedSigners: [CHILD_A, CHILD_B] }, readNonce);
+    });
+    // CHILD_A emitted; CHILD_B skipped with a WARN.
+    expect(stdout).toContain(`child=${CHILD_A} nonce=1`);
+    expect(stdout).not.toContain(`child=${CHILD_B}`);
+    expect(stderr).toContain(`WARN: nested-signer hash for ${CHILD_B} unavailable: rpc boom`);
+  });
+
+  it('no nested signers → no main-tx and no nested-signer line', async () => {
+    const readNonce: ReadSafeNonceFn = async () => 1n;
+    const { stdout } = await captureStdout(async () => {
+      await emitNestedSignerLines({ ...args, nestedSigners: [] }, readNonce);
+    });
+    expect(stdout).not.toContain('main-tx');
+    expect(stdout).not.toContain('nested-signer');
+  });
+});
+
 describe('cli submit nested-signer emit', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('submit <file.plan.json> with nestedSigners → main-tx line + one nested-signer line per child with all three hashes', async () => {
+  it('submit <file.plan.json> with nestedSigners → submitted line + main-tx line; nested child nonce read from RPC fails gracefully (WARN, no throw)', async () => {
     const planPath = writePlan([CHILD_A, CHILD_B]);
     const prevKey = process.env['ZAC_PROPOSER_PRIVATE_KEY'];
     const prevRpc = process.env['MAINNET_RPC_URL'];
@@ -171,24 +249,11 @@ describe('cli submit nested-signer emit', () => {
         `domainHash=${PARENT_DOMAIN_HASH} messageHash=${PARENT_MESSAGE_HASH} safeTxHash=${KNOWN_SAFE_TX_HASH}`,
     );
 
-    const a = computeNestedSafeMessageDetails({
-      parentSafeTxHash: KNOWN_SAFE_TX_HASH,
-      childSafe: CHILD_A,
-      chainId: 1,
-    });
-    const b = computeNestedSafeMessageDetails({
-      parentSafeTxHash: KNOWN_SAFE_TX_HASH,
-      childSafe: CHILD_B,
-      chainId: 1,
-    });
-    expect(outErr.stdout).toContain(
-      `nested-signer safe=${SAFE} chain=1 child=${CHILD_A} ` +
-        `domainHash=${a.domainHash} messageHash=${a.messageHash} nestedHash=${a.nestedHash}`,
-    );
-    expect(outErr.stdout).toContain(
-      `nested-signer safe=${SAFE} chain=1 child=${CHILD_B} ` +
-        `domainHash=${b.domainHash} messageHash=${b.messageHash} nestedHash=${b.nestedHash}`,
-    );
+    // The child nonce read hits the unreachable stub RPC, so each child is
+    // skipped with a WARN — the submit still succeeds (never throws out).
+    expect(outErr.stderr).toContain(`WARN: nested-signer hash for ${CHILD_A} unavailable`);
+    expect(outErr.stderr).toContain(`WARN: nested-signer hash for ${CHILD_B} unavailable`);
+    expect(outErr.stdout).not.toContain('nested-signer safe=');
   });
 
   it('submit <file.plan.json> WITHOUT nestedSigners → no nested-signer line', async () => {
@@ -213,7 +278,7 @@ describe('cli submit nested-signer emit', () => {
     expect(outErr.stdout).not.toContain('main-tx');
   });
 
-  it('submit <dir> bundling → union of nestedSigners across plans, deduped, one line each', async () => {
+  it('submit <dir> bundling → one main-tx line for the bundled group (union of nestedSigners still drives the emit)', async () => {
     // Two plan files in the same safe-dir, overlapping nested signers.
     const root = makeTempDir();
     const dir = join(root, 'mainnet', SAFE);
@@ -253,16 +318,6 @@ describe('cli submit nested-signer emit', () => {
       else process.env['MAINNET_RPC_URL'] = prevRpc;
     }
 
-    const a = computeNestedSafeMessageDetails({
-      parentSafeTxHash: KNOWN_SAFE_TX_HASH,
-      childSafe: CHILD_A,
-      chainId: 1,
-    });
-    const b = computeNestedSafeMessageDetails({
-      parentSafeTxHash: KNOWN_SAFE_TX_HASH,
-      childSafe: CHILD_B,
-      chainId: 1,
-    });
     // One main-tx line for the bundled group.
     const mainTxLines = outErr.stdout.split('\n').filter((l) => l.startsWith('main-tx '));
     expect(mainTxLines).toHaveLength(1);
@@ -270,14 +325,9 @@ describe('cli submit nested-signer emit', () => {
       `main-tx safe=${SAFE} chain=1 ` +
         `domainHash=${PARENT_DOMAIN_HASH} messageHash=${PARENT_MESSAGE_HASH} safeTxHash=${KNOWN_SAFE_TX_HASH}`,
     );
-    // CHILD_A appears in BOTH plans but is emitted ONCE (deduped union).
-    const childALines = outErr.stdout.split('\n').filter((l) => l.includes(`child=${CHILD_A} `));
-    expect(childALines).toHaveLength(1);
-    expect(outErr.stdout).toContain(
-      `child=${CHILD_A} domainHash=${a.domainHash} messageHash=${a.messageHash} nestedHash=${a.nestedHash}`,
-    );
-    expect(outErr.stdout).toContain(
-      `child=${CHILD_B} domainHash=${b.domainHash} messageHash=${b.messageHash} nestedHash=${b.nestedHash}`,
-    );
+    // The bundled union's child nonce reads hit the unreachable stub RPC, so
+    // each child is skipped with a WARN — the submit still succeeds.
+    expect(outErr.stderr).toContain(`WARN: nested-signer hash for ${CHILD_A} unavailable`);
+    expect(outErr.stderr).toContain(`WARN: nested-signer hash for ${CHILD_B} unavailable`);
   });
 });
