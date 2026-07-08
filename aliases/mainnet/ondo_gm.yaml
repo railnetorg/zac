@@ -9,9 +9,19 @@ tokens:
   SGOVon: "0x8de5d49725550f7b318b2fa0f1b1f118e98e8d0f"
   USFRon: "0xfb82561a955bf59b9263301126af490d3799e231"
   AGGon: "0xff7cf16aa2ffc463b996db2f7b7cf0130336899d"
-  # Equities — canonical addresses per app.ondo.finance
-  SPYon: "0xfedc5f4a6c38211c1338aa411018dfaf26612c08"
+  # GM equity / ETF lines — canonical addresses per app.ondo.finance (all share the Ondo GM token impl)
+  SPYon:  "0xfedc5f4a6c38211c1338aa411018dfaf26612c08"
+  QQQon:  "0x0e397938c1aa0680954093495b70a9f5e2249aba"
+  TSLAon: "0xf6b1117ec07684d3958cad8beb1b302bfd21103f"
+  IAUon:  "0x4f0ca3df1c2e6b943cf82e649d576ffe7b2fabcf"
+  STRCon: "0xecabe1ff8a9e1dc55899cf58dac8497ece5ae84c"
+  FLHYon: "0x54c1ff361b402f66c13107421e6a431c3375ef24"
 
 # Chainlink "Calculated" (Total-Return-Value) feed proxies — AggregatorV3, 8-dec, ~86400s heartbeat.
 feeds:
-  SPYon: "0xd16cC387E87d37350f57421DaDF811968441C1a5"
+  SPYon:  "0xd16cC387E87d37350f57421DaDF811968441C1a5"
+  QQQon:  "0x2098C245Fe4C80cdA93cF85Cff0718328D4eEa85"
+  TSLAon: "0x89904B6fcF8dAD1e5DA47dFdF69fC38Ad6be0bd5"
+  IAUon:  "0x1f09475Fe4D212fC24611bAE180201869956c238"
+  STRCon: "0xC353ac4b425f818Ad87E228bf816E15c2173AC07"
+  FLHYon: "0xe35CcF1bE62Bc13f2f259acE624db10C3d527135"  # "FLHYon / USD"; alt "FLHYon-USD" 0x1f82248A… — confirm canonical w/ Chainlink
