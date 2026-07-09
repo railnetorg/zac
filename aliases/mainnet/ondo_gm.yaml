@@ -1,21 +1,6 @@
+# Ondo Global Markets: GM Router + Chainlink "Calculated" feeds.
+# GM token addresses live in tokens.yaml (aliases.tokens) — the standard registry the templates resolve.
 router: "0x2c158BC456e027b2AfFCCadF1BDBD9f5fC4c5C8c"
-
-# GM token addresses the role can mint into / redeem from.
-tokens:
-  HYGon: "0xed3618bb8778f8ebbe2f241da532227591771d04"
-  TLTon: "0x992651bfeb9a0dcc4457610e284ba66d86489d4d"
-  SHYon: "0x5c424b9b60383fce7fe7069d2a2b1047bcd04a73"
-  IEFon: "0xa2ec76139028f279a1c790d323c57cc4158098d6"
-  SGOVon: "0x8de5d49725550f7b318b2fa0f1b1f118e98e8d0f"
-  USFRon: "0xfb82561a955bf59b9263301126af490d3799e231"
-  AGGon: "0xff7cf16aa2ffc463b996db2f7b7cf0130336899d"
-  # GM equity / ETF lines — canonical addresses per app.ondo.finance (all share the Ondo GM token impl)
-  SPYon:  "0xfedc5f4a6c38211c1338aa411018dfaf26612c08"
-  QQQon:  "0x0e397938c1aa0680954093495b70a9f5e2249aba"
-  TSLAon: "0xf6b1117ec07684d3958cad8beb1b302bfd21103f"
-  IAUon:  "0x4f0ca3df1c2e6b943cf82e649d576ffe7b2fabcf"
-  STRCon: "0xecabe1ff8a9e1dc55899cf58dac8497ece5ae84c"
-  FLHYon: "0x54c1ff361b402f66c13107421e6a431c3375ef24"
 
 # Chainlink "Calculated" (Total-Return-Value) feed proxies — AggregatorV3, 8-dec, ~86400s heartbeat.
 feeds:
