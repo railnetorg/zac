@@ -223,4 +223,86 @@ contract NavSettlerTest is Test {
         vm.expectRevert(NavSettler.NoHoldings.selector);
         _deploy(empty);
     }
+
+    // ------------------------------------------------------------------ F-1: config guards
+
+    function test_revert_baseAssetAsHolding() public {
+        // Listing the base asset (USDC) as a priced holding would double-count it (face + feed).
+        NavSettler.HoldingConfig[] memory c = _cfg(address(usdc), address(usdcFeed));
+        vm.expectRevert(abi.encodeWithSelector(NavSettler.BaseAssetHolding.selector, address(usdc)));
+        _deploy(c);
+    }
+
+    function test_revert_duplicateHolding() public {
+        NavSettler.HoldingConfig[] memory c = new NavSettler.HoldingConfig[](2);
+        c[0] = NavSettler.HoldingConfig({token: address(spy), feed: address(spyFeed), maxAge: MAX_AGE});
+        c[1] = NavSettler.HoldingConfig({token: address(spy), feed: address(spyFeed), maxAge: MAX_AGE});
+        vm.expectRevert(abi.encodeWithSelector(NavSettler.DuplicateHolding.selector, address(spy)));
+        _deploy(c);
+    }
+
+    // ------------------------------------------------------------------ F-5: zero-address guards
+
+    function test_revert_zeroKeeper() public {
+        NavSettler.HoldingConfig[] memory c = _cfg(address(spy), address(spyFeed));
+        vm.expectRevert(NavSettler.ZeroAddress.selector);
+        new NavSettler(address(vault), address(0), address(usdcFeed), MAX_AGE, c);
+    }
+
+    function test_revert_zeroVault() public {
+        NavSettler.HoldingConfig[] memory c = _cfg(address(spy), address(spyFeed));
+        vm.expectRevert(NavSettler.ZeroAddress.selector);
+        new NavSettler(address(0), KEEPER, address(usdcFeed), MAX_AGE, c);
+    }
+
+    // ------------------------------------------------------------------ F-3: base-only reads no base feed
+
+    function test_nav_baseOnly_doesNotReadBaseFeed() public {
+        NavSettler n = _single();
+        usdc.mint(HOLDER, 500e6); // only idle base, no SPYon held
+        usdcFeed.set(1e8, block.timestamp - MAX_AGE - 1); // base/USD feed is stale...
+        // ...but with no non-zero USD-priced holding, basePrice is never fetched, so no revert.
+        assertEq(n.previewNav(), 500e6, "base-only nav must ignore a stale base feed");
+    }
+
+    // ------------------------------------------------------------------ F-4: future timestamp treated as fresh
+
+    function test_futureTimestamp_treatedFresh() public {
+        NavSettler n = _single();
+        spy.mint(HOLDER, 1e18);
+        spyFeed.set(748e8, block.timestamp + 1000); // updatedAt in the future (clock skew)
+        assertEq(n.previewNav(), 748e6, "future updatedAt treated as fresh (age 0), not stale");
+    }
+
+    // ------------------------------------------------------------------ #2: non-USDC (18-dec) stablecoin base
+
+    function test_nav_nonUsdcBase_18decStablecoin() public {
+        // A vault denominated in an 18-dec USD stablecoin (e.g. DAI/PYUSD), not 6-dec USDC:
+        // NAV must come out in the base's own decimals via the base's /USD feed.
+        MockERC20 dai = new MockERC20("Dai", "DAI", 18);
+        MockFeed daiFeed = new MockFeed(8, 1e8, block.timestamp); // DAI/USD = $1
+        MockVault daiVault = new MockVault(address(dai), HOLDER);
+
+        NavSettler n =
+            new NavSettler(address(daiVault), KEEPER, address(daiFeed), MAX_AGE, _cfg(address(spy), address(spyFeed)));
+
+        dai.mint(HOLDER, 100e18); // 100 DAI idle
+        spy.mint(HOLDER, 1e18); //   1 SPYon @ $748
+        assertEq(n.previewNav(), 848e18, "non-USDC 18-dec base: 100 + 748 = 848 (18-dec)");
+    }
+
+    function test_nav_nonUsdcBase_depegRaisesNav() public {
+        // Same non-USDC base, but the base stablecoin depegs to $0.98 -> USD-priced legs cost more base.
+        MockERC20 dai = new MockERC20("Dai", "DAI", 18);
+        MockFeed daiFeed = new MockFeed(8, 1e8, block.timestamp);
+        MockVault daiVault = new MockVault(address(dai), HOLDER);
+        NavSettler n =
+            new NavSettler(address(daiVault), KEEPER, address(daiFeed), MAX_AGE, _cfg(address(spy), address(spyFeed)));
+
+        spy.mint(HOLDER, 1e18); // 1 SPYon @ $748, no idle base
+        assertEq(n.previewNav(), 748e18, "at peg");
+
+        daiFeed.set(98e6, block.timestamp); // DAI/USD = $0.98
+        assertApproxEqAbs(n.previewNav(), uint256(748e18) * 1e8 / 98e6, 2, "base depeg raises base-denominated NAV");
+    }
 }

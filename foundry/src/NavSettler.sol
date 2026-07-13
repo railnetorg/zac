@@ -33,8 +33,10 @@ interface ILagoonVault {
 ///         - Deduced from the vault (not config): `BASE_ASSET`/`BASE_SCALE` from `asset()` (immutable, cached) and
 ///           the holder from `safe()` (mutable, read LIVE each call).
 ///         - NAV is denominated in the base asset (what `settleDeposit`/`settleRedeem` expect). Chainlink feeds
-///           quote in USD, so USD-priced holdings are converted to the base via a USDC/USD feed (handles a USDC
-///           depeg); idle base asset is counted at face.
+///           quote in USD, so USD-priced holdings are converted to the base via the base asset's own /USD feed
+///           (`BASE_USD_FEED`), which also absorbs a base-stablecoin depeg; idle base asset is counted at face.
+///         - The base asset is assumed USD-denominated with a Chainlink /USD feed — works for any USD stablecoin
+///           (USDC, PYUSD, USDT, DAI); a non-USD base (e.g. WETH) would need a different feed topology.
 ///         - Per-feed staleness (`maxAge`). A NAV-delta cap / pause is the guardrails module's job (EVM-2674).
 contract NavSettler {
     /// @param token    Priced holding (e.g. a GM token).
@@ -58,13 +60,16 @@ contract NavSettler {
     error NotKeeper();
     error NonPositivePrice(address feed, int256 answer);
     error StalePrice(address feed, uint256 updatedAt, uint256 age);
+    error ZeroAddress();
+    error BaseAssetHolding(address token);
+    error DuplicateHolding(address token);
 
     event NavPushed(uint256 nav);
 
     ILagoonVault public immutable VAULT;
     IERC20 public immutable BASE_ASSET; // = VAULT.asset()
     uint256 public immutable BASE_SCALE; // 10 ** BASE_ASSET.decimals()
-    IAggregatorV3 public immutable BASE_USD_FEED; // USDC/USD — converts USD-priced holdings into base units
+    IAggregatorV3 public immutable BASE_USD_FEED; // base-asset/USD (e.g. USDC/USD, PYUSD/USD) — converts USD-priced holdings into base units
     uint256 public immutable BASE_USD_UNIT; // 10 ** BASE_USD_FEED.decimals()
     uint256 public immutable BASE_USD_MAX_AGE;
     address public immutable KEEPER;
@@ -89,6 +94,7 @@ contract NavSettler {
         HoldingConfig[] memory holdings
     ) {
         if (holdings.length == 0) revert NoHoldings();
+        if (vault == address(0) || keeper == address(0)) revert ZeroAddress();
 
         VAULT = ILagoonVault(vault);
         address base = ILagoonVault(vault).asset();
@@ -100,11 +106,18 @@ contract NavSettler {
         KEEPER = keeper;
 
         for (uint256 i; i < holdings.length; ++i) {
+            address token = holdings[i].token;
+            // A base-asset holding double-counts (idle base is already valued at face); a duplicate counts twice.
+            // Both are silent, immutable mispricings, so reject them at deploy. O(n^2) is fine for a few holdings.
+            if (token == base) revert BaseAssetHolding(token);
+            for (uint256 j; j < i; ++j) {
+                if (holdings[j].token == token) revert DuplicateHolding(token);
+            }
             _holdings.push(
                 Holding({
-                    token: IERC20(holdings[i].token),
+                    token: IERC20(token),
                     feed: IAggregatorV3(holdings[i].feed),
-                    tokenUnit: 10 ** IERC20Metadata(holdings[i].token).decimals(),
+                    tokenUnit: 10 ** IERC20Metadata(token).decimals(),
                     feedUnit: 10 ** IAggregatorV3(holdings[i].feed).decimals(),
                     maxAge: holdings[i].maxAge
                 })
@@ -128,18 +141,21 @@ contract NavSettler {
     }
 
     /// @notice NAV in base-asset units: idle base at face + Σ (token holdings priced in USD, converted to base).
-    /// @dev Reverts if any feed (holding or base/USD) is non-positive or older than its `maxAge`.
+    /// @dev Reverts if any priced holding with a non-zero balance — or the base/USD feed, once any such holding is
+    ///      seen — is non-positive or older than its `maxAge`. A base-only vault reads no feed at all.
     function previewNav() public view returns (uint256 nav) {
         address safe = VAULT.safe();
         nav = BASE_ASSET.balanceOf(safe); // idle base asset, at face
 
-        uint256 basePrice = _price(BASE_USD_FEED, BASE_USD_MAX_AGE); // base/USD (e.g. USDC/USD)
-
+        uint256 basePrice; // base/USD (e.g. USDC/USD); fetched lazily on the first non-zero USD-priced holding
         uint256 len = _holdings.length;
         for (uint256 i; i < len; ++i) {
             Holding storage h = _holdings[i];
             uint256 bal = h.token.balanceOf(safe);
             if (bal == 0) continue;
+
+            // _price reverts on a non-positive answer, so a fetched basePrice is always > 0 — safe as the "unset" sentinel.
+            if (basePrice == 0) basePrice = _price(BASE_USD_FEED, BASE_USD_MAX_AGE);
 
             uint256 tokenPrice = _price(h.feed, h.maxAge); // token/USD
             // usd = bal * tokenPrice * BASE_SCALE / tokenUnit  (still scaled by the token feed's decimals)
@@ -160,10 +176,10 @@ contract NavSettler {
     function _price(IAggregatorV3 feed, uint256 maxAge) internal view returns (uint256) {
         (, int256 answer,, uint256 updatedAt,) = feed.latestRoundData();
         if (answer <= 0) revert NonPositivePrice(address(feed), answer);
-        if (block.timestamp > updatedAt) {
-            uint256 age = block.timestamp - updatedAt;
-            if (age > maxAge) revert StalePrice(address(feed), updatedAt, age);
-        }
+        // A feed whose updatedAt is in the future (clock skew / misbehaving feed) is treated as fresh (age 0);
+        // production Chainlink feeds should never report a future timestamp.
+        uint256 age = block.timestamp > updatedAt ? block.timestamp - updatedAt : 0;
+        if (age > maxAge) revert StalePrice(address(feed), updatedAt, age);
         return uint256(answer);
     }
 }
