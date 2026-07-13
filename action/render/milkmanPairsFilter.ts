@@ -12,7 +12,10 @@
  * Returns an ordered list of `{ from, to }`, where `from` is the from-token key and `to` is the
  * original to-token object (token / max_slippage_bps / feeds / reverses).
  */
-export function milkmanPairs(fromTokens: unknown, toTokens: unknown): Array<{ from: string; to: unknown }> {
+export function milkmanPairs(
+  fromTokens: unknown,
+  toTokens: unknown,
+): Array<{ from: string; to: unknown }> {
   if (!Array.isArray(fromTokens) || !fromTokens.every((t) => typeof t === 'string')) {
     throw new Error('milkman_pairs: piped value must be an array of from-token keys (strings)');
   }

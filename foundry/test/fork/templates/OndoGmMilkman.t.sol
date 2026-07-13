@@ -265,9 +265,10 @@ contract OndoGmMilkmanRoleMainnetTest is ZacForkTest {
     ///      revert regardless, so a clean return proves the call was authorised.
     function _swapAllowed(address fromToken, address toToken, bytes memory priceCheckerData) internal {
         vm.prank(ALICE);
-        IRoles(modAddr).execTransactionWithRole(
-            MILKMAN, 0, _swap(fromToken, toToken, safeAddr, PRICE_CHECKER, priceCheckerData), CALL, ROLE_KEY, false
-        );
+        IRoles(modAddr)
+            .execTransactionWithRole(
+                MILKMAN, 0, _swap(fromToken, toToken, safeAddr, PRICE_CHECKER, priceCheckerData), CALL, ROLE_KEY, false
+            );
     }
 
     /// @dev Chainlink DynamicSlippageChecker priceCheckerData: abi.encode(slippageBps, innerData).

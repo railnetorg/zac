@@ -180,7 +180,14 @@ describe('milkman/milkman.tmpl', () => {
   it('TMK-11: a single (from,to) pair collapses to a plain `matches` (no 1-branch `or`)', () => {
     const out = render({
       from_tokens: ['USDC'],
-      to_tokens: [{ token: 'PYUSD', max_slippage_bps: 500, feeds: [USDC_USD, PYUSD_USD], reverses: [false, true] }],
+      to_tokens: [
+        {
+          token: 'PYUSD',
+          max_slippage_bps: 500,
+          feeds: [USDC_USD, PYUSD_USD],
+          reverses: [false, true],
+        },
+      ],
     });
     expect(parseDocument(out).errors).toEqual([]);
     expect(out).not.toContain('operator: "or"');
@@ -193,8 +200,18 @@ describe('milkman/milkman.tmpl', () => {
     const out = render({
       from_tokens: ['USDC', 'PYUSD'],
       to_tokens: [
-        { token: 'PYUSD', max_slippage_bps: 500, feeds: [USDC_USD, PYUSD_USD], reverses: [false, true] },
-        { token: 'RLUSD', max_slippage_bps: 700, feeds: [USDC_USD, RLUSD_USD], reverses: [false, true] },
+        {
+          token: 'PYUSD',
+          max_slippage_bps: 500,
+          feeds: [USDC_USD, PYUSD_USD],
+          reverses: [false, true],
+        },
+        {
+          token: 'RLUSD',
+          max_slippage_bps: 700,
+          feeds: [USDC_USD, RLUSD_USD],
+          reverses: [false, true],
+        },
       ],
     });
     expect(parseDocument(out).errors).toEqual([]);
