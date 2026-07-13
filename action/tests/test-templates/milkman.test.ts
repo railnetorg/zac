@@ -5,6 +5,7 @@ import { parseDocument } from 'yaml';
 import nunjucks from 'nunjucks';
 import { keccak } from '../../render/keccakFilter';
 import { abiEncode } from '../../render/abiEncodeFilter';
+import { milkmanPairs } from '../../render/milkmanPairsFilter';
 
 const __dirname = resolve(fileURLToPath(import.meta.url), '..');
 const REPO_ROOT = resolve(__dirname, '../../..');
@@ -32,6 +33,7 @@ describe('milkman/milkman.tmpl', () => {
   });
   env.addFilter('keccak', keccak);
   env.addFilter('abi_encode', abiEncode);
+  env.addFilter('milkman_pairs', milkmanPairs);
   env.addGlobal('aliases', {
     curator: { milkman: MILKMAN, price_checker: PRICE_CHECKER },
     tokens: { USDC, PYUSD, RLUSD },
@@ -173,5 +175,30 @@ describe('milkman/milkman.tmpl', () => {
         to_tokens: [{ token: 'PYUSD', max_slippage_bps: 500 }],
       }),
     ).toThrow();
+  });
+
+  it('TMK-11: a single (from,to) pair collapses to a plain `matches` (no 1-branch `or`)', () => {
+    const out = render({
+      from_tokens: ['USDC'],
+      to_tokens: [{ token: 'PYUSD', max_slippage_bps: 500, feeds: [USDC_USD, PYUSD_USD], reverses: [false, true] }],
+    });
+    expect(parseDocument(out).errors).toEqual([]);
+    expect(out).not.toContain('operator: "or"');
+    expect((out.match(/operator: "matches"/g) ?? []).length).toBe(1);
+    expect(out).toContain(`value: "${PYUSD}"`); // toToken still pinned
+  });
+
+  it('TMK-12: self-pairs (from == to.token) are dropped from the cartesian', () => {
+    // from × to = {USDC, PYUSD} × {PYUSD, RLUSD} = 4, minus the PYUSD→PYUSD self-pair = 3.
+    const out = render({
+      from_tokens: ['USDC', 'PYUSD'],
+      to_tokens: [
+        { token: 'PYUSD', max_slippage_bps: 500, feeds: [USDC_USD, PYUSD_USD], reverses: [false, true] },
+        { token: 'RLUSD', max_slippage_bps: 700, feeds: [USDC_USD, RLUSD_USD], reverses: [false, true] },
+      ],
+    });
+    expect(parseDocument(out).errors).toEqual([]);
+    expect(out).toContain('operator: "or"');
+    expect((out.match(/operator: "matches"/g) ?? []).length).toBe(3);
   });
 });

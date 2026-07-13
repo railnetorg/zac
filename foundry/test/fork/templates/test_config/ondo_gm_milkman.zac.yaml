@@ -1,0 +1,43 @@
+# Policy fixture for OndoGmMilkmanRoleMainnetTest. A full deployment config; the
+# ZacForkTest harness substitutes the runtime placeholders before applying:
+#   __MODIFIER__  → the freshly deployed Roles Modifier
+#   __SAFE__      → the freshly deployed Safe
+#   __MEMBER__    → the role member the test authorises
+#   __TEMPLATES__ → the absolute templates/ directory
+roles_modifier_address: "__MODIFIER__"
+safe_address: "__SAFE__"
+chain_id: 1
+name: ZAC Ondo GM milkman policy fork test
+description: In-process policy fork test for milkman.tmpl over an Ondo GM token (USDC ↔ SPYon).
+configs:
+  - template: "__TEMPLATES__/milkman/milkman.tmpl"
+    key: STRATEGY_MANAGER
+    members:
+      - "__MEMBER__"
+    params:
+      # USDC + SPYon in BOTH lists = bidirectional USDC ↔ SPYon. The cartesian
+      # from_tokens × to_tokens is {USDC, SPYon}², but the `milkman_pairs` filter
+      # drops the self-pairs (USDC→USDC, SPYon→SPYon), leaving exactly the round-trip:
+      #   USDC  → SPYon  (buy,  cap 300 bps)
+      #   SPYon → USDC   (sell, cap 200 bps)
+      from_tokens: [USDC, SPYon]
+      to_tokens:
+        # Each destination pins the exact feed path its slippage cap is measured
+        # against (reverses [false, true]). The USDC leg uses the Aave
+        # PriceCapAdapterStable USDC/USD; the SPYon leg uses the Ondo GM Chainlink
+        # "Calculated" feed (SPYon-USD) — there is no capped adapter for a GM equity,
+        # and unlike a raw stablecoin aggregator this feed IS readable by the
+        # DynamicSlippageChecker calculator (verified: it calls latestAnswer(), which
+        # the GM Calculated feed serves — see OndoGmMilkman.t.sol GF-18).
+        - token: "USDC" # sell leg: SPYon → USDC
+          max_slippage_bps: 200
+          feeds:
+            - "0xd16cC387E87d37350f57421DaDF811968441C1a5" # SPYon-USD (Ondo GM Calculated)
+            - "0x3f73F03aa83B2A48ed27E964eD0fDb590332095B" # USDC/USD (Aave capped)
+          reverses: [false, true]
+        - token: "SPYon" # buy leg: USDC → SPYon
+          max_slippage_bps: 300
+          feeds:
+            - "0x3f73F03aa83B2A48ed27E964eD0fDb590332095B" # USDC/USD (Aave capped)
+            - "0xd16cC387E87d37350f57421DaDF811968441C1a5" # SPYon-USD (Ondo GM Calculated)
+          reverses: [false, true]

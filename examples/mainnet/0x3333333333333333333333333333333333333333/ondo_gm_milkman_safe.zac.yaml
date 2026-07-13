@@ -1,0 +1,40 @@
+roles_modifier_address: "{{ aliases.modifiers.my_modifier }}"
+safe_address: "{{ aliases.safes.my_safe }}"
+chain_id: 1
+name: My Safe Ondo GM Milkman Swap Manager
+description: Price-protected USDC ↔ SPYon (Ondo GM) round-trip via CowSwap Milkman, with per-leg slippage caps.
+configs:
+  - template: "../../../templates/milkman/milkman.tmpl"
+    key: STRATEGY_MANAGER
+    members:
+      - "{{ aliases.signers.alice }}"
+    params:
+      # Secondary-market swaps for an Ondo Global Markets position, complementing the
+      # primary mint/redeem path (ondo_gm.tmpl). Listing USDC and SPYon in BOTH lists
+      # makes the policy bidirectional: the swap allow-list is from_tokens × to_tokens
+      # with self-pairs (USDC→USDC, SPYon→SPYon) dropped, leaving the round-trip
+      #   USDC  → SPYon  (buy,  ≤ 300 bps)
+      #   SPYon → USDC   (sell, ≤ 200 bps)
+      from_tokens:
+        - USDC
+        - SPYon
+      # Each destination pins the exact feed path its cap is measured against
+      # (reverses [false, true]); pinning stops a caller supplying a fake-price feed.
+      # The USDC leg uses the Aave PriceCapAdapterStable USDC/USD. The SPYon leg uses
+      # the Ondo GM Chainlink "Calculated" feed — there is no capped adapter for a GM
+      # equity, and unlike a raw stablecoin aggregator this feed is readable by the
+      # DynamicSlippageChecker calculator (it reads latestAnswer()), so the slippage
+      # gate settles. Tune the caps to observed GM liquidity before production use.
+      to_tokens:
+        - token: SPYon # buy: USDC → SPYon
+          max_slippage_bps: 300 # ≤ 3%
+          feeds:
+            - "0x3f73F03aa83B2A48ed27E964eD0fDb590332095B" # USDC/USD (Aave capped)
+            - "0xd16cC387E87d37350f57421DaDF811968441C1a5" # SPYon-USD (Ondo GM Calculated)
+          reverses: [false, true]
+        - token: USDC # sell: SPYon → USDC
+          max_slippage_bps: 200 # ≤ 2%
+          feeds:
+            - "0xd16cC387E87d37350f57421DaDF811968441C1a5" # SPYon-USD (Ondo GM Calculated)
+            - "0x3f73F03aa83B2A48ed27E964eD0fDb590332095B" # USDC/USD (Aave capped)
+          reverses: [false, true]

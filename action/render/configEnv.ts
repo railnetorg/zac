@@ -1,6 +1,7 @@
 import nunjucks from 'nunjucks';
 import { abiEncode } from './abiEncodeFilter';
 import { keccak } from './keccakFilter';
+import { milkmanPairs } from './milkmanPairsFilter';
 
 export interface ConfigEnvOpts {
   /** Search paths in order. First match wins. */
@@ -22,5 +23,6 @@ export function makeConfigEnv(opts: ConfigEnvOpts): nunjucks.Environment {
   env.addGlobal('aliases', opts.aliases);
   env.addFilter('keccak', keccak);
   env.addFilter('abi_encode', abiEncode);
+  env.addFilter('milkman_pairs', milkmanPairs);
   return env;
 }

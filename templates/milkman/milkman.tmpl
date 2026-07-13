@@ -27,10 +27,13 @@
                   feeds/reverses must equal exactly what the swap submits for this
                   pair (see RequestMilkmanSwap): e.g. USDC → PYUSD uses
                   feeds: [USDC/USD, PYUSD/USD], reverses: [false, true].
-                  The swap allow-list is the cartesian product from_tokens × to_tokens:
-                  one `or` branch per (from, to) combination, with the cap and feeds
-                  bound to the exact pair. (A single resulting branch collapses to a
-                  plain match — no redundant `or`.)
+
+  Swap allow-list: the cartesian product from_tokens × to_tokens (via the
+  `milkman_pairs` filter), with self-pairs (from == to.token) removed so that
+  listing a token in BOTH lists (buy + sell) never emits a nonsensical X → X
+  branch. One `matches` per (from, to); wrapped in an `or` when there are ≥ 2,
+  or emitted as a plain `matches` when exactly 1 (a 1-branch `or` is degenerate
+  and rejected at apply time). Each branch binds the cap and feeds to its pair.
 
   Optional params:
     max_approval — exclusive upper bound (in base units) for the approve `amount`
@@ -44,11 +47,6 @@
 
   Policy enforced:
     approve(spender=Milkman, amount < max_approval) on each from-token.
-      Pinning the spender prevents approving arbitrary contracts. The amount bound
-      is an EXCLUSIVE ceiling: by default it is uint256.max, which only excludes the
-      infinite-approval sentinel — it does NOT limit exposure (any amount below it,
-      up to the whole Safe balance, is allowed, and `amountIn` on the swap is `pass`).
-      Set `max_approval` to a realistic ceiling to bound standing/per-swap exposure.
     requestSwapExactTokensForTokens, per (from, to) branch:
       amountIn     pass
       fromToken    == aliases.tokens[from]
@@ -59,14 +57,48 @@
       priceCheckerData → abi_encoded:
         slippageBps  < to.max_slippage_bps + 1   (i.e. ≤ to.max_slippage_bps)
         innerData    == abi.encode(to.feeds, to.reverses)
-                                                  (the feed path is pinned, so the
-                                                   cap is measured against a fixed
-                                                   oracle, not a caller-chosen one)
 
     Note: cancelSwap is NOT included. Milkman's cancelSwap targets the per-swap
     order clone (address unknown at policy-creation time), so it cannot be
     pre-authorised; cancellations are executed directly through the Safe UI.
 -#}
+{%- macro swap_params(from, to) -%}
+- name: amountIn
+  operator: "pass"
+- name: fromToken
+  operator: "equal_to"
+  value: "{{ aliases.tokens[from] }}"
+  value_type: "address"
+- name: toToken
+  operator: "equal_to"
+  value: "{{ aliases.tokens[to.token] }}"
+  value_type: "address"
+- name: to
+  operator: "equal_to_avatar"
+- name: appData
+  operator: "pass"
+- name: priceChecker
+  operator: "equal_to"
+  value: "{{ aliases.curator.price_checker }}"
+  value_type: "address"
+- name: priceCheckerData
+  param_type: "abi_encoded"
+  children:
+    - name: slippageBps
+      param_type: "static"
+      operator: "less_than"
+      value: "{{ to.max_slippage_bps + 1 }}"
+      value_type: "uint256"
+    - name: innerData
+      param_type: "dynamic"
+      operator: "equal_to"
+      value: "{{ [to.feeds, to.reverses] | abi_encode(['address[]', 'bool[]']) }}"
+      value_type: "bytes"
+      # display-only: lets `zac plan` decode the pinned blob back to (feeds, reverses).
+      display_decode:
+        - { name: feeds, type: "address[]" }
+        - { name: reverses, type: "bool[]" }
+{%- endmacro -%}
 roles:
 {%- for token in from_tokens %}
   - address: "{{ aliases.tokens[token] }}"
@@ -90,47 +122,17 @@ roles:
     functions:
       - signature: "function requestSwapExactTokensForTokens(uint256 amountIn, address fromToken, address toToken, address to, bytes32 appData, address priceChecker, bytes priceCheckerData)"
         execution_options: "none"
+{%- set pairs = from_tokens | milkman_pairs(to_tokens) %}
+{%- if pairs | length == 1 %}
+        operator: "matches"
+        params:
+{{ swap_params(pairs[0].from, pairs[0].to) | indent(10, true) }}
+{%- else %}
         operator: "or"
         branches:
-{%- for from in from_tokens %}
-{%- for to in to_tokens %}
+{%- for pair in pairs %}
           - operator: "matches"
             params:
-              - name: amountIn
-                operator: "pass"
-              - name: fromToken
-                operator: "equal_to"
-                value: "{{ aliases.tokens[from] }}"
-                value_type: "address"
-              - name: toToken
-                operator: "equal_to"
-                value: "{{ aliases.tokens[to.token] }}"
-                value_type: "address"
-              - name: to
-                operator: "equal_to_avatar"
-              - name: appData
-                operator: "pass"
-              - name: priceChecker
-                operator: "equal_to"
-                value: "{{ aliases.curator.price_checker }}"
-                value_type: "address"
-              - name: priceCheckerData
-                param_type: "abi_encoded"
-                children:
-                  - name: slippageBps
-                    param_type: "static"
-                    operator: "less_than"
-                    value: "{{ to.max_slippage_bps + 1 }}"
-                    value_type: "uint256"
-                  - name: innerData
-                    param_type: "dynamic"
-                    operator: "equal_to"
-                    value: "{{ [to.feeds, to.reverses] | abi_encode(['address[]', 'bool[]']) }}"
-                    value_type: "bytes"
-                    # display-only: lets `zac plan` decode the pinned blob back to
-                    # (feeds, reverses) instead of printing opaque hex.
-                    display_decode:
-                      - { name: feeds, type: "address[]" }
-                      - { name: reverses, type: "bool[]" }
+{{ swap_params(pair.from, pair.to) | indent(14, true) }}
 {%- endfor %}
-{%- endfor %}
+{%- endif %}
