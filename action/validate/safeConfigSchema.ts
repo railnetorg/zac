@@ -13,9 +13,12 @@ const AddressString = z.string().refine((s) => isAddress(s), {
 });
 
 /**
- * Parsed-and-validated `safe.yaml` content. All three fields are
- * REQUIRED in the source file; `null` (the YAML `~` shorthand) means
- * "don't manage this slot" (no call emitted at plan time).
+ * Parsed-and-validated `safe.yaml` content. The `guard`, `fallback`, and
+ * `modules` fields are REQUIRED in the source file; `null` (the YAML `~`
+ * shorthand) means "don't manage this slot" (no call emitted at plan
+ * time). `nestedSigners` is OPTIONAL in the source file and always
+ * NORMALIZED here to a `string[]` (empty `[]` when the key is absent or
+ * `~`); each address is lowercased and deduped.
  *
  * Per-field zero-address semantics:
  * - `guard`: zero address is EXPLICIT — when live is non-zero the plan
@@ -26,17 +29,23 @@ const AddressString = z.string().refine((s) => isAddress(s), {
  *    `setFallbackHandler(0x0)` to clear the on-chain fallback handler;
  *    use `~` (null) to leave the slot untouched.
  * - `modules`: zero address is filtered out before set-diffing.
+ *
+ * `nestedSigners` carries parent-Safe owners that are THEMSELVES Safes;
+ * it never produces a plan call — it is safe-level metadata surfaced as a
+ * nested-signer signing-hash preview at plan time and emitted at submit.
  */
 export interface ParsedSafeYaml {
   guard: string | null;
   fallback: string | null;
   modules: string[] | null;
+  nestedSigners: string[];
 }
 
 export const SafeConfigSchema = z.object({
   guard: z.union([z.null(), AddressString]),
   fallback: z.union([z.null(), AddressString]),
   modules: z.union([z.null(), z.array(AddressString)]),
+  nested_signers: z.union([z.null(), z.array(AddressString)]).optional(),
 });
 
 export interface ParseAndValidateSafeYamlOpts {
@@ -61,8 +70,9 @@ export interface ParseAndValidateSafeYamlOpts {
  * - `phase=load`: file not found.
  * - `phase=render`: nunjucks render error (e.g. unresolved `{{ aliases.foo }}`).
  * - `phase=parse`: YAML parse error or empty document.
- * - `phase=validate`: missing required key, invalid address, or duplicate
- *   non-zero module after the `0x0` filter.
+ * - `phase=validate`: missing required key, invalid address, duplicate
+ *   non-zero module after the `0x0` filter, or invalid/duplicate
+ *   `nested_signers` address.
  */
 export function parseAndValidateSafeYaml(opts: ParseAndValidateSafeYamlOpts): ParsedSafeYaml {
   // 1. Read.
@@ -153,6 +163,17 @@ export function parseAndValidateSafeYaml(opts: ParseAndValidateSafeYamlOpts): Pa
         sourceLocation: { file: opts.path },
       });
     }
+    if (keyStr === 'nested_signers' && Array.isArray(got)) {
+      // Mirror the `modules` branch — surface the first non-address element.
+      const badIdx = issue.path[1];
+      const badVal =
+        typeof badIdx === 'number' && badIdx < got.length ? String(got[badIdx]) : '<unknown>';
+      throw new ZacError({
+        phase: 'validate',
+        message: `safe.yaml: 'nested_signers': invalid address '${badVal}'`,
+        sourceLocation: { file: opts.path },
+      });
+    }
     throw new ZacError({
       phase: 'validate',
       message: `safe.yaml: '${keyStr}': ${issue.message}`,
@@ -177,5 +198,34 @@ export function parseAndValidateSafeYaml(opts: ParseAndValidateSafeYamlOpts): Pa
     }
   }
 
-  return parsed.data;
+  // 7. Normalize `nested_signers` to a lowercased, deduped `string[]`
+  //    (empty when the key is absent or `~`). Mirrors how `modules` is
+  //    handled — reject duplicates. No `0x0` filter: a nested signer is a
+  //    real Safe owner, not a managed slot.
+  const nestedSigners: string[] = [];
+  const rawNested = parsed.data.nested_signers;
+  if (rawNested !== null && rawNested !== undefined) {
+    const seenNested = new Set<string>();
+    for (const s of rawNested) {
+      const lo = s.toLowerCase();
+      if (seenNested.has(lo)) {
+        throw new ZacError({
+          phase: 'validate',
+          message: `safe.yaml: nested_signers contains duplicate '${s}'`,
+          sourceLocation: { file: opts.path },
+        });
+      }
+      seenNested.add(lo);
+      nestedSigners.push(lo);
+    }
+  }
+
+  // Map the snake_case source key to the normalized `nestedSigners` field —
+  // never leak `nested_signers` into the returned `ParsedSafeYaml`.
+  return {
+    guard: parsed.data.guard,
+    fallback: parsed.data.fallback,
+    modules: parsed.data.modules,
+    nestedSigners,
+  };
 }
