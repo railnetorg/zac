@@ -15,6 +15,16 @@
 #                                 the slot untouched)
 #   modules:  [<addr>, ...] | ~ (~ = don't manage; list = full reconcile)
 #
+# One OPTIONAL key:
+#   nested_signers: [<addr>, ...] | ~  (parent-Safe owners that are
+#                                 THEMSELVES Safes — "nested signers".
+#                                 NEVER produces a plan call; surfaces a
+#                                 per-child EIP-1271 signing-hash preview
+#                                 at `plan` time and emits an
+#                                 authoritative `nested-signer ...` line at
+#                                 `submit`/`apply`. Omit the key entirely or
+#                                 use `~` to opt out.)
+#
 # All-`~` (this file) is the documented opt-out: every plan run touches
 # zero Safe-level state regardless of what's on-chain. Promote a `~` to a
 # concrete address (or `{{ aliases.* }}`) to start managing that field.
@@ -28,3 +38,9 @@
 guard: ~
 fallback: ~
 modules: ~
+# nested_signers is OPTIONAL — omit it (as below, via this comment) or set
+# `~` to opt out. Example with a literal address and an alias:
+#   nested_signers:
+#     - "0x1111111111111111111111111111111111111111"
+#     - "{{ aliases.signers.treasury_safe }}"
+nested_signers: ~

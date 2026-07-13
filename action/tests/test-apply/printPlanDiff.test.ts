@@ -316,7 +316,9 @@ describe('printPlanDiff', () => {
     // 0x445df08b. Wire up a source-side entry simulating what
     // buildFunctionParamMap would have produced from the generated YAML.
     const paramMap = {
-      '0x2c158bc456e027b2affccadf1bdbd9f5fc4c5c8c:0x445df08b': {
+      // Role-keyed: the fixture decodes to roleKey ONDO_GM (target 0x2c15…5C8C,
+      // selector 0x445df08b).
+      'ONDO_GM:0x2c158bc456e027b2affccadf1bdbd9f5fc4c5c8c:0x445df08b': {
         signature: 'function subscribe(address asset, uint256 amount, address receiver)',
         fnName: 'subscribe',
         inputs: [
@@ -354,6 +356,53 @@ describe('printPlanDiff', () => {
     expect(out).toMatch(/├─ address asset\s+= 0xA0b8…eB48 \(tokens\.USDC\)/);
     expect(out).toMatch(/├─ uint256 amount\s+\*/);
     expect(out).toMatch(/└─ address receiver\s+= <avatar>/);
+  });
+
+  it('functionParamMap: a colliding (target, selector) entry from ANOTHER role is NOT used — lookup is role-keyed', async () => {
+    const sdk = await loadSdk();
+    // The fixture decodes to roleKey ONDO_GM. Provide a DECOY entry under a
+    // different role (AAVE_V3) for the SAME target:selector — pre-fix the
+    // target:selector-only key collided and the decoy could shadow the real
+    // one (the actual "every approve shows aave.pool" bug). The renderer must
+    // pick the ONDO_GM entry by role.
+    const target = '0x2c158bc456e027b2affccadf1bdbd9f5fc4c5c8c';
+    const realEntry = {
+      signature: 'function subscribe(address asset, uint256 amount, address receiver)',
+      fnName: 'subscribe',
+      inputs: [
+        { type: 'address', name: 'asset' },
+        { type: 'uint256', name: 'amount' },
+        { type: 'address', name: 'receiver' },
+      ],
+      params: [
+        { name: 'asset', operator: 'equal_to', value: target, value_type: 'address' },
+        { name: 'amount', operator: 'pass' },
+        { name: 'receiver', operator: 'equal_to_avatar' },
+      ],
+    };
+    const decoyEntry = {
+      signature: 'function decoyFn(address shouldNotRender)',
+      fnName: 'decoyFn',
+      inputs: [{ type: 'address', name: 'shouldNotRender' }],
+      params: [{ name: 'shouldNotRender', operator: 'pass' }],
+    };
+    const paramMap = {
+      [`ONDO_GM:${target}:0x445df08b`]: realEntry,
+      [`AAVE_V3:${target}:0x445df08b`]: decoyEntry,
+    };
+    const plan = makePlan([FIX_SCOPE_FUNCTION_ONDO_GM_445DF08B]);
+    const { sink, text } = captureSink();
+    printPlanDiff(plan, {
+      planPath: 'safe.plan.json',
+      safeAddress: plan.safeAddress,
+      out: sink,
+      sdk,
+      functionParamMap: paramMap,
+    });
+    const out = text();
+    expect(out).toContain('subscribe'); // the ONDO_GM entry was used
+    expect(out).not.toContain('decoyFn'); // the AAVE_V3 collision did NOT leak
+    expect(out).not.toContain('shouldNotRender');
   });
 
   it('functionParamMap: scopeFunction with no matching entry falls back to leaf rendering (no param subtree)', async () => {
@@ -559,5 +608,100 @@ describe('printPlanDiff', () => {
       addressLabelMap: { [GUARD.toLowerCase()]: 'security.guard' },
     });
     expect(text()).toMatch(/setGuard\(0x1234…7890 \(security\.guard\)\)/);
+  });
+
+  // --- Ledger-hash preview section (Safe tx + nested signers) ---
+
+  const DOM_MAIN = '0xd00d0000000000000000000000000000000000000000000000000000000000d0';
+  const MSG_MAIN = '0xddee0000000000000000000000000000000000000000000000000000000000d1';
+  const TX_MAIN = '0xddff0000000000000000000000000000000000000000000000000000000000d2';
+  const DOM_CHILD = '0xc11d0000000000000000000000000000000000000000000000000000000000c0';
+  const MSG_CHILD = '0xc12d0000000000000000000000000000000000000000000000000000000000c1';
+  const TX_CHILD = '0xc13d0000000000000000000000000000000000000000000000000000000000c2';
+
+  it('mainTxPreview + nestedPreview with full hashes → Safe tx block + per-child domain/message/safeTxHash, nonce notes, label, Ledger legend', async () => {
+    const sdk = await loadSdk();
+    const plan = makePlan([FIX_REVOKE_TARGET_LAGOON]);
+    const child = '0x1111111111111111111111111111111111111111';
+    const { sink, text } = captureSink();
+    printPlanDiff(plan, {
+      planPath: 'safe.plan.json',
+      safeAddress: plan.safeAddress,
+      out: sink,
+      sdk,
+      mainTxPreview: { domainHash: DOM_MAIN, messageHash: MSG_MAIN, safeTxHash: TX_MAIN, nonce: 7 },
+      nestedPreview: [
+        {
+          child,
+          label: 'signers.treasury',
+          domainHash: DOM_CHILD,
+          messageHash: MSG_CHILD,
+          safeTxHash: TX_CHILD,
+          nonce: 3,
+        },
+      ],
+    });
+    const out = text();
+    // Ledger legend.
+    expect(out).toContain('(verify Domain hash / Message hash on your Ledger)');
+    // Parent Safe tx block.
+    expect(out).toContain('Safe tx (preview @ nonce 7 — re-verify at submit)');
+    expect(out).toMatch(new RegExp(`domainHash\\s+${DOM_MAIN}`));
+    expect(out).toMatch(new RegExp(`messageHash\\s+${MSG_MAIN}`));
+    expect(out).toMatch(new RegExp(`safeTxHash\\s+${TX_MAIN}`));
+    // Nested signers block — each child approves via approveHash().
+    expect(out).toContain(
+      'Nested signers (1) — each approves via approveHash(); its owners sign the child tx below',
+    );
+    expect(out).toContain(`${child} (signers.treasury)  (child nonce 3)`);
+    expect(out).toMatch(new RegExp(`domainHash\\s+${DOM_CHILD}`));
+    expect(out).toMatch(new RegExp(`messageHash\\s+${MSG_CHILD}`));
+    expect(out).toMatch(new RegExp(`safeTxHash\\s+${TX_CHILD}`));
+    expect(out).not.toContain('finalized at submit');
+  });
+
+  it('degraded preview (domain hashes only) → Safe tx domain + "finalized at submit" notes, child domain + "message/final hash finalized at submit", no nonce', async () => {
+    const sdk = await loadSdk();
+    const plan = makePlan([FIX_REVOKE_TARGET_LAGOON]);
+    const child = '0x2222222222222222222222222222222222222222';
+    const { sink, text } = captureSink();
+    printPlanDiff(plan, {
+      planPath: 'safe.plan.json',
+      safeAddress: plan.safeAddress,
+      out: sink,
+      sdk,
+      mainTxPreview: { domainHash: DOM_MAIN },
+      nestedPreview: [{ child, domainHash: DOM_CHILD }],
+    });
+    const out = text();
+    // No nonce → generic preview note on the parent block.
+    expect(out).toContain('Safe tx (preview — re-verify at submit)');
+    expect(out).not.toContain('@ nonce');
+    expect(out).toMatch(new RegExp(`domainHash\\s+${DOM_MAIN}`));
+    expect(out).toContain('↳ message hash finalized at submit');
+    expect(out).toContain('↳ final hash finalized at submit');
+    // Child: domain present, message/final folded into one degraded note; no
+    // child-nonce parenthetical in the degraded form.
+    expect(out).toMatch(new RegExp(`domainHash\\s+${DOM_CHILD}`));
+    expect(out).toContain('↳ message/final hash finalized at submit');
+    expect(out).not.toContain('child nonce');
+    // Bare child (no label parenthetical).
+    expect(out).toMatch(new RegExp(`  ${child}\\n`));
+  });
+
+  it('no preview options → no Safe tx / Nested signers section', async () => {
+    const sdk = await loadSdk();
+    const plan = makePlan([FIX_REVOKE_TARGET_LAGOON]);
+    const { sink, text } = captureSink();
+    printPlanDiff(plan, {
+      planPath: 'safe.plan.json',
+      safeAddress: plan.safeAddress,
+      out: sink,
+      sdk,
+    });
+    const out = text();
+    expect(out).not.toContain('Nested signers');
+    expect(out).not.toContain('Safe tx (preview');
+    expect(out).not.toContain('verify Domain hash');
   });
 });

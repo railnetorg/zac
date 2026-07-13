@@ -281,6 +281,23 @@ export async function signAndPropose(opts: SignAndProposeOpts): Promise<{ safeTx
   return { safeTxHash: opts.safeTxHash };
 }
 
+/**
+ * Read a Safe's current `nonce()` from chain. Injectable (`ReadSafeNonceFn`)
+ * so callers that derive nonce-dependent hashes (the nested-signer child
+ * `approveHash` tx) can stub it in tests. Uses viem directly — no protocol-kit
+ * init needed for a single view call.
+ */
+export type ReadSafeNonceFn = (rpcUrl: string, safeAddress: string) => Promise<bigint>;
+export const readSafeNonce: ReadSafeNonceFn = async (rpcUrl, safeAddress) => {
+  const { createPublicClient, http, parseAbi } = await import('viem');
+  const client = createPublicClient({ transport: http(rpcUrl) });
+  return (await client.readContract({
+    address: getAddress(safeAddress),
+    abi: parseAbi(['function nonce() view returns (uint256)']),
+    functionName: 'nonce',
+  })) as bigint;
+};
+
 async function loadSafeInit(): Promise<SafeInitFn> {
   const mod = (await import('@safe-global/protocol-kit')) as unknown as {
     default: { init: SafeInitFn };

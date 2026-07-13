@@ -149,6 +149,13 @@ export async function runPlanForSafeDir(opts: RunPlanForSafeDirOpts): Promise<Pl
     ...(opts.safeDir.modifierAddress !== undefined
       ? { modifierAddress: opts.safeDir.modifierAddress }
       : {}),
+    // `nestedSigners` is safe-level metadata (parent-Safe owners that are
+    // themselves Safes) — it does NOT depend on a modifier. Carried on the
+    // Plan only when `safe.yaml` declared at least one. Lowercased + deduped
+    // already by `parseAndValidateSafeYaml`.
+    ...(parsedSafeYaml !== undefined && parsedSafeYaml.nestedSigners.length > 0
+      ? { nestedSigners: parsedSafeYaml.nestedSigners }
+      : {}),
     safeAddress: opts.safeDir.safeAddress,
   };
 }
