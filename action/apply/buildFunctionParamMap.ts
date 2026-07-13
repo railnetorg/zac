@@ -30,13 +30,17 @@ export interface FunctionParams {
 
 /**
  * Walk parsed `Generated` configs and produce a lookup keyed by
- * `<target_lower>:<selector_lower>` → source-side function data. Used by
- * `printPlanDiff` to render scopeFunction permissions as a tree of
+ * `<roleKey>:<target_lower>:<selector_lower>` → source-side function data.
+ * Used by `printPlanDiff` to render scopeFunction permissions as a tree of
  * `<type> <name>  <constraint>` lines under each call.
  *
- * Selector collisions across different targets are not a concern — the
- * key includes the target. Same selector on the same target collides; we
- * keep the first occurrence to be deterministic (matches `buildSelectorMap`).
+ * The key INCLUDES the role key: different roles routinely scope the SAME
+ * function on the SAME target with DIFFERENT conditions (e.g. every protocol
+ * config approves `tokens.USDC`, each pinning its own spender). Keying by
+ * `<target>:<selector>` alone collided them, so every `approve(USDC)` line
+ * rendered the first-seen role's spender (e.g. the Aave pool everywhere).
+ * A genuine collision WITHIN one `(role, target, selector)` keeps the first
+ * occurrence, to be deterministic.
  *
  * Signatures that fail to parse are skipped silently — the printer falls
  * back to a leaf call line for missing entries.
@@ -44,7 +48,7 @@ export interface FunctionParams {
 export function buildFunctionParamMap(generatedList: Generated[]): Record<string, FunctionParams> {
   const map: Record<string, FunctionParams> = {};
   for (const generated of generatedList) {
-    for (const role of Object.values(generated.roles)) {
+    for (const [roleKey, role] of Object.entries(generated.roles)) {
       for (const target of role.targets) {
         const addr = target.address.toLowerCase();
         for (const fn of target.functions) {
@@ -62,7 +66,7 @@ export function buildFunctionParamMap(generatedList: Generated[]): Record<string
           } catch {
             continue;
           }
-          const key = `${addr}:${selector}`;
+          const key = `${roleKey}:${addr}:${selector}`;
           if (map[key] !== undefined) continue;
           const fnAny = fn as unknown as {
             params?: FunctionParams['params'];

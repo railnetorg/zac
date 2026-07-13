@@ -224,4 +224,86 @@ modules: ~
       expect((e as ZacError).phase).toBe('render');
     }
   });
+
+  // --- nested_signers (OPTIONAL key) ---
+
+  it('nested_signers: valid list parses and lowercases each address', () => {
+    // viem's `isAddress` rejects all-uppercase hex as a bad checksum, so use
+    // a checksummed mixed-case fixture to prove the lowercasing happens.
+    const MIXED = '0xabC1230000000000000000000000000000000456';
+    const path = writeYaml(`guard: ~
+fallback: ~
+modules: ~
+nested_signers:
+  - "${MIXED}"
+  - "${MOD_B}"
+`);
+    const result = parseAndValidateSafeYaml(defaultOpts(path));
+    expect(result.nestedSigners).toEqual([MIXED.toLowerCase(), MOD_B.toLowerCase()]);
+  });
+
+  it('nested_signers absent (key omitted) → normalized to []', () => {
+    const path = writeYaml(`guard: ~
+fallback: ~
+modules: ~
+`);
+    const result = parseAndValidateSafeYaml(defaultOpts(path));
+    expect(result.nestedSigners).toEqual([]);
+  });
+
+  it('nested_signers: ~ → normalized to []', () => {
+    const path = writeYaml(`guard: ~
+fallback: ~
+modules: ~
+nested_signers: ~
+`);
+    const result = parseAndValidateSafeYaml(defaultOpts(path));
+    expect(result.nestedSigners).toEqual([]);
+  });
+
+  it('nested_signers: invalid address → ZacError(validate) with "invalid address" message', () => {
+    const path = writeYaml(`guard: ~
+fallback: ~
+modules: ~
+nested_signers:
+  - "0xnothex"
+`);
+    expect(() => parseAndValidateSafeYaml(defaultOpts(path))).toThrowError(ZacError);
+    try {
+      parseAndValidateSafeYaml(defaultOpts(path));
+    } catch (e) {
+      expect((e as ZacError).phase).toBe('validate');
+      expect((e as ZacError).message).toContain("'nested_signers': invalid address");
+    }
+  });
+
+  it('nested_signers: duplicate → ZacError(validate) with "contains duplicate" message', () => {
+    const path = writeYaml(`guard: ~
+fallback: ~
+modules: ~
+nested_signers:
+  - "${MOD_A}"
+  - "${MOD_A}"
+`);
+    expect(() => parseAndValidateSafeYaml(defaultOpts(path))).toThrowError(ZacError);
+    try {
+      parseAndValidateSafeYaml(defaultOpts(path));
+    } catch (e) {
+      expect((e as ZacError).phase).toBe('validate');
+      expect((e as ZacError).message).toContain('nested_signers contains duplicate');
+    }
+  });
+
+  it('nested_signers: `{{ aliases.x }}` resolves to its address (lowercased)', () => {
+    // Checksummed alias value — lowercased on the way into nestedSigners.
+    const ALIASED = '0xabC1230000000000000000000000000000000456';
+    const path = writeYaml(`guard: ~
+fallback: ~
+modules: ~
+nested_signers:
+  - "{{ aliases.childSafe }}"
+`);
+    const result = parseAndValidateSafeYaml(defaultOpts(path, { childSafe: ALIASED }));
+    expect(result.nestedSigners).toEqual([ALIASED.toLowerCase()]);
+  });
 });

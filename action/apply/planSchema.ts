@@ -31,12 +31,21 @@ export const SafeTxDataSchema = z.object({
  * configs). `serializePlan` conditionally spreads it so the JSON output
  * omits the key entirely when undefined; downstream `runBundledSubmit` /
  * `runPlanForSafeDir` do the same when constructing Plan instances.
+ *
+ * `nestedSigners` is OPTIONAL — the lowercased addresses of parent-Safe
+ * owners that are THEMSELVES Safes (declared via `safe.yaml`'s
+ * `nested_signers`). It carries ONLY addresses, never a hash or nonce:
+ * the nested-signer signing hash is nonce-derived and recomputed LIVE at
+ * plan/submit time, so persisting it would churn the plan on every
+ * unrelated nonce bump. `serializePlan` omits the key entirely when the
+ * array is absent or empty.
  */
 export const PlanSchema = z.object({
   calls: z.array(PlanCallSchema),
   callsCount: z.number().int().nonnegative(),
   chainId: z.number(),
   modifierAddress: z.string().optional(),
+  nestedSigners: z.array(z.string()).optional(),
   safeAddress: z.string(),
 });
 
@@ -45,13 +54,18 @@ export type PlanCall = z.infer<typeof PlanCallSchema>;
 export type SafeTxData = z.infer<typeof SafeTxDataSchema>;
 
 export function serializePlan(plan: Plan): string {
-  // Conditional spread on `modifierAddress` — JSON omits the key when it
-  // would have been `undefined` (safe-only plans).
+  // Conditional spread on `modifierAddress` / `nestedSigners` — JSON omits
+  // each key when it would have been `undefined` (safe-only plans) or, for
+  // `nestedSigners`, when the array is empty (preserves the
+  // "no nested signers ⇒ no key" idempotency).
   const withCount: Plan = {
     calls: plan.calls,
     callsCount: plan.calls.length,
     chainId: plan.chainId,
     ...(plan.modifierAddress !== undefined ? { modifierAddress: plan.modifierAddress } : {}),
+    ...(plan.nestedSigners !== undefined && plan.nestedSigners.length > 0
+      ? { nestedSigners: plan.nestedSigners }
+      : {}),
     safeAddress: plan.safeAddress,
   };
   return JSON.stringify(sortDeep(withCount), null, 2);

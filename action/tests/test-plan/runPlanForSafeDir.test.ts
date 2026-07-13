@@ -359,6 +359,55 @@ modules:
     expect(plan!.modifierAddress!.toLowerCase()).toBe(MOD_A.toLowerCase());
   });
 
+  it('safe.yaml declaring nested_signers → Plan carries lowercased nestedSigners', async () => {
+    // Checksummed inputs — assert they come back lowercased on the Plan.
+    const CHILD_A = '0xabC1230000000000000000000000000000000456';
+    const CHILD_B = '0x1111111111111111111111111111111111111111';
+    const { root } = plantSafeDirWithSafeYaml({
+      network: 'mainnet',
+      chainId: 1,
+      safeAddress: SAFE_A,
+      // Safe-only dir with a guard change so the plan is non-null.
+      files: [],
+      safeYamlBody: `guard: "0x1234567890123456789012345678901234567890"
+fallback: ~
+modules: ~
+nested_signers:
+  - "${CHILD_A}"
+  - "${CHILD_B}"
+`,
+    });
+    const safeDirs = findSafeDirs(root);
+    const plan = await runPlanForSafeDir({
+      safeDir: safeDirs[0]!,
+      safeInit: safeInitStubWithSafe({ guard: '0x0000000000000000000000000000000000000000' }),
+      rpcUrl: 'http://stub/rpc',
+    });
+    expect(plan).not.toBeNull();
+    expect(plan!.nestedSigners).toEqual([CHILD_A.toLowerCase(), CHILD_B.toLowerCase()]);
+  });
+
+  it('safe.yaml without nested_signers → Plan has no nestedSigners key', async () => {
+    const { root } = plantSafeDirWithSafeYaml({
+      network: 'mainnet',
+      chainId: 1,
+      safeAddress: SAFE_A,
+      files: [],
+      safeYamlBody: `guard: "0x1234567890123456789012345678901234567890"
+fallback: ~
+modules: ~
+`,
+    });
+    const safeDirs = findSafeDirs(root);
+    const plan = await runPlanForSafeDir({
+      safeDir: safeDirs[0]!,
+      safeInit: safeInitStubWithSafe({ guard: '0x0000000000000000000000000000000000000000' }),
+      rpcUrl: 'http://stub/rpc',
+    });
+    expect(plan).not.toBeNull();
+    expect(plan!.nestedSigners).toBeUndefined();
+  });
+
   it('TS-12: revoke calls (data prefix differs from any grant) flow through unchanged', async () => {
     // The SDK natively emits revokes for unmentioned roles; we just assert
     // wire-through: whatever bytes the SDK emits land in plan.calls verbatim.
