@@ -32,6 +32,13 @@ interface ILagoonVault {
 ///         priced via Chainlink and converted to base units, per-feed staleness, base-stablecoin
 ///         depeg absorbed through the base/USD feed).
 ///
+///         BASE ASSET IS PARAMETERIZED — NOT USDC-SPECIFIC. The base asset is read from
+///         `VAULT.asset()` and its /USD feed is the `baseUsdFeed` constructor arg, with all decimals
+///         derived at construction (`BASE_SCALE`, `BASE_USD_UNIT`). So a vault denominated in ANY
+///         USD stablecoin that has a Chainlink /USD feed is supported — USDC, USDT, DAI, PYUSD, … —
+///         not just USDC (the USDC mentions elsewhere are only the Ondo-GM example). A non-USD base
+///         (e.g. WETH) is out of scope: it would need a different feed topology.
+///
 ///         KEY INVARIANT — NAV IS ONLY TAKEN AT REST. `pushNav` refuses while a CoW order is live
 ///         (`isPending()`, the donation-safe quiescence gate from RAIL-26). So NAV is never computed
 ///         while sold assets sit in a Milkman clone (invisible to a Safe-balance read) — there is no
@@ -42,6 +49,15 @@ interface ILagoonVault {
 ///         SAFE is pinned (inherited immutable). `pushNav` additionally asserts `SAFE == VAULT.safe()`
 ///         so that, if the vault's Safe is moved via `updateSafe`, valuation fails closed (redeploy +
 ///         re-point the valuationManager) rather than pricing the wrong account.
+///
+///         FEED FRESHNESS (operational). NAV freshness is bounded by each feed's `maxAge`; the keeper
+///         chooses the snapshot instant within that window (it cannot choose the value). Set each
+///         `maxAge` to the feed's REAL heartbeat plus a small margin — not a blanket long value — and
+///         pair it with a tight Lagoon `totalAssetsLifespan` so a snapshot can't be settled long after
+///         it was taken. (The fork test's 7-day `maxAge` is for fork robustness, not a production
+///         value.) Whether RWA weekend/holiday staleness should *block* settlement rather than be
+///         tolerated is a keeper/guardrails concern (RAIL-19 / RAIL-21), as is the push->settle
+///         sequencing (quiescence is enforced at `pushNav`, not at the Safe's later `settle*`).
 contract RwaVaultManager is MilkmanSwapManager {
     /// @param token  Priced holding (e.g. an Ondo GM token).
     /// @param feed   Chainlink USD feed for `token`.
@@ -94,6 +110,7 @@ contract RwaVaultManager is MilkmanSwapManager {
         HoldingConfig[] memory holdings
     ) MilkmanSwapManager(milkman, ILagoonVault(vault).safe(), keeper) {
         if (holdings.length == 0) revert NoHoldings();
+        if (baseUsdFeed == address(0)) revert ZeroAddress();
 
         VAULT = ILagoonVault(vault);
         address base = ILagoonVault(vault).asset();
@@ -105,6 +122,7 @@ contract RwaVaultManager is MilkmanSwapManager {
 
         for (uint256 i; i < holdings.length; ++i) {
             address token = holdings[i].token;
+            if (token == address(0) || holdings[i].feed == address(0)) revert ZeroAddress();
             // A base-asset holding double-counts (idle base is already at face); a duplicate counts twice.
             // Both are silent immutable mispricings, so reject them at deploy. O(n^2) is fine for a few holdings.
             if (token == base) revert BaseAssetHolding(token);

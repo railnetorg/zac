@@ -108,6 +108,70 @@ contract RwaVaultManagerTest is Test {
         assertEq(mgr.previewNav(), 1000e6);
     }
 
+    function test_previewNav_nonUsdcBase_18dec() public {
+        // Proves the base asset + its /USD feed are parameterized (not hardcoded to a 6-dec USDC):
+        // a DAI-denominated vault (18-dec base, DAI/USD feed) prices correctly — same capability as
+        // the RAIL-24 NavSettler. The SAFE's USDC (a different token) is ignored by this manager.
+        MockERC20 dai = new MockERC20("Dai", "DAI", 18);
+        MockAggregatorV3 daiFeed = new MockAggregatorV3(8, 1e8, block.timestamp); // $1.00
+        MockLagoonVault daiVault = new MockLagoonVault(address(dai), SAFE);
+
+        RwaVaultManager.HoldingConfig[] memory h = new RwaVaultManager.HoldingConfig[](1);
+        h[0] = RwaVaultManager.HoldingConfig({token: address(gm), feed: address(gmFeed), maxAge: MAX_AGE});
+        RwaVaultManager daiMgr =
+            new RwaVaultManager(address(daiVault), KEEPER, IMilkman(address(milkman)), address(daiFeed), MAX_AGE, h);
+
+        dai.mint(SAFE, 1000e18); // 1000 DAI idle; SAFE already holds 5 GM (@ $200 = $1000 = 1000 DAI)
+        assertEq(daiMgr.previewNav(), 2000e18, "18-dec non-USDC base priced correctly");
+    }
+
+    function test_previewNav_depegBase_nonParity() public {
+        // USDC/USD = $0.95 (a real depeg) — exercises basePrice != 1e8, the "depeg absorbed via the
+        // base/USD feed" design property the parity tests never hit.
+        usdcFeed.set(95e6, block.timestamp);
+        // idle 1000 USDC at face + (5 GM * $200 = $1000) / $0.95 = 1052.63... USDC
+        assertEq(mgr.previewNav(), 2_052_631_578);
+    }
+
+    function test_previewNav_holdingFeedDifferentDecimals() public {
+        // A holding feed with 18 decimals (not 8) — exercises feedUnit != 1e8; NAV must stay $-correct.
+        MockAggregatorV3 gmFeed18 = new MockAggregatorV3(18, 200e18, block.timestamp); // $200 at 18 dec
+        RwaVaultManager.HoldingConfig[] memory h = new RwaVaultManager.HoldingConfig[](1);
+        h[0] = RwaVaultManager.HoldingConfig({token: address(gm), feed: address(gmFeed18), maxAge: MAX_AGE});
+        RwaVaultManager m2 =
+            new RwaVaultManager(address(vault), KEEPER, IMilkman(address(milkman)), address(usdcFeed), MAX_AGE, h);
+        // idle 1000 USDC + 5 GM * $200 = $1000 -> 1000 USDC = 2000e6
+        assertEq(m2.previewNav(), 2000e6);
+    }
+
+    function test_previewNav_revertsOnStaleBaseFeed() public {
+        // A non-zero holding forces the base/USD feed read; a stale base feed must revert.
+        uint256 staleTs = block.timestamp - MAX_AGE - 1;
+        usdcFeed.set(1e8, staleTs);
+        vm.expectRevert(
+            abi.encodeWithSelector(RwaVaultManager.StalePrice.selector, address(usdcFeed), staleTs, MAX_AGE + 1)
+        );
+        mgr.previewNav();
+    }
+
+    function test_previewNav_revertsOnNonPositiveBaseFeed() public {
+        usdcFeed.set(0, block.timestamp);
+        vm.expectRevert(abi.encodeWithSelector(RwaVaultManager.NonPositivePrice.selector, address(usdcFeed), int256(0)));
+        mgr.previewNav();
+    }
+
+    function test_constructor_revertsOnZeroBaseFeed() public {
+        vm.expectRevert(MilkmanSwapManager.ZeroAddress.selector);
+        new RwaVaultManager(address(vault), KEEPER, IMilkman(address(milkman)), address(0), MAX_AGE, _holdings());
+    }
+
+    function test_constructor_revertsOnZeroHoldingFeed() public {
+        RwaVaultManager.HoldingConfig[] memory h = new RwaVaultManager.HoldingConfig[](1);
+        h[0] = RwaVaultManager.HoldingConfig({token: address(gm), feed: address(0), maxAge: MAX_AGE});
+        vm.expectRevert(MilkmanSwapManager.ZeroAddress.selector);
+        new RwaVaultManager(address(vault), KEEPER, IMilkman(address(milkman)), address(usdcFeed), MAX_AGE, h);
+    }
+
     function test_pushNav_postsToVault() public {
         vm.prank(KEEPER);
         uint256 nav = mgr.pushNav();
