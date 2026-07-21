@@ -9,14 +9,22 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 /// @dev    `requestSwapExactTokensForTokens` is called on the ROOT Milkman: it deploys a fresh
 ///         per-order clone via CREATE and escrows `amountIn` into it. `cancelSwap` is called on the
 ///         CLONE (the per-order contract), which recomputes the swap hash from the same params and
-///         refunds `amountIn` to `msg.sender` (the original creator = this manager). Signatures are
-///         verbatim from `charlesndalton/milkman` `src/Milkman.sol` (no `appData` in this version).
+///         refunds `amountIn` to `msg.sender` (the original creator = this manager).
+///
+///         These signatures match the Milkman **deployed at
+///         `0x060373D064d0168931dE2AB8DDA7410923d06E88`** — the 7-parameter variant with a
+///         `bytes32 appData` between `to` and `priceChecker` (dispatched selectors `0xda5f2485` /
+///         `0x3a25bd98`, present in the deployed bytecode and used by this repo's mainnet-exercised
+///         `templates/milkman/milkman.tmpl` and `test/fork/templates/Milkman.t.sol`).
+///         NB: the `charlesndalton/milkman` GitHub `main` source is a *different* 6-parameter
+///         variant (no `appData`) — do NOT use it as the ABI reference for the deployed target.
 interface IMilkman {
     function requestSwapExactTokensForTokens(
         uint256 amountIn,
         IERC20 fromToken,
         IERC20 toToken,
         address to,
+        bytes32 appData,
         address priceChecker,
         bytes calldata priceCheckerData
     ) external;
@@ -26,6 +34,7 @@ interface IMilkman {
         IERC20 fromToken,
         IERC20 toToken,
         address to,
+        bytes32 appData,
         address priceChecker,
         bytes calldata priceCheckerData
     ) external;
@@ -33,10 +42,10 @@ interface IMilkman {
 
 /// @title  MilkmanSwapManager
 /// @notice Keeper-driven wrapper around the deployed Milkman that owns the CoW order lifecycle for a
-///         single Safe, so an on-chain NAV can be computed WITHOUT trusting the keeper and WITHOUT
-///         forking Milkman. Foundational piece for RAIL-26 (M4). RAIL-27 folds the NavSettler
-///         (Lagoon `valuationManager`) logic onto this contract and reuses `isPending()` as the
-///         quiescence gate for `pushNav` — NAV is only ever computed at rest.
+///         single Safe, so an on-chain NAV can be computed WITHOUT trusting the keeper for NAV
+///         correctness and WITHOUT forking Milkman. Foundational piece for RAIL-26 (M4). RAIL-27
+///         folds the NavSettler (Lagoon `valuationManager`) logic onto this contract and reuses
+///         `isPending()` as the quiescence gate for `pushNav` — NAV is only ever computed at rest.
 ///
 /// @dev    SECURITY INVARIANTS:
 ///
@@ -50,7 +59,10 @@ interface IMilkman {
 ///             assert code now present. Within one tx (nonReentrant) the only deployment is Milkman's
 ///             single clone, so success proves the clone is ours. A stale nonce / race means the
 ///             predicted address is already occupied -> revert. A wrong or even malicious
-///             `expectedCloneAddress` can only cause a revert, never a mis-binding.
+///             `expectedCloneAddress` can only cause a revert, never a mis-binding. The prediction is
+///             front-runnable (anyone can bump Milkman's nonce with a dust order to occupy the
+///             predicted address) — this is bounded griefing (revert, no fund/binding risk); the
+///             keeper refreshes the nonce and retries.
 ///
 ///         (3) QUIESCENCE GATE, DONATION-SAFE. `isPending()` tests `balanceOf(clone) >= amountIn`,
 ///             NOT `!= 0`. Milkman orders are fill-or-kill, so a clone legitimately holds exactly
@@ -58,7 +70,11 @@ interface IMilkman {
 ///             a third party (donation), so the gate can only be pushed further into "pending" — it
 ///             can never be tricked into "done" while the escrow is still there. A donation therefore
 ///             cannot corrupt NAV (the gate is a safety condition, not a value); jamming it costs
-///             >= a full `amountIn`, stranded in a dead clone, per cycle -> a bounded, uneconomic DoS.
+///             >= a full `amountIn`, stranded in a dead clone, per cycle -> a bounded, uneconomic DoS
+///             (and `cancelSwap` sweeps the stranded balance back to the Safe). This assumes a
+///             STANDARD ERC-20 `fromToken`: no fee-on-transfer, no rebasing — otherwise a clone could
+///             hold `< amountIn` while genuinely pending and the gate would read a live order as done
+///             (premature quiescence). Do not add fee-on-transfer / rebasing tokens.
 ///
 ///         (4) PROCEEDS TO THE SAFE. Every order's CoW receiver is pinned to `SAFE`, so a fill lands
 ///             the bought token directly in the Safe (counted by a Safe-balance NAV). `cancelSwap`
@@ -66,6 +82,16 @@ interface IMilkman {
 ///             tx, so a Safe-balance NAV stays correct.
 ///
 ///         (5) NO SETTERS. `MILKMAN` / `SAFE` / `KEEPER` are immutable; to change any, redeploy.
+///
+///         (6) TRUST BOUNDARY — THIS CONTRACT PROVIDES NO FUND-SAFETY ON ITS OWN. It bounds only the
+///             CoW receiver (pinned to `SAFE`) and the caller (`onlyKeeper`). It does NOT constrain
+///             `toToken`, `priceChecker`, `priceCheckerData`, `appData`, or `amountIn`. A malicious /
+///             compromised keeper could therefore pick a price checker + feed path reporting a fair
+///             price of ~0 and drain the Safe's approved balance within CoW's slippage mechanics.
+///             Fund safety is delegated entirely to the Zodiac Roles policy (RAIL-28), which MUST pin
+///             `priceChecker` + the feed path inside `priceCheckerData` and cap `amountIn` / the
+///             Safe->manager approval. Do NOT grant the Safe->manager allowance before that policy is
+///             in place. The manager's guarantee is trustlessness of NAV, not of value.
 contract MilkmanSwapManager is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -73,6 +99,8 @@ contract MilkmanSwapManager is ReentrancyGuard {
     /// @param amountIn         Sold amount escrowed in the clone (the fill-or-kill sell amount).
     /// @param fromToken        Sold token — what the clone holds while the order is pending.
     /// @param toToken          Bought token.
+    /// @param appData          CoW order metadata; part of the order identity AND folded into
+    ///                         Milkman's swap hash, so it must be replayed verbatim on cancel.
     /// @param priceChecker     CoW price checker pinned on the order.
     /// @param priceCheckerData Its encoded config (feeds + slippage); stored to recompute the swap
     ///                         hash when cancelling (Milkman's cancel re-derives it from the params).
@@ -81,6 +109,7 @@ contract MilkmanSwapManager is ReentrancyGuard {
         uint256 amountIn;
         IERC20 fromToken;
         IERC20 toToken;
+        bytes32 appData;
         address priceChecker;
         bytes priceCheckerData;
     }
@@ -130,6 +159,7 @@ contract MilkmanSwapManager is ReentrancyGuard {
     /// @param  amountIn             Amount of `fromToken` to sell (pulled from the Safe).
     /// @param  fromToken            Token to sell.
     /// @param  toToken              Token to buy.
+    /// @param  appData              CoW order metadata (see PendingOrder.appData); replayed on cancel.
     /// @param  priceChecker         CoW price checker to pin on the order (e.g. DynamicSlippageChecker).
     /// @param  priceCheckerData     Encoded price-checker config (slippage bps + feed path).
     /// @param  expectedCloneAddress Clone address the keeper computed off-chain from Milkman's nonce.
@@ -137,6 +167,7 @@ contract MilkmanSwapManager is ReentrancyGuard {
         uint256 amountIn,
         IERC20 fromToken,
         IERC20 toToken,
+        bytes32 appData,
         address priceChecker,
         bytes calldata priceCheckerData,
         address expectedCloneAddress
@@ -150,7 +181,9 @@ contract MilkmanSwapManager is ReentrancyGuard {
         fromToken.forceApprove(address(MILKMAN), amountIn);
 
         // Milkman deploys the clone (CREATE) and pulls `amountIn` into it; receiver pinned to the Safe.
-        MILKMAN.requestSwapExactTokensForTokens(amountIn, fromToken, toToken, SAFE, priceChecker, priceCheckerData);
+        MILKMAN.requestSwapExactTokensForTokens(
+            amountIn, fromToken, toToken, SAFE, appData, priceChecker, priceCheckerData
+        );
 
         // Atomic binding: the clone must now exist exactly at the predicted address (see invariant 2).
         if (_codeSize(expectedCloneAddress) == 0) revert CloneNotCreated();
@@ -160,6 +193,7 @@ contract MilkmanSwapManager is ReentrancyGuard {
             amountIn: amountIn,
             fromToken: fromToken,
             toToken: toToken,
+            appData: appData,
             priceChecker: priceChecker,
             priceCheckerData: priceCheckerData
         });
@@ -170,14 +204,17 @@ contract MilkmanSwapManager is ReentrancyGuard {
     /// @notice Cancel the live order, reclaim its escrowed sold token, and forward it to the Safe.
     /// @dev    Reverts if there is no live order (nothing to cancel — e.g. already filled), so the
     ///         cancel-vs-fill race resolves to a clean revert. Milkman's clone refunds `amountIn` to
-    ///         `msg.sender` (this manager); we sweep the manager's balance to the Safe.
+    ///         `msg.sender` (this manager); we sweep the manager's balance to the Safe. All order
+    ///         params — including `appData` — are replayed so the clone's creator-proof re-derivation
+    ///         matches its stored swap hash.
     function cancelSwap() external onlyKeeper nonReentrant {
         if (!isPending()) revert NoPendingOrder();
 
         PendingOrder memory p = _pending;
         delete _pending; // effects before interactions; rolled back if the cancel below reverts
 
-        IMilkman(p.clone).cancelSwap(p.amountIn, p.fromToken, p.toToken, SAFE, p.priceChecker, p.priceCheckerData);
+        IMilkman(p.clone)
+            .cancelSwap(p.amountIn, p.fromToken, p.toToken, SAFE, p.appData, p.priceChecker, p.priceCheckerData);
 
         uint256 reclaimed = p.fromToken.balanceOf(address(this));
         if (reclaimed != 0) p.fromToken.safeTransfer(SAFE, reclaimed);

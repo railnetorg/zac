@@ -7,10 +7,15 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {MilkmanSwapManager, IMilkman} from "src/MilkmanSwapManager.sol";
 
 // --------------------------------------------------------------------------------------------
-// Mocks — a faithful-enough stand-in for Milkman's root + per-order clone. The clone is created
-// via CREATE (so its address is `vm.computeCreateAddress(milkman, nonce)`, exactly what the keeper
-// predicts on mainnet), holds the escrow, and refunds `amountIn` to the creator on cancel. A fill
-// is simulated in tests with `deal(fromToken, clone, 0)` (CoW pulls the sell token out).
+// Mocks — a stand-in for Milkman's root + per-order clone, on the DEPLOYED 7-param ABI (with
+// `bytes32 appData`). The clone is created via CREATE (so its address is
+// `vm.computeCreateAddress(milkman, nonce)`, exactly what the keeper predicts on mainnet), holds
+// the escrow, and refunds `amountIn` to the creator on cancel. A fill is simulated in tests with
+// `deal(fromToken, clone, 0)` (CoW pulls the sell token out).
+//
+// NB: these are unit-level checks of the manager's internal logic; the mock's swap-hash layout is
+// self-consistent but not asserted to match mainnet. The mainnet-fork test
+// (test/fork/MilkmanSwapManagerFork.t.sol) is what pins the real deployed ABI + swap-hash.
 // --------------------------------------------------------------------------------------------
 
 contract MockERC20 is ERC20 {
@@ -37,17 +42,20 @@ contract MockMilkmanOrder {
         swapHash = h;
     }
 
-    // Mirrors Milkman: recompute the swap hash from (creator, to, tokens, amountIn, checker, data)
-    // and refund `amountIn` to the caller (must be the original creator).
+    // Mirrors Milkman: recompute the swap hash from the full param tuple (incl. appData) and refund
+    // `amountIn` to the caller (must be the original creator).
     function cancelSwap(
         uint256 amountIn,
         IERC20 fromToken,
         IERC20 toToken,
         address to,
+        bytes32 appData,
         address priceChecker,
         bytes calldata priceCheckerData
     ) external {
-        bytes32 h = keccak256(abi.encode(msg.sender, to, fromToken, toToken, amountIn, priceChecker, priceCheckerData));
+        bytes32 h = keccak256(
+            abi.encode(msg.sender, to, fromToken, toToken, amountIn, appData, priceChecker, priceCheckerData)
+        );
         require(h == swapHash, "!creator");
         fromToken.transfer(msg.sender, amountIn);
     }
@@ -59,13 +67,14 @@ contract MockMilkman {
         IERC20 fromToken,
         IERC20 toToken,
         address to,
+        bytes32 appData,
         address priceChecker,
         bytes calldata priceCheckerData
     ) external {
         MockMilkmanOrder order = new MockMilkmanOrder(); // CREATE — address tracks this contract's nonce
         fromToken.transferFrom(msg.sender, address(order), amountIn);
         order.initialize(
-            keccak256(abi.encode(msg.sender, to, fromToken, toToken, amountIn, priceChecker, priceCheckerData))
+            keccak256(abi.encode(msg.sender, to, fromToken, toToken, amountIn, appData, priceChecker, priceCheckerData))
         );
     }
 }
@@ -82,6 +91,7 @@ contract MilkmanSwapManagerTest is Test {
     address KEEPER = makeAddr("keeper");
     address STRANGER = makeAddr("stranger");
     address PRICE_CHECKER = makeAddr("priceChecker");
+    bytes32 APP_DATA = keccak256("railnet-rwa");
     bytes PC_DATA = hex"1234";
 
     uint256 constant AMOUNT = 1_000e6;
@@ -102,7 +112,7 @@ contract MilkmanSwapManagerTest is Test {
     function _open(uint256 amountIn) internal returns (address clone) {
         clone = vm.computeCreateAddress(address(milkman), vm.getNonce(address(milkman)));
         vm.prank(KEEPER);
-        manager.openSwap(amountIn, fromToken, toToken, PRICE_CHECKER, PC_DATA, clone);
+        manager.openSwap(amountIn, fromToken, toToken, APP_DATA, PRICE_CHECKER, PC_DATA, clone);
     }
 
     function _simulateFill(address clone) internal {
@@ -123,6 +133,7 @@ contract MilkmanSwapManagerTest is Test {
         assertEq(p.amountIn, AMOUNT);
         assertEq(address(p.fromToken), address(fromToken));
         assertEq(address(p.toToken), address(toToken));
+        assertEq(p.appData, APP_DATA);
         assertEq(p.priceChecker, PRICE_CHECKER);
         assertEq(p.priceCheckerData, PC_DATA);
     }
@@ -131,7 +142,7 @@ contract MilkmanSwapManagerTest is Test {
         // Predict correctly but pass a different (empty) address → the post-call code check fails.
         vm.prank(KEEPER);
         vm.expectRevert(MilkmanSwapManager.CloneNotCreated.selector);
-        manager.openSwap(AMOUNT, fromToken, toToken, PRICE_CHECKER, PC_DATA, address(0xBEEF));
+        manager.openSwap(AMOUNT, fromToken, toToken, APP_DATA, PRICE_CHECKER, PC_DATA, address(0xBEEF));
 
         // Nothing persisted: the whole tx (incl. the pull + clone deploy) rolled back.
         assertEq(fromToken.balanceOf(SAFE), SAFE_FUNDS);
@@ -142,7 +153,7 @@ contract MilkmanSwapManagerTest is Test {
         // An address that already holds code (a stale-nonce race would land here) is rejected up front.
         vm.prank(KEEPER);
         vm.expectRevert(MilkmanSwapManager.CloneAlreadyExists.selector);
-        manager.openSwap(AMOUNT, fromToken, toToken, PRICE_CHECKER, PC_DATA, address(milkman));
+        manager.openSwap(AMOUNT, fromToken, toToken, APP_DATA, PRICE_CHECKER, PC_DATA, address(milkman));
     }
 
     function test_openSwap_revertsWhenPending() public {
@@ -150,19 +161,19 @@ contract MilkmanSwapManagerTest is Test {
         address next = vm.computeCreateAddress(address(milkman), vm.getNonce(address(milkman)));
         vm.prank(KEEPER);
         vm.expectRevert(MilkmanSwapManager.OrderPending.selector);
-        manager.openSwap(AMOUNT, fromToken, toToken, PRICE_CHECKER, PC_DATA, next);
+        manager.openSwap(AMOUNT, fromToken, toToken, APP_DATA, PRICE_CHECKER, PC_DATA, next);
     }
 
     function test_openSwap_revertsForNonKeeper() public {
         vm.prank(STRANGER);
         vm.expectRevert(MilkmanSwapManager.NotKeeper.selector);
-        manager.openSwap(AMOUNT, fromToken, toToken, PRICE_CHECKER, PC_DATA, address(0xBEEF));
+        manager.openSwap(AMOUNT, fromToken, toToken, APP_DATA, PRICE_CHECKER, PC_DATA, address(0xBEEF));
     }
 
     function test_openSwap_revertsOnZeroAmount() public {
         vm.prank(KEEPER);
         vm.expectRevert(MilkmanSwapManager.ZeroAmount.selector);
-        manager.openSwap(0, fromToken, toToken, PRICE_CHECKER, PC_DATA, address(0xBEEF));
+        manager.openSwap(0, fromToken, toToken, APP_DATA, PRICE_CHECKER, PC_DATA, address(0xBEEF));
     }
 
     // ---- quiescence gate + donation safety ---------------------------------------------------
@@ -184,7 +195,7 @@ contract MilkmanSwapManagerTest is Test {
         // A new swap can be opened — the settled clone does not gate it.
         address next = vm.computeCreateAddress(address(milkman), vm.getNonce(address(milkman)));
         vm.prank(KEEPER);
-        manager.openSwap(AMOUNT, fromToken, toToken, PRICE_CHECKER, PC_DATA, next);
+        manager.openSwap(AMOUNT, fromToken, toToken, APP_DATA, PRICE_CHECKER, PC_DATA, next);
         assertTrue(manager.isPending());
     }
 
@@ -198,7 +209,7 @@ contract MilkmanSwapManagerTest is Test {
         address next = vm.computeCreateAddress(address(milkman), vm.getNonce(address(milkman)));
         vm.prank(KEEPER);
         vm.expectRevert(MilkmanSwapManager.OrderPending.selector);
-        manager.openSwap(AMOUNT, fromToken, toToken, PRICE_CHECKER, PC_DATA, next);
+        manager.openSwap(AMOUNT, fromToken, toToken, APP_DATA, PRICE_CHECKER, PC_DATA, next);
     }
 
     // ---- cancelSwap ----------------------------------------------------------------------------
