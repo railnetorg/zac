@@ -88,7 +88,6 @@ contract MilkmanSwapManagerTest is Test {
     MilkmanSwapManager manager;
 
     address SAFE = makeAddr("safe");
-    address KEEPER = makeAddr("keeper");
     address STRANGER = makeAddr("stranger");
     address PRICE_CHECKER = makeAddr("priceChecker");
     bytes32 APP_DATA = keccak256("railnet-rwa");
@@ -101,7 +100,7 @@ contract MilkmanSwapManagerTest is Test {
         fromToken = new MockERC20("USD Coin", "USDC", 6);
         toToken = new MockERC20("Ondo GM SPY", "SPYon", 18);
         milkman = new MockMilkman();
-        manager = new MilkmanSwapManager(IMilkman(address(milkman)), SAFE, KEEPER);
+        manager = new MilkmanSwapManager(IMilkman(address(milkman)), SAFE);
 
         fromToken.mint(SAFE, SAFE_FUNDS);
         vm.prank(SAFE);
@@ -111,7 +110,7 @@ contract MilkmanSwapManagerTest is Test {
     // Predict the next clone Milkman will deploy, then open through the keeper.
     function _open(uint256 amountIn) internal returns (address clone) {
         clone = vm.computeCreateAddress(address(milkman), vm.getNonce(address(milkman)));
-        vm.prank(KEEPER);
+        vm.prank(SAFE);
         manager.openSwap(amountIn, fromToken, toToken, APP_DATA, PRICE_CHECKER, PC_DATA, clone);
     }
 
@@ -140,7 +139,7 @@ contract MilkmanSwapManagerTest is Test {
 
     function test_openSwap_revertsOnWrongExpectedAddress() public {
         // Predict correctly but pass a different (empty) address → the post-call code check fails.
-        vm.prank(KEEPER);
+        vm.prank(SAFE);
         vm.expectRevert(MilkmanSwapManager.CloneNotCreated.selector);
         manager.openSwap(AMOUNT, fromToken, toToken, APP_DATA, PRICE_CHECKER, PC_DATA, address(0xBEEF));
 
@@ -151,7 +150,7 @@ contract MilkmanSwapManagerTest is Test {
 
     function test_openSwap_revertsWhenExpectedAlreadyHasCode() public {
         // An address that already holds code (a stale-nonce race would land here) is rejected up front.
-        vm.prank(KEEPER);
+        vm.prank(SAFE);
         vm.expectRevert(MilkmanSwapManager.CloneAlreadyExists.selector);
         manager.openSwap(AMOUNT, fromToken, toToken, APP_DATA, PRICE_CHECKER, PC_DATA, address(milkman));
     }
@@ -159,19 +158,19 @@ contract MilkmanSwapManagerTest is Test {
     function test_openSwap_revertsWhenPending() public {
         _open(AMOUNT);
         address next = vm.computeCreateAddress(address(milkman), vm.getNonce(address(milkman)));
-        vm.prank(KEEPER);
+        vm.prank(SAFE);
         vm.expectRevert(MilkmanSwapManager.OrderPending.selector);
         manager.openSwap(AMOUNT, fromToken, toToken, APP_DATA, PRICE_CHECKER, PC_DATA, next);
     }
 
-    function test_openSwap_revertsForNonKeeper() public {
+    function test_openSwap_revertsForNonSafe() public {
         vm.prank(STRANGER);
-        vm.expectRevert(MilkmanSwapManager.NotKeeper.selector);
+        vm.expectRevert(MilkmanSwapManager.NotSafe.selector);
         manager.openSwap(AMOUNT, fromToken, toToken, APP_DATA, PRICE_CHECKER, PC_DATA, address(0xBEEF));
     }
 
     function test_openSwap_revertsOnZeroAmount() public {
-        vm.prank(KEEPER);
+        vm.prank(SAFE);
         vm.expectRevert(MilkmanSwapManager.ZeroAmount.selector);
         manager.openSwap(0, fromToken, toToken, APP_DATA, PRICE_CHECKER, PC_DATA, address(0xBEEF));
     }
@@ -194,7 +193,7 @@ contract MilkmanSwapManagerTest is Test {
 
         // A new swap can be opened — the settled clone does not gate it.
         address next = vm.computeCreateAddress(address(milkman), vm.getNonce(address(milkman)));
-        vm.prank(KEEPER);
+        vm.prank(SAFE);
         manager.openSwap(AMOUNT, fromToken, toToken, APP_DATA, PRICE_CHECKER, PC_DATA, next);
         assertTrue(manager.isPending());
     }
@@ -207,7 +206,7 @@ contract MilkmanSwapManagerTest is Test {
         assertTrue(manager.isPending(), "gate over-blocks (safe direction)");
 
         address next = vm.computeCreateAddress(address(milkman), vm.getNonce(address(milkman)));
-        vm.prank(KEEPER);
+        vm.prank(SAFE);
         vm.expectRevert(MilkmanSwapManager.OrderPending.selector);
         manager.openSwap(AMOUNT, fromToken, toToken, APP_DATA, PRICE_CHECKER, PC_DATA, next);
     }
@@ -218,7 +217,7 @@ contract MilkmanSwapManagerTest is Test {
         address clone = _open(AMOUNT);
         assertEq(fromToken.balanceOf(SAFE), SAFE_FUNDS - AMOUNT);
 
-        vm.prank(KEEPER);
+        vm.prank(SAFE);
         manager.cancelSwap();
 
         assertEq(fromToken.balanceOf(SAFE), SAFE_FUNDS, "fully reclaimed to Safe");
@@ -229,15 +228,15 @@ contract MilkmanSwapManagerTest is Test {
     }
 
     function test_cancelSwap_revertsWhenNoPending() public {
-        vm.prank(KEEPER);
+        vm.prank(SAFE);
         vm.expectRevert(MilkmanSwapManager.NoPendingOrder.selector);
         manager.cancelSwap();
     }
 
-    function test_cancelSwap_revertsForNonKeeper() public {
+    function test_cancelSwap_revertsForNonSafe() public {
         _open(AMOUNT);
         vm.prank(STRANGER);
-        vm.expectRevert(MilkmanSwapManager.NotKeeper.selector);
+        vm.expectRevert(MilkmanSwapManager.NotSafe.selector);
         manager.cancelSwap();
     }
 
@@ -245,7 +244,7 @@ contract MilkmanSwapManagerTest is Test {
         address clone = _open(AMOUNT);
         _simulateFill(clone); // filled between the keeper's decision and the cancel
 
-        vm.prank(KEEPER);
+        vm.prank(SAFE);
         vm.expectRevert(MilkmanSwapManager.NoPendingOrder.selector);
         manager.cancelSwap();
     }

@@ -41,11 +41,12 @@ interface IMilkman {
 }
 
 /// @title  MilkmanSwapManager
-/// @notice Keeper-driven wrapper around the deployed Milkman that owns the CoW order lifecycle for a
-///         single Safe, so an on-chain NAV can be computed WITHOUT trusting the keeper for NAV
-///         correctness and WITHOUT forking Milkman. Foundational piece for RAIL-26 (M4). RAIL-27
-///         folds the NavSettler (Lagoon `valuationManager`) logic onto this contract and reuses
-///         `isPending()` as the quiescence gate for `pushNav` — NAV is only ever computed at rest.
+/// @notice Wrapper around the deployed Milkman that owns the CoW order lifecycle for a single Safe.
+///         `openSwap` / `cancelSwap` are `onlySafe` — invoked through the Safe's Zodiac Roles modifier
+///         (a keeper role-member triggers them), so the RAIL-28 Roles policy governs what may be
+///         traded. Foundational piece for RAIL-26 (M4). RAIL-27 folds the NavSettler (Lagoon
+///         `valuationManager`) logic onto this contract and reuses `isPending()` as the quiescence
+///         gate for `pushNav` — NAV is only ever computed at rest.
 ///
 /// @dev    SECURITY INVARIANTS:
 ///
@@ -83,15 +84,16 @@ interface IMilkman {
 ///
 ///         (5) NO SETTERS. `MILKMAN` / `SAFE` / `KEEPER` are immutable; to change any, redeploy.
 ///
-///         (6) TRUST BOUNDARY — THIS CONTRACT PROVIDES NO FUND-SAFETY ON ITS OWN. It bounds only the
-///             CoW receiver (pinned to `SAFE`) and the caller (`onlyKeeper`). It does NOT constrain
-///             `toToken`, `priceChecker`, `priceCheckerData`, `appData`, or `amountIn`. A malicious /
-///             compromised keeper could therefore pick a price checker + feed path reporting a fair
-///             price of ~0 and drain the Safe's approved balance within CoW's slippage mechanics.
-///             Fund safety is delegated entirely to the Zodiac Roles policy (RAIL-28), which MUST pin
-///             `priceChecker` + the feed path inside `priceCheckerData` and cap `amountIn` / the
-///             Safe->manager approval. Do NOT grant the Safe->manager allowance before that policy is
-///             in place. The manager's guarantee is trustlessness of NAV, not of value.
+///         (6) TRUST BOUNDARY — FUND SAFETY LIVES IN THE SAFE'S ROLES POLICY. `openSwap` / `cancelSwap`
+///             are `onlySafe`: they are reachable only by the Safe calling this contract through its
+///             Zodiac Roles modifier (a keeper role-member triggers `execTransactionWithRole`). This
+///             contract does NOT itself constrain `toToken`, `priceChecker`, `priceCheckerData`,
+///             `appData`, or `amountIn` — but because every open/cancel is Safe-routed, the RAIL-28
+///             Roles policy CAN and MUST pin `priceChecker` + the feed path inside `priceCheckerData`
+///             and cap `amountIn` / the Safe->manager approval. Without that policy a compromised role
+///             member could pick a feed reporting ~0 and drain the approved balance within CoW's
+///             slippage mechanics, so: do NOT grant the Safe->manager allowance before the policy is
+///             in place. The manager's own guarantee is trustlessness of NAV, not of value.
 contract MilkmanSwapManager is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -114,7 +116,7 @@ contract MilkmanSwapManager is ReentrancyGuard {
         bytes priceCheckerData;
     }
 
-    error NotKeeper();
+    error NotSafe();
     error ZeroAddress();
     error ZeroAmount();
     error OrderPending(); // a live order already exists
@@ -126,21 +128,19 @@ contract MilkmanSwapManager is ReentrancyGuard {
     event SwapCanceled(address indexed clone, uint256 reclaimed);
 
     IMilkman public immutable MILKMAN; // the deployed root Milkman
-    address public immutable SAFE; // the Lagoon vault's Safe: funds source + pinned CoW receiver
-    address public immutable KEEPER; // sole caller of openSwap / cancelSwap
+    address public immutable SAFE; // the Lagoon vault's Safe: funds source, pinned CoW receiver, and the sole authorized caller of openSwap/cancelSwap (via its Roles modifier)
 
     PendingOrder private _pending;
 
-    modifier onlyKeeper() {
-        if (msg.sender != KEEPER) revert NotKeeper();
+    modifier onlySafe() {
+        if (msg.sender != SAFE) revert NotSafe();
         _;
     }
 
-    constructor(IMilkman milkman, address safe, address keeper) {
-        if (address(milkman) == address(0) || safe == address(0) || keeper == address(0)) revert ZeroAddress();
+    constructor(IMilkman milkman, address safe) {
+        if (address(milkman) == address(0) || safe == address(0)) revert ZeroAddress();
         MILKMAN = milkman;
         SAFE = safe;
-        KEEPER = keeper;
     }
 
     /// @notice True while a live order's escrow is still in its clone. Donation-safe (invariant 3).
@@ -171,7 +171,7 @@ contract MilkmanSwapManager is ReentrancyGuard {
         address priceChecker,
         bytes calldata priceCheckerData,
         address expectedCloneAddress
-    ) external onlyKeeper nonReentrant {
+    ) external onlySafe nonReentrant {
         if (isPending()) revert OrderPending();
         if (amountIn == 0) revert ZeroAmount();
         if (_codeSize(expectedCloneAddress) != 0) revert CloneAlreadyExists();
@@ -207,7 +207,7 @@ contract MilkmanSwapManager is ReentrancyGuard {
     ///         `msg.sender` (this manager); we sweep the manager's balance to the Safe. All order
     ///         params — including `appData` — are replayed so the clone's creator-proof re-derivation
     ///         matches its stored swap hash.
-    function cancelSwap() external onlyKeeper nonReentrant {
+    function cancelSwap() external onlySafe nonReentrant {
         if (!isPending()) revert NoPendingOrder();
 
         PendingOrder memory p = _pending;

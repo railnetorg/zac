@@ -20,7 +20,6 @@ contract MilkmanSwapManagerForkTest is Test {
     IERC20 constant PYUSD = IERC20(0x6c3ea9036406852006290770BEdFcAbA0e23A0e8);
 
     address SAFE = makeAddr("safe");
-    address KEEPER = makeAddr("keeper");
     bytes32 constant APP_DATA = keccak256("railnet-rwa");
     uint256 constant AMOUNT = 1_000e6;
 
@@ -28,7 +27,7 @@ contract MilkmanSwapManagerForkTest is Test {
 
     function setUp() public {
         vm.createSelectFork(vm.envString("MAINNET_RPC_URL"));
-        manager = new MilkmanSwapManager(IMilkman(MILKMAN), SAFE, KEEPER);
+        manager = new MilkmanSwapManager(IMilkman(MILKMAN), SAFE);
         deal(address(USDC), SAFE, AMOUNT);
         vm.prank(SAFE);
         USDC.approve(address(manager), type(uint256).max);
@@ -36,7 +35,7 @@ contract MilkmanSwapManagerForkTest is Test {
 
     function _open() internal returns (address clone) {
         clone = vm.computeCreateAddress(MILKMAN, vm.getNonce(MILKMAN));
-        vm.prank(KEEPER);
+        vm.prank(SAFE);
         manager.openSwap(AMOUNT, USDC, PYUSD, APP_DATA, PRICE_CHECKER, "", clone);
     }
 
@@ -51,7 +50,7 @@ contract MilkmanSwapManagerForkTest is Test {
     function test_fork_cancelClearsCreatorProofAndReclaims() public {
         _open();
         // Reverts unless the replayed params (incl. appData) match the clone's real swap hash.
-        vm.prank(KEEPER);
+        vm.prank(SAFE);
         manager.cancelSwap();
         assertEq(USDC.balanceOf(SAFE), AMOUNT, "reclaimed to the Safe via the real cancelSwap");
         assertEq(USDC.balanceOf(address(manager)), 0, "manager holds nothing");
