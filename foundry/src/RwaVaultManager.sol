@@ -26,8 +26,9 @@ interface ILagoonVault {
 /// @title  RwaVaultManager
 /// @notice The single, all-in-one contract for an automated single-RWA Lagoon vault (RAIL-27). It IS
 ///         both the CoW/Milkman swap manager (from `MilkmanSwapManager`, RAIL-26) AND the vault's
-///         on-chain Lagoon `valuationManager`. A risk-minimized keeper drives both, and NAV is
-///         computed 100% on-chain from the Safe's balances.
+///         on-chain Lagoon `valuationManager`, with NAV computed 100% on-chain from the Safe's
+///         balances. Trading (`openSwap` / `cancelSwap`) is Safe-routed under the RAIL-28 Roles policy;
+///         NAV refresh (`pushNav`) is permissionless (see PUSHNAV IS PERMISSIONLESS).
 /// @dev    Valuation reuses the RAIL-24 NavSettler pricing (idle base at face + Σ token holdings
 ///         priced via Chainlink and converted to base units, per-feed staleness, base-stablecoin
 ///         depeg absorbed through the base/USD feed).
@@ -49,6 +50,18 @@ interface ILagoonVault {
 ///         SAFE is pinned (inherited immutable). `pushNav` additionally asserts `SAFE == VAULT.safe()`
 ///         so that, if the vault's Safe is moved via `updateSafe`, valuation fails closed (redeploy +
 ///         re-point the valuationManager) rather than pricing the wrong account.
+///
+///         PUSHNAV IS PERMISSIONLESS. `pushNav` takes no caller input: the value is `previewNav()`,
+///         derived deterministically from on-chain state (the Safe's balances + Chainlink feeds), and
+///         Lagoon's `updateNewTotalAssets` is itself `onlyValuationManager` (= this contract), so no
+///         caller can inject a value. A proposed NAV only prices anything once the Safe (curator)
+///         confirms it via the two-step `settleDeposit` / `settleRedeem` (both `onlySafe`) — the Safe
+///         stays the gate on what deposits/redeems settle against. Access control would therefore only
+///         gate WHO picks the snapshot instant, and that timing is already bounded (per-feed staleness
+///         + the depeg guard) and Safe-gated at settle — no different from a keeper picking the instant.
+///         So `pushNav` is left open: anyone (the keeper, a watchtower, a depositor) can refresh NAV,
+///         removing a keeper-liveness dependency for no fund-safety gain. Trading stays locked down —
+///         `openSwap` / `cancelSwap` remain Safe-routed under the RAIL-28 Roles policy.
 ///
 ///         FEED FRESHNESS (operational). NAV freshness is bounded by each feed's `maxAge`; the keeper
 ///         chooses the snapshot instant within that window (it cannot choose the value). Set each
@@ -96,19 +109,17 @@ contract RwaVaultManager is MilkmanSwapManager {
     Holding[] private _holdings;
 
     /// @param vault         Lagoon vault (this contract becomes its valuationManager). `asset()`+`safe()` are read from it.
-    /// @param keeper        Address allowed to drive the lifecycle (openSwap / cancelSwap / pushNav).
     /// @param milkman       The deployed root Milkman.
     /// @param baseUsdFeed   Chainlink feed for base-asset/USD (e.g. USDC/USD).
     /// @param baseUsdMaxAge Max staleness for `baseUsdFeed`.
     /// @param holdings      Priced holdings (token, USD feed, per-feed maxAge).
     constructor(
         address vault,
-        address keeper,
         IMilkman milkman,
         address baseUsdFeed,
         uint256 baseUsdMaxAge,
         HoldingConfig[] memory holdings
-    ) MilkmanSwapManager(milkman, ILagoonVault(vault).safe(), keeper) {
+    ) MilkmanSwapManager(milkman, ILagoonVault(vault).safe()) {
         if (holdings.length == 0) revert NoHoldings();
         if (baseUsdFeed == address(0)) revert ZeroAddress();
 
@@ -175,12 +186,12 @@ contract RwaVaultManager is MilkmanSwapManager {
         }
     }
 
-    /// @notice Compute NAV and propose it to the vault. Keeper-only; requires quiescence and this
-    ///         contract being the vault's valuationManager. The Safe still confirms via
-    ///         `settleDeposit` / `settleRedeem`.
+    /// @notice Compute NAV and propose it to the vault. Permissionless (see PUSHNAV IS PERMISSIONLESS);
+    ///         requires quiescence and this contract being the vault's valuationManager. The Safe still
+    ///         confirms via `settleDeposit` / `settleRedeem`.
     /// @dev    Reverts if a CoW order is live (`OrderInFlight`) or the vault's Safe has moved
     ///         (`SafeMoved`) — both fail closed rather than posting a wrong value.
-    function pushNav() external onlyKeeper nonReentrant returns (uint256 nav) {
+    function pushNav() external nonReentrant returns (uint256 nav) {
         if (isPending()) revert OrderInFlight();
         if (VAULT.safe() != SAFE) revert SafeMoved();
         nav = previewNav();

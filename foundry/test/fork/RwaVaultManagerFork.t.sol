@@ -56,7 +56,7 @@ contract RwaVaultManagerForkTest is Test {
 
         RwaVaultManager.HoldingConfig[] memory holdings = new RwaVaultManager.HoldingConfig[](1);
         holdings[0] = RwaVaultManager.HoldingConfig({token: SPYon, feed: SPY_FEED, maxAge: MAX_FEED_AGE});
-        mgr = new RwaVaultManager(VAULT, KEEPER, IMilkman(MILKMAN), USDC_USD_FEED, MAX_FEED_AGE, holdings);
+        mgr = new RwaVaultManager(VAULT, IMilkman(MILKMAN), USDC_USD_FEED, MAX_FEED_AGE, holdings);
         assertEq(mgr.SAFE(), safe, "manager should pin the vault's safe");
 
         // Install as the vault's valuationManager (owner-gated) and give the Safe settle headroom.
@@ -97,7 +97,7 @@ contract RwaVaultManagerForkTest is Test {
     function test_fork_quiescenceGate_blocksNavThenCancelUnblocks() public {
         // Open a real USDC->SPYon order: the real Milkman deploys a clone and escrows 500 USDC.
         address clone = vm.computeCreateAddress(MILKMAN, vm.getNonce(MILKMAN));
-        vm.prank(KEEPER);
+        vm.prank(safe);
         mgr.openSwap(500e6, IERC20(USDC), IERC20(SPYon), APP_DATA, PRICE_CHECKER, hex"", clone);
         assertGt(clone.code.length, 0, "real clone deployed");
         assertEq(IERC20(USDC).balanceOf(clone), 500e6, "escrow in real clone");
@@ -109,7 +109,7 @@ contract RwaVaultManagerForkTest is Test {
         mgr.pushNav();
 
         // Real cancel reclaims the escrow to the Safe (clears the live creator-proof).
-        vm.prank(KEEPER);
+        vm.prank(safe);
         mgr.cancelSwap();
         assertEq(IERC20(USDC).balanceOf(safe), 100_000e6, "USDC reclaimed to Safe");
         assertFalse(mgr.isPending());

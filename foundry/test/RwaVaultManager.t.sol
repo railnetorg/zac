@@ -78,9 +78,7 @@ contract RwaVaultManagerTest is Test {
         vault = new MockLagoonVault(address(usdc), SAFE);
         milkman = new MockMilkman();
 
-        mgr = new RwaVaultManager(
-            address(vault), KEEPER, IMilkman(address(milkman)), address(usdcFeed), MAX_AGE, _holdings()
-        );
+        mgr = new RwaVaultManager(address(vault), IMilkman(address(milkman)), address(usdcFeed), MAX_AGE, _holdings());
 
         // Safe holdings: 1000 USDC idle + 5 GM  (@ $200 = $1000) => NAV should be 2000 USDC.
         usdc.mint(SAFE, 1000e6);
@@ -119,7 +117,7 @@ contract RwaVaultManagerTest is Test {
         RwaVaultManager.HoldingConfig[] memory h = new RwaVaultManager.HoldingConfig[](1);
         h[0] = RwaVaultManager.HoldingConfig({token: address(gm), feed: address(gmFeed), maxAge: MAX_AGE});
         RwaVaultManager daiMgr =
-            new RwaVaultManager(address(daiVault), KEEPER, IMilkman(address(milkman)), address(daiFeed), MAX_AGE, h);
+            new RwaVaultManager(address(daiVault), IMilkman(address(milkman)), address(daiFeed), MAX_AGE, h);
 
         dai.mint(SAFE, 1000e18); // 1000 DAI idle; SAFE already holds 5 GM (@ $200 = $1000 = 1000 DAI)
         assertEq(daiMgr.previewNav(), 2000e18, "18-dec non-USDC base priced correctly");
@@ -139,7 +137,7 @@ contract RwaVaultManagerTest is Test {
         RwaVaultManager.HoldingConfig[] memory h = new RwaVaultManager.HoldingConfig[](1);
         h[0] = RwaVaultManager.HoldingConfig({token: address(gm), feed: address(gmFeed18), maxAge: MAX_AGE});
         RwaVaultManager m2 =
-            new RwaVaultManager(address(vault), KEEPER, IMilkman(address(milkman)), address(usdcFeed), MAX_AGE, h);
+            new RwaVaultManager(address(vault), IMilkman(address(milkman)), address(usdcFeed), MAX_AGE, h);
         // idle 1000 USDC + 5 GM * $200 = $1000 -> 1000 USDC = 2000e6
         assertEq(m2.previewNav(), 2000e6);
     }
@@ -162,14 +160,14 @@ contract RwaVaultManagerTest is Test {
 
     function test_constructor_revertsOnZeroBaseFeed() public {
         vm.expectRevert(MilkmanSwapManager.ZeroAddress.selector);
-        new RwaVaultManager(address(vault), KEEPER, IMilkman(address(milkman)), address(0), MAX_AGE, _holdings());
+        new RwaVaultManager(address(vault), IMilkman(address(milkman)), address(0), MAX_AGE, _holdings());
     }
 
     function test_constructor_revertsOnZeroHoldingFeed() public {
         RwaVaultManager.HoldingConfig[] memory h = new RwaVaultManager.HoldingConfig[](1);
         h[0] = RwaVaultManager.HoldingConfig({token: address(gm), feed: address(0), maxAge: MAX_AGE});
         vm.expectRevert(MilkmanSwapManager.ZeroAddress.selector);
-        new RwaVaultManager(address(vault), KEEPER, IMilkman(address(milkman)), address(usdcFeed), MAX_AGE, h);
+        new RwaVaultManager(address(vault), IMilkman(address(milkman)), address(usdcFeed), MAX_AGE, h);
     }
 
     function test_pushNav_postsToVault() public {
@@ -185,7 +183,7 @@ contract RwaVaultManagerTest is Test {
     function test_pushNav_revertsWhileOrderInFlight() public {
         // Open a USDC->GM swap so a clone escrows USDC and isPending() is true.
         address clone = vm.computeCreateAddress(address(milkman), vm.getNonce(address(milkman)));
-        vm.prank(KEEPER);
+        vm.prank(SAFE);
         mgr.openSwap(500e6, usdc, gm, APP_DATA, PRICE_CHECKER, hex"", clone);
         assertTrue(mgr.isPending());
 
@@ -196,7 +194,7 @@ contract RwaVaultManagerTest is Test {
 
     function test_pushNav_worksAgainAfterFill() public {
         address clone = vm.computeCreateAddress(address(milkman), vm.getNonce(address(milkman)));
-        vm.prank(KEEPER);
+        vm.prank(SAFE);
         mgr.openSwap(500e6, usdc, gm, APP_DATA, PRICE_CHECKER, hex"", clone);
 
         // Simulate the CoW fill: clone emptied, proceeds delivered to the Safe.
@@ -219,10 +217,14 @@ contract RwaVaultManagerTest is Test {
         mgr.pushNav();
     }
 
-    function test_pushNav_revertsForNonKeeper() public {
+    function test_pushNav_isPermissionless() public {
+        // No access control on the NAV refresh: a random address (not the Safe, not a keeper) can push.
+        // The value is previewNav() (on-chain-derived, not caller-supplied) and the Safe still gates
+        // application via settleDeposit / settleRedeem — so leaving pushNav open is fund-safe.
         vm.prank(STRANGER);
-        vm.expectRevert(MilkmanSwapManager.NotKeeper.selector);
-        mgr.pushNav();
+        uint256 nav = mgr.pushNav();
+        assertEq(nav, 2000e6);
+        assertEq(vault.lastPushed(), 2000e6);
     }
 
     function test_previewNav_revertsOnStaleHoldingFeed() public {
@@ -246,14 +248,14 @@ contract RwaVaultManagerTest is Test {
     function test_constructor_revertsOnNoHoldings() public {
         RwaVaultManager.HoldingConfig[] memory empty = new RwaVaultManager.HoldingConfig[](0);
         vm.expectRevert(RwaVaultManager.NoHoldings.selector);
-        new RwaVaultManager(address(vault), KEEPER, IMilkman(address(milkman)), address(usdcFeed), MAX_AGE, empty);
+        new RwaVaultManager(address(vault), IMilkman(address(milkman)), address(usdcFeed), MAX_AGE, empty);
     }
 
     function test_constructor_revertsOnBaseAssetHolding() public {
         RwaVaultManager.HoldingConfig[] memory h = new RwaVaultManager.HoldingConfig[](1);
         h[0] = RwaVaultManager.HoldingConfig({token: address(usdc), feed: address(usdcFeed), maxAge: MAX_AGE});
         vm.expectRevert(abi.encodeWithSelector(RwaVaultManager.BaseAssetHolding.selector, address(usdc)));
-        new RwaVaultManager(address(vault), KEEPER, IMilkman(address(milkman)), address(usdcFeed), MAX_AGE, h);
+        new RwaVaultManager(address(vault), IMilkman(address(milkman)), address(usdcFeed), MAX_AGE, h);
     }
 
     function test_constructor_revertsOnDuplicateHolding() public {
@@ -261,6 +263,6 @@ contract RwaVaultManagerTest is Test {
         h[0] = RwaVaultManager.HoldingConfig({token: address(gm), feed: address(gmFeed), maxAge: MAX_AGE});
         h[1] = RwaVaultManager.HoldingConfig({token: address(gm), feed: address(gmFeed), maxAge: MAX_AGE});
         vm.expectRevert(abi.encodeWithSelector(RwaVaultManager.DuplicateHolding.selector, address(gm)));
-        new RwaVaultManager(address(vault), KEEPER, IMilkman(address(milkman)), address(usdcFeed), MAX_AGE, h);
+        new RwaVaultManager(address(vault), IMilkman(address(milkman)), address(usdcFeed), MAX_AGE, h);
     }
 }
