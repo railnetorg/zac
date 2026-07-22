@@ -1,0 +1,149 @@
+{#-
+  CowSwap Milkman — via the MilkmanSwapManager WRAPPER, never Milkman directly.
+
+  This is the wrapper-gated variant of `milkman/milkman.tmpl`. It authorizes a
+  Safe-routed keeper to trade through the `MilkmanSwapManager` wrapper
+  (RAIL-26 — `foundry/src/MilkmanSwapManager.sol`, which `RwaVaultManager`
+  extends) instead of calling the deployed Milkman router directly.
+
+  WHY THE WRAPPER, NOT MILKMAN — registry-completeness invariant. NAV for the
+  vault is a Safe-balance read taken only at rest (no order in flight). The
+  wrapper is what makes "at rest" observable: it holds the one live order, pins
+  the CoW receiver to the Safe, and refuses to value / open while an order is
+  pending. If a swap could bypass the wrapper (Safe → Milkman directly, or an
+  approve to Milkman/any other spender), its in-flight amount would be invisible
+  to NAV and the vault would under-count. So the policy grants NOTHING on Milkman
+  and NOTHING on any spender but the wrapper: every swap MUST enter through
+  `wrapper.openSwap`.
+
+  The per-pair Chainlink price-checker pinning is IDENTICAL to milkman.tmpl and
+  just as load-bearing: `priceCheckerData` is ABI-encoded (uint256 slippageBps,
+  bytes innerData) where innerData is abi.encode(address[] feeds, bool[] reverses).
+  The policy bounds slippageBps per destination token AND pins innerData to the
+  exact feed path for the pair — otherwise a compromised role member could point
+  the slippage cap at a feed reporting ~0 and drain the Safe within the cap.
+
+  Required params:
+    wrapper     — the RESOLVED MilkmanSwapManager / RwaVaultManager address for
+                  this Safe (a literal 0x… or `{{ aliases.<...> }}`). Deployed
+                  per-vault, so it is passed directly (like lagoon.tmpl's vault),
+                  not looked up as a shared alias. Its immutable SAFE must be this
+                  config's Safe (the wrapper pulls the sell token from it and pins
+                  the CoW receiver to it).
+    from_tokens — list of TOKEN alias keys the Safe may approve to the WRAPPER and
+                  sell from (e.g. ["USDC"]).
+    to_tokens   — destination tokens, each with its own slippage cap and the exact
+                  Chainlink feed path used to price the swap:
+                    - token: <TOKEN key>
+                      max_slippage_bps: <int>      # e.g. 500 ≡ ≤ 5%
+                      feeds: [<feed addr>, ...]    # the price path, in order
+                      reverses: [<bool>, ...]      # one per feed; same length
+                  feeds/reverses must equal exactly what `openSwap` submits for
+                  this pair: e.g. USDC → PYUSD uses feeds: [USDC/USD, PYUSD/USD],
+                  reverses: [false, true]. The swap allow-list is the cartesian
+                  product from_tokens × to_tokens: one `or` branch per (from, to),
+                  cap and feeds bound to the exact pair. (A single resulting branch
+                  collapses to a plain match — no redundant `or`.)
+
+  Optional params:
+    max_approval — exclusive upper bound (base units) for the approve `amount` on
+                   every from-token, emitted as `less_than max_approval`. Defaults
+                   to uint256.max, which only rules out the infinite-approval
+                   sentinel and does NOT bound exposure. Set it to a realistic
+                   ceiling to cap how much the role can approve to the wrapper.
+
+  Policy enforced:
+    approve(spender=wrapper, amount < max_approval) on each from-token.
+      Spender is pinned to the WRAPPER — approving Milkman or any other contract
+      is rejected (that is the registry-completeness invariant, not a nicety).
+    openSwap, per (from, to) branch — note there is NO `to` parameter: the wrapper
+      hardcodes the CoW receiver to its immutable SAFE, so the receiver cannot be
+      chosen by the caller and needs no policy pin.
+      amountIn             pass  (bounded operationally by max_approval)
+      fromToken            == aliases.tokens[from]
+      toToken              == aliases.tokens[to.token]
+      appData              pass  (CoW order metadata, set at runtime)
+      priceChecker         == aliases.curator.price_checker (DynamicSlippageChecker)
+      priceCheckerData → abi_encoded:
+        slippageBps          < to.max_slippage_bps + 1   (i.e. ≤ to.max_slippage_bps)
+        innerData            == abi.encode(to.feeds, to.reverses)   (feed path pinned)
+      expectedCloneAddress pass  (keeper-computed off-chain from Milkman's nonce;
+                                  the wrapper binds it ATOMICALLY — asserts no code
+                                  there, requests the swap, asserts code now present
+                                  — so a wrong/hostile value can only revert, never
+                                  mis-bind. Nothing to pin at policy time.)
+    cancelSwap() — allowed. Unlike stock Milkman (whose cancelSwap targets the
+      per-order clone at an address unknown at policy time, so it could not be
+      pre-authorised), the wrapper exposes a no-arg `cancelSwap()` on a KNOWN
+      address, so cancellation is a first-class Safe-routed call here.
+-#}
+roles:
+{%- for token in from_tokens %}
+  - address: "{{ aliases.tokens[token] }}"
+    functions:
+      - signature: "function approve(address spender, uint256 amount)"
+        execution_options: "none"
+        params:
+          - name: spender
+            param_type: "static"
+            operator: "equal_to"
+            value: "{{ wrapper }}"
+            value_type: "address"
+          - name: amount
+            param_type: "static"
+            operator: "less_than"
+            value: "{{ max_approval | default('115792089237316195423570985008687907853269984665640564039457584007913129639935') }}"
+            value_type: "uint256"
+{%- endfor %}
+
+  - address: "{{ wrapper }}"
+    functions:
+      - signature: "function openSwap(uint256 amountIn, address fromToken, address toToken, bytes32 appData, address priceChecker, bytes priceCheckerData, address expectedCloneAddress)"
+        execution_options: "none"
+        operator: "or"
+        branches:
+{%- for from in from_tokens %}
+{%- for to in to_tokens %}
+          - operator: "matches"
+            params:
+              - name: amountIn
+                operator: "pass"
+              - name: fromToken
+                operator: "equal_to"
+                value: "{{ aliases.tokens[from] }}"
+                value_type: "address"
+              - name: toToken
+                operator: "equal_to"
+                value: "{{ aliases.tokens[to.token] }}"
+                value_type: "address"
+              - name: appData
+                operator: "pass"
+              - name: priceChecker
+                operator: "equal_to"
+                value: "{{ aliases.curator.price_checker }}"
+                value_type: "address"
+              - name: priceCheckerData
+                param_type: "abi_encoded"
+                children:
+                  - name: slippageBps
+                    param_type: "static"
+                    operator: "less_than"
+                    value: "{{ to.max_slippage_bps + 1 }}"
+                    value_type: "uint256"
+                  - name: innerData
+                    param_type: "dynamic"
+                    operator: "equal_to"
+                    value: "{{ [to.feeds, to.reverses] | abi_encode(['address[]', 'bool[]']) }}"
+                    value_type: "bytes"
+                    # display-only: lets `zac plan` decode the pinned blob back to
+                    # (feeds, reverses) instead of printing opaque hex.
+                    display_decode:
+                      - { name: feeds, type: "address[]" }
+                      - { name: reverses, type: "bool[]" }
+              - name: expectedCloneAddress
+                operator: "pass"
+{%- endfor %}
+{%- endfor %}
+
+      - signature: "function cancelSwap()"
+        execution_options: "none"

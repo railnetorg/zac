@@ -1,0 +1,40 @@
+roles_modifier_address: "{{ aliases.modifiers.my_modifier }}"
+safe_address: "{{ aliases.safes.my_safe }}"
+chain_id: 1
+name: My Safe Milkman Swap Manager (wrapper-gated)
+description: Price-protected USDC → PYUSD / RLUSD swaps routed through the MilkmanSwapManager wrapper (never Milkman directly), with per-pair slippage caps.
+configs:
+  - template: "../../../templates/milkman_wrapper/milkman_wrapper.tmpl"
+    key: STRATEGY_MANAGER
+    members:
+      - "{{ aliases.signers.alice }}"
+    params:
+      # The per-vault MilkmanSwapManager / RwaVaultManager the Safe trades through.
+      # Pass the wrapper contract address directly — a literal 0x… string, or an
+      # alias expression once you've added an entry to aliases/<chain>/…. Its
+      # immutable SAFE must be this config's Safe. Authorizing the wrapper (and
+      # NEVER Milkman directly) is the registry-completeness invariant: every swap
+      # enters through the wrapper, so its in-flight amount stays visible to NAV.
+      wrapper: "0x1111111111111111111111111111111111111111"
+      # Tokens the Safe may approve to the WRAPPER and sell from.
+      from_tokens:
+        - USDC
+      # Destination tokens, each with its slippage cap (bps) and the exact feed
+      # path the cap is measured against. feeds/reverses must match what openSwap
+      # submits (USDC/USD → {dest}/USD, reverses [false, true]); pinning them stops
+      # a caller supplying a feed that reports a fake price. These are the Aave
+      # PriceCapAdapterStable feeds, NOT the raw Chainlink aggregators (which block
+      # the Milkman calculator's read so a swap pinned to them would never settle).
+      to_tokens:
+        - token: PYUSD
+          max_slippage_bps: 500 # ≤ 5%
+          feeds:
+            - "0x3f73F03aa83B2A48ed27E964eD0fDb590332095B" # USDC/USD (Aave capped)
+            - "0x36964C0579D02E0a5AaAb89E24Cf8d7CDF3549EE" # PYUSD/USD (Aave capped)
+          reverses: [false, true]
+        - token: RLUSD
+          max_slippage_bps: 700 # ≤ 7%
+          feeds:
+            - "0x3f73F03aa83B2A48ed27E964eD0fDb590332095B" # USDC/USD (Aave capped)
+            - "0xf0eaC18E908B34770FDEe46d069c846bDa866759" # RLUSD/USD (Aave capped)
+          reverses: [false, true]
