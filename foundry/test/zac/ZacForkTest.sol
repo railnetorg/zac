@@ -119,6 +119,25 @@ abstract contract ZacForkTest is Test {
     /// @param  fixtureName file name of the fixture under
     ///         `test/fork/templates/test_config/`, e.g. "helper.zac.yaml".
     function applyConfigFile(RolesFixture memory fx, address member, string memory fixtureName) internal {
+        string[] memory none = new string[](0);
+        applyConfigFile(fx, member, fixtureName, none, none);
+    }
+
+    /// @notice Variant that also substitutes caller-supplied placeholders on top of the four
+    ///         built-ins. Use it when the config references an address only known at runtime that
+    ///         is NOT a shared alias — e.g. a per-deployment wrapper / manager contract the test
+    ///         itself deploys. `extraKeys[i]` is replaced with `extraVals[i]` (after the built-in
+    ///         subs), so a fixture can carry a `__WRAPPER__` placeholder.
+    /// @param  extraKeys placeholder tokens to replace (e.g. ["__WRAPPER__"]).
+    /// @param  extraVals their replacements, same length/order as `extraKeys`.
+    function applyConfigFile(
+        RolesFixture memory fx,
+        address member,
+        string memory fixtureName,
+        string[] memory extraKeys,
+        string[] memory extraVals
+    ) internal {
+        require(extraKeys.length == extraVals.length, "ZacForkTest: extra key/val length mismatch");
         string memory templatesDir = string.concat(vm.projectRoot(), "/../templates");
 
         string memory cfg =
@@ -127,8 +146,16 @@ abstract contract ZacForkTest is Test {
         cfg = vm.replace(cfg, "__SAFE__", vm.toString(fx.safe));
         cfg = vm.replace(cfg, "__MEMBER__", vm.toString(member));
         cfg = vm.replace(cfg, "__TEMPLATES__", templatesDir);
+        for (uint256 i = 0; i < extraKeys.length; i++) {
+            cfg = vm.replace(cfg, extraKeys[i], extraVals[i]);
+        }
 
-        // CLI layout: <network>/<safe-address>/<name>.zac.yaml.
+        _writeAndApplyConfig(fx, cfg);
+    }
+
+    /// @dev Write the substituted config to the CLI's expected layout
+    ///      (`<network>/<safe-address>/<name>.zac.yaml`) and apply it in-process.
+    function _writeAndApplyConfig(RolesFixture memory fx, string memory cfg) private {
         string memory configDir = string.concat(vm.projectRoot(), "/cache/zac-fork-test/mainnet/", vm.toString(fx.safe));
         string[] memory mkdir = new string[](3);
         mkdir[0] = "mkdir";
