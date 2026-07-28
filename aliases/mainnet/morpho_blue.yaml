@@ -17,9 +17,9 @@ markets:
     irm: "0x870aC11D48B15DB9a138Cf899d20F13F79Ba00BC"
     lltv: "860000000000000000"
 
-  usdc_pteth_915:
+  usdc_mfone_915:
     loan_token: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
-    collateral_token: "0x238a700eD6165261Cf8b2e544ba797BC11e466Ba"  # ptETH
+    collateral_token: "0x238a700eD6165261Cf8b2e544ba797BC11e466Ba"  # mF-ONE (Midas Fasanara ONE)
     oracle: "0x0cB1928EcA8783F05a07D9Ae2AfB33f38BFBEb78"
     irm: "0x870aC11D48B15DB9a138Cf899d20F13F79Ba00BC"
     lltv: "915000000000000000"
@@ -31,9 +31,9 @@ markets:
     irm: "0x870aC11D48B15DB9a138Cf899d20F13F79Ba00BC"
     lltv: "860000000000000000"
 
-  usdc_resteth_915:
+  usdc_syrupusdc_915:
     loan_token: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
-    collateral_token: "0x80ac24aA929eaF5013f6436cdA2a7ba190f5Cc0b"  # rsETH
+    collateral_token: "0x80ac24aA929eaF5013f6436cdA2a7ba190f5Cc0b"  # syrupUSDC
     oracle: "0x80032f4cb6E3573b9ed61E888AF658E48Fb790cC"
     irm: "0x870aC11D48B15DB9a138Cf899d20F13F79Ba00BC"
     lltv: "915000000000000000"
