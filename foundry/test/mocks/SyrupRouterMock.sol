@@ -20,12 +20,19 @@ contract SyrupRouterMock {
     address public $syrupPoolManager;
     address public $baseAsset;
 
+    error Err(string message);
+
     constructor(address pm) {
         $syrupPoolManager = pm;
         $baseAsset = SyrupPoolManager($syrupPoolManager).$pool().asset();
     }
 
+    /// @dev Enforces `P:deposit` exactly as the real router does, so an un-allowlisted Safe reverts
+    ///      `SR:D:NOT_AUTHORIZED` rather than silently succeeding.
     function deposit(uint256 assets, bytes32) public returns (bool) {
+        if (!SyrupPoolManager($syrupPoolManager).hasDepositPermission(msg.sender)) {
+            revert Err("SR:D:NOT_AUTHORIZED");
+        }
         address _pool = address(SyrupPoolManager($syrupPoolManager).$pool());
         ERC20($baseAsset).safeTransferFrom(msg.sender, address(this), assets);
         ERC20($baseAsset).forceApprove(_pool, assets);
@@ -45,8 +52,10 @@ contract SyrupRouterMock {
         return $syrupPoolManager;
     }
 
-    function poolPermissionManager() public pure returns (address) {
-        // The mock pool is unpermissioned; the real router points at Maple's PoolPermissionManager.
-        return address(0);
+    /// @notice Maple's permission manager, as the real router exposes it.
+    /// @dev Read straight off the pool manager so a test configures permissioning in one place. `address(0)`
+    ///      means the mock pool is open, which is the default.
+    function poolPermissionManager() public view returns (address) {
+        return SyrupPoolManager($syrupPoolManager).poolPermissionManager();
     }
 }

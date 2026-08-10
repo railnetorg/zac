@@ -1,1 +1,34 @@
+# Maple aliases — mainnet.
+#
+# `usdc_pool` is MPLhysUSDC1 ("High Yield Secured Lending Maple Pool USDC1"),
+# the permissioned pool consumed by templates/maple/maple.tmpl. It is NOT
+# syrupUSDC. Maple's public Syrup pools, their SyrupRouter deposit entry point
+# and their withdrawal managers live under the `syrup_*` keys below and are
+# consumed by templates/syrup/syrup.tmpl.
 usdc_pool: "0xC39a5A616F0ad1Ff45077FA2dE3f79ab8eb8b8B9"
+
+# Syrup — public pools. Deposits go through the ROUTER (the Safe approves the
+# router and calls router.deposit(assets, depositData)); exits go through the
+# pool (requestRedeem / redeem) and cancellations through the pool's
+# withdrawal manager (removeSharesById).
+syrup_usdc_pool:   "0x80ac24aA929eaF5013f6436cdA2a7ba190f5Cc0b"  # syrupUSDC
+syrup_usdc_router: "0x134cCaaA4F1e4552eC8aEcb9E4A2360dDcF8df76"  # SyrupRouter (syrupUSDC)
+
+# syrupUSDC's MapleWithdrawalManager (withdrawal-manager-queue v2.0.0).
+#
+# ROTATION-SENSITIVE — re-check before every apply. This is not a fixed
+# property of the pool: it is resolved dynamically on-chain via
+# poolManager.withdrawalManager() (PoolManager
+# 0x7aD5fFa5fdF509E30186F4609c2f6269f4B6158F), and the pool delegate can
+# rotate it at any time (spawnWithdrawalManager). A generated policy pins
+# whatever this key holds, so after a rotation the policy still permits only
+# the OLD manager and cancellation stops working. On rotation: re-read
+# poolManager.withdrawalManager(), update this value, and re-apply the policy.
+syrup_usdc_withdrawal_manager: "0x1bc47a0Dd0FdaB96E9eF982fdf1F34DC6207cfE3"
+
+# syrupUSDT. No withdrawal manager is pinned yet: read that pool's
+# poolManager.withdrawalManager() and add `syrup_usdt_withdrawal_manager`
+# before putting "USDT" in a syrup template's deposit_assets — the template
+# resolves the key with no guard, so rendering throws while it is missing.
+syrup_usdt_pool:   "0x356B8d89c1e1239Cbbb9dE4815c39A1474d5BA7D"  # syrupUSDT
+syrup_usdt_router: "0xF007476Bb27430795138C511F18F821e8D1e5Ee2"  # SyrupRouter (syrupUSDT)

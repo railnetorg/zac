@@ -1,0 +1,167 @@
+{#-
+  Syrup — router deposit / requestRedeem / cancel-by-id / redeem on Maple's
+  public Syrup pools (syrupUSDC, syrupUSDT).
+
+  This is NOT templates/maple/maple.tmpl with different params. Syrup's entry
+  path runs through a SyrupRouter — a different target, a different signature,
+  and an approve whose spender is the ROUTER rather than the pool — and
+  cancellation runs through the pool's withdrawal manager by request id. Three
+  of the calls scoped here have no counterpart in maple.tmpl, and maple.tmpl's
+  pool.deposit rule is not needed at all.
+
+  Each entry in deposit_assets is the UNDERLYING asset of a Syrup pool. The
+  template resolves, per entry and with NO existence guard:
+    aliases.maple[syrup_<asset_lower>_pool]
+    aliases.maple[syrup_<asset_lower>_router]
+    aliases.maple[syrup_<asset_lower>_withdrawal_manager]
+  If any alias is missing on the active chain, rendering throws — there is no
+  silent fall-through. To grant the Safe access to a Syrup pool, add the asset
+  to deposit_assets AND make sure all three aliases exist in
+  aliases/<chain>/maple.yaml. Note that aliases.maple.usdc_pool is a DIFFERENT
+  pool (MPLhysUSDC1, permissioned) and is never read here.
+
+  Required template params:
+    deposit_assets — list of token alias keys, each the underlying asset of a
+                     Syrup pool on the active chain. Example: ["USDC"].
+                     - aliases.tokens[<key>]                               must exist
+                     - aliases.maple[syrup_<key_lower>_pool]               must exist
+                     - aliases.maple[syrup_<key_lower>_router]             must exist
+                     - aliases.maple[syrup_<key_lower>_withdrawal_manager] must exist
+                     Any lookup missing ⇒ render-time error. List each asset
+                     once: a repeated entry renders duplicate
+                     (address, signature) pairs, which the emit-phase merger
+                     rejects.
+    deposit_data   — Maple's bytes32 attribution tag, conventionally
+                     `0:<integrator-name>`. bytes32("0:railnet") is
+                     0x303a7261696c6e65740000000000000000000000000000000000000000000000.
+                     Pinned with equal_to on the router deposit, so the Safe's
+                     deposits can only ever carry the agreed tag.
+
+  Entry flow (router, single deposit call):
+    1. asset.approve(router, assets)         — exact grant
+    2. router.deposit(assets, deposit_data)  — the router pulls the underlying
+                                               and mints pool shares to the Safe
+    3. asset.approve(router, 0)              — zero the leftover allowance
+    Steps 1 and 3 are the SAME rule: `amount` is `pass`, so the exact grant and
+    the zeroing are both covered by one approve.
+
+  Exit flow (request-then-settle, with a cancellation and a claim path):
+    1. pool.requestRedeem(shares, owner=safe)  — escrows the shares into the
+                                                 withdrawal manager and queues
+                                                 the redemption
+    2. …wait for the pool delegate to service the queue…
+       Assets land on the Safe automatically — UNLESS the delegate has flagged
+       the Safe for manual withdrawal, in which case the serviced shares stay
+       on the withdrawal manager and must be claimed with:
+       pool.redeem(shares, receiver=safe, owner=safe)
+    Instead of waiting, an exact queued request can be cancelled with:
+       withdrawalManager.removeSharesById(requestId, sharesToRemove)
+
+  Why cancellation targets the withdrawal manager and not the pool:
+    MapleWithdrawalManager.removeSharesById is unprivileged and
+    owner-authenticated (`request.owner == msg.sender`), exact by id, and does
+    not pass through MaplePool.checkCall — so it is not gated on the pool's
+    `P:removeShares` PoolPermissionManager bitmap, which on syrupUSDC is the
+    same bitmap as `P:deposit` and would otherwise make cancellation fail
+    exactly when Maple has revoked the Safe's deposit rights. pool.removeShares
+    is therefore deliberately NOT scoped here.
+
+  PINNED, ROTATION-SENSITIVE TARGET:
+    The withdrawal manager is not a fixed property of the pool. It is resolved
+    dynamically on-chain via poolManager.withdrawalManager(), and the pool
+    delegate can rotate it at any time (spawnWithdrawalManager). This template
+    pins whatever the alias holds, so after a rotation the policy still permits
+    only the OLD manager and cancellation stops working. On rotation: re-read
+    poolManager.withdrawalManager(), update
+    aliases/<chain>/maple.yaml → syrup_<asset>_withdrawal_manager, and re-apply
+    the policy.
+
+  Output shape (per asset in deposit_assets, four roles — no more):
+    - One approve role on the asset: erc20.approve(spender, amount) with the
+      spender pinned (equal_to) to THAT asset's SyrupRouter and amount `pass`.
+      The pool is NOT an allowed spender.
+    - One router role: deposit(assets pass, depositData equal_to deposit_data).
+    - One pool role: requestRedeem(shares pass, owner=avatar) and
+      redeem(shares pass, receiver=avatar, owner=avatar) — every address
+      parameter pinned to the avatar, so shares and assets can never be routed
+      off the Safe. NO deposit rule: entries go through the router.
+    - One withdrawal-manager role:
+      removeSharesById(requestId pass, sharesToRemove pass) — the manager has
+      no address parameter to pin; it authenticates the owner itself and can
+      only return the cancelled shares to that owner.
+    Every rule is execution_options: "none" — no value, no delegatecall.
+-#}
+{%- from "_macros/common.tmpl" import approve -%}
+roles:
+{%- for token in deposit_assets %}
+{%- set pool = aliases.maple["syrup_" + (token | lower) + "_pool"] -%}
+{%- set router = aliases.maple["syrup_" + (token | lower) + "_router"] -%}
+{%- set withdrawal_manager = aliases.maple["syrup_" + (token | lower) + "_withdrawal_manager"] %}
+  # approve: the spender is the SyrupRouter, NOT the pool — the router is the
+  # contract that pulls the Safe's underlying on a Syrup deposit. `amount` is
+  # `pass`, which covers both the exact grant and the approve(router, 0)
+  # zeroing that follows the deposit.
+  {{ approve(aliases.tokens[token], router) | indent(2) }}
+
+  - address: "{{ router }}"
+    functions:
+      # deposit(assets, depositData): the only route by which this policy lets
+      # value leave the Safe into Syrup. `depositData` is pinned so every
+      # deposit carries the agreed attribution tag and nothing else.
+      - signature: "function deposit(uint256 assets, bytes32 depositData)"
+        execution_options: "none"
+        params:
+          - name: assets
+            param_type: "static"
+            operator: "pass"
+          - name: depositData
+            param_type: "static"
+            operator: "equal_to"
+            value: "{{ deposit_data }}"
+            value_type: "bytes32"
+
+  - address: "{{ pool }}"
+    functions:
+      - signature: "function requestRedeem(uint256 shares, address owner)"
+        execution_options: "none"
+        params:
+          - name: shares
+            param_type: "static"
+            operator: "pass"
+          - name: owner
+            param_type: "static"
+            operator: "equal_to_avatar"
+
+      # redeem(shares, receiver, owner): the manual-withdrawal claim path —
+      # needed when the delegate has flagged the Safe, so serviced shares sit
+      # on the withdrawal manager instead of paying out.
+      - signature: "function redeem(uint256 shares, address receiver, address owner)"
+        execution_options: "none"
+        params:
+          - name: shares
+            param_type: "static"
+            operator: "pass"
+          - name: receiver
+            param_type: "static"
+            operator: "equal_to_avatar"
+          - name: owner
+            param_type: "static"
+            operator: "equal_to_avatar"
+
+  # Withdrawal manager — PINNED and rotation-sensitive (see the header).
+  - address: "{{ withdrawal_manager }}"
+    functions:
+      # removeSharesById(requestId, sharesToRemove): cancels an exact amount
+      # from an exact queued request. Both params are `pass` — there is no
+      # address to pin, and the manager itself requires the request's owner to
+      # be the caller, so the shares can only come back to the Safe.
+      - signature: "function removeSharesById(uint256 requestId, uint256 sharesToRemove)"
+        execution_options: "none"
+        params:
+          - name: requestId
+            param_type: "static"
+            operator: "pass"
+          - name: sharesToRemove
+            param_type: "static"
+            operator: "pass"
+{%- endfor %}

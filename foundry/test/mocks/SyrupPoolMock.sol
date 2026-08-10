@@ -109,12 +109,16 @@ contract SyrupPoolMock {
         return SyrupPoolManager($manager).removeShares(shares_, owner_, msg.sender);
     }
 
+    /// @dev Two burn sources, decided by the pool manager: the queue path burns the withdrawal manager's shares,
+    ///      the manual path also burns the withdrawal manager's -- because a manually serviced request leaves
+    ///      the pool tokens there, credited to the owner's bucket, rather than on the owner.
     function redeem(uint256 shares_, address receiver_, address owner_) public returns (uint256 assets_) {
         _updateYield();
         uint256 redeemableShares_;
-        (redeemableShares_, assets_) = SyrupPoolManager($manager).processRedeem(shares_, owner_, msg.sender);
+        address burnFrom_;
+        (redeemableShares_, assets_, burnFrom_) = SyrupPoolManager($manager).processRedeem(shares_, owner_, msg.sender);
 
-        _burn(redeemableShares_, assets_, receiver_, owner_, msg.sender);
+        _burn(redeemableShares_, assets_, receiver_, burnFrom_, burnFrom_);
     }
 
     function transfer(address to, uint256 amount) public returns (bool) {
@@ -251,7 +255,12 @@ contract SyrupPoolMock {
         return "MSP";
     }
 
-    function maxDeposit(address) public view returns (uint256) {
+    /// @notice The assets `receiver` may deposit: zero when Maple has not allowlisted them, zero when the pool
+    ///         is at its cap, and never a revert -- the ambiguity the manager has to disambiguate.
+    function maxDeposit(address receiver) public view returns (uint256) {
+        if (!SyrupPoolManager($manager).hasDepositPermission(receiver)) {
+            return 0;
+        }
         return $maxDeposit;
     }
 

@@ -1,0 +1,16 @@
+roles_modifier_address: "{{ aliases.modifiers.my_modifier }}"
+safe_address: "{{ aliases.safes.my_safe }}"
+chain_id: 1
+name: My Safe Syrup Manager
+description: Router deposit / request-redeem / cancel-by-id / redeem on the Syrup pools matching the listed assets
+configs:
+  - template: "../../../templates/syrup/syrup.tmpl"
+    key: SYRUP
+    members:
+      - "{{ aliases.signers.alice }}"
+      - "{{ aliases.signers.bob }}"
+    params:
+      deposit_assets:
+        - "USDC"
+      # bytes32("0:railnet") — Maple's `0:<integrator-name>` attribution tag.
+      deposit_data: "0x303a7261696c6e65740000000000000000000000000000000000000000000000"
