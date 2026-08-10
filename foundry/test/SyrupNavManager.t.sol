@@ -61,9 +61,13 @@ abstract contract SyrupNavManagerTestBase is Test {
     function setUp() public virtual {
         asset = new ERC20Mock("USD Coin", "USDC", 6);
 
+        // The pool and the withdrawal manager are deployed here and wired into the manager rather than spawned
+        // by it: a factory would embed their initcode in the manager's bytecode and push it past EIP-170.
         poolManager = new SyrupPoolManager(address(asset));
-        pool = poolManager.spawnPool();
-        withdrawalManager = poolManager.spawnWithdrawalManager();
+        pool = new SyrupPoolMock(address(asset), address(poolManager));
+        poolManager.setPool(address(pool));
+        withdrawalManager = new SyrupWithdrawalManager(address(pool), address(poolManager));
+        poolManager.setWithdrawalManager(address(withdrawalManager));
         router = new SyrupRouterMock(address(poolManager));
 
         safe = new SafeMock();
@@ -522,9 +526,7 @@ contract SyrupNavManagerPushTest is SyrupNavManagerTestBase {
         (uint256 _minRate, uint256 _maxRate) = manager.rateBand();
         uint256 _secondRate = manager.exchangeRate();
         vm.prank(keeper);
-        vm.expectRevert(
-            abi.encodeWithSelector(SyrupNavManager.RateOutOfBand.selector, _secondRate, _minRate, _maxRate)
-        );
+        vm.expectRevert(abi.encodeWithSelector(SyrupNavManager.RateOutOfBand.selector, _secondRate, _minRate, _maxRate));
         manager.pushNav();
     }
 
@@ -554,9 +556,7 @@ contract SyrupNavManagerPushTest is SyrupNavManagerTestBase {
         assertLt(_secondRate, _minRate, "and outside the automatic band, so only the acknowledgement could pass it");
 
         vm.prank(keeper);
-        vm.expectRevert(
-            abi.encodeWithSelector(SyrupNavManager.RateOutOfBand.selector, _secondRate, _minRate, _maxRate)
-        );
+        vm.expectRevert(abi.encodeWithSelector(SyrupNavManager.RateOutOfBand.selector, _secondRate, _minRate, _maxRate));
         manager.pushNav();
     }
 
@@ -1008,8 +1008,7 @@ contract SyrupNavManagerRequestTest is SyrupNavManagerTestBase {
         assertEq(manager.openRequests()[0], _requestId, "id recorded");
         assertEq(manager.escrowedShares(), _shares, "escrow reflects the queued shares");
 
-        (uint256[] memory _queuedIds, uint256[] memory _queuedShares) =
-            withdrawalManager.requestsByOwner(address(safe));
+        (uint256[] memory _queuedIds, uint256[] memory _queuedShares) = withdrawalManager.requestsByOwner(address(safe));
         assertEq(_queuedIds.length, 1, "one request on the queue for the Safe");
         assertEq(_queuedIds[0], _requestId, "queue agrees on the id");
         assertEq(_queuedShares[0], _shares, "queue agrees on the shares");
@@ -1453,7 +1452,8 @@ contract SyrupNavManagerManualWithdrawalTest is SyrupNavManagerTestBase {
 
         assertEq(vault.proposalCount(), 2, "the guardrail accepted the post-service push");
         assertEq(manager.manualShares(), deployedShares, "with the whole position sitting in the manual bucket");
-        uint256 _delta = _afterService > _beforeService ? _afterService - _beforeService : _beforeService - _afterService;
+        uint256 _delta =
+            _afterService > _beforeService ? _afterService - _beforeService : _beforeService - _afterService;
         assertLe(_delta * BPS_MAX, _beforeService * GUARDRAIL_BPS, "and the proposed value moved continuously");
     }
 
@@ -1536,9 +1536,7 @@ contract SyrupNavManagerRotationTest is SyrupNavManagerTestBase {
 
         SyrupWithdrawalManager _current = _rotate();
         bytes memory _expected = abi.encodeWithSelector(
-            SyrupNavManager.WithdrawalManagerRotated.selector,
-            address(previousWithdrawalManager),
-            address(_current)
+            SyrupNavManager.WithdrawalManagerRotated.selector, address(previousWithdrawalManager), address(_current)
         );
 
         vm.prank(keeper);
@@ -1587,9 +1585,7 @@ contract SyrupNavManagerRotationTest is SyrupNavManagerTestBase {
         SyrupWithdrawalManager _current = _rotate();
 
         vm.expectEmit(true, true, true, true, address(manager));
-        emit SyrupNavManager.WithdrawalManagerRotationResolved(
-            address(previousWithdrawalManager), address(_current)
-        );
+        emit SyrupNavManager.WithdrawalManagerRotationResolved(address(previousWithdrawalManager), address(_current));
         vm.prank(guardian);
         manager.resolveWithdrawalManagerRotation();
 
@@ -1642,9 +1638,7 @@ contract SyrupNavManagerRotationTest is SyrupNavManagerTestBase {
         vm.prank(stranger);
         vm.expectRevert(
             abi.encodeWithSelector(
-                SyrupNavManager.WithdrawalManagerRotated.selector,
-                address(previousWithdrawalManager),
-                address(_current)
+                SyrupNavManager.WithdrawalManagerRotated.selector, address(previousWithdrawalManager), address(_current)
             )
         );
         manager.pruneRequests();
@@ -1655,9 +1649,12 @@ contract SyrupNavManagerRotationTest is SyrupNavManagerTestBase {
         assertEq(manager.openRequests()[0], _requestId, "it is still the id the request was opened under");
     }
 
-    /// @dev Rotates the pool's withdrawal manager, which the pool delegate can do at any time.
+    /// @dev Rotates the pool's withdrawal manager, which the pool delegate can do at any time. The manager mock
+    ///      exposes a setter rather than a factory so its own bytecode stays under the EIP-170 limit, so the
+    ///      new manager is deployed here and wired in.
     function _rotate() internal returns (SyrupWithdrawalManager current) {
-        current = poolManager.spawnWithdrawalManager();
+        current = new SyrupWithdrawalManager(address(pool), address(poolManager));
+        poolManager.setWithdrawalManager(address(current));
         assertTrue(address(current) != address(previousWithdrawalManager), "the pool points at a new manager");
     }
 }

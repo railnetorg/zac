@@ -36,9 +36,13 @@ contract SyrupPoolMock {
 
     error Err(string message);
 
-    constructor(address a) {
+    /// @param a The pool's underlying asset.
+    /// @param manager_ The pool manager. Passed in rather than taken from `msg.sender` so the pool can be
+    ///        deployed by a test and wired to the manager afterwards, which is what keeps the manager mock's
+    ///        bytecode under the EIP-170 limit.
+    constructor(address a, address manager_) {
         $asset = ERC20(a);
-        $manager = msg.sender;
+        $manager = manager_;
         $yieldRate = 500; // 5% annual yield by default
         $lastUpdateTimestamp = block.timestamp;
         $unrealizedLosses = 0; // No unrealized losses by default

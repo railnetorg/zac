@@ -22,8 +22,5 @@ interface IPoolPermissionManager {
     /// @param lender The address being checked.
     /// @param functionId Maple's ASCII function identifier, e.g. `bytes32("P:deposit")`.
     /// @return allowed True when the call is permitted.
-    function hasPermission(address poolManager, address lender, bytes32 functionId)
-        external
-        view
-        returns (bool allowed);
+    function hasPermission(address poolManager, address lender, bytes32 functionId) external view returns (bool allowed);
 }

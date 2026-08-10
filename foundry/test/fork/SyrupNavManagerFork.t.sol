@@ -63,8 +63,7 @@ interface IPoolPermissionManagerAdmin {
     function permissionLevels(address poolManager_) external view returns (uint256 permissionLevel_);
     function poolBitmaps(address poolManager_, bytes32 functionId_) external view returns (uint256 bitmap_);
     function lenderAllowlist(address poolManager_, address lender_) external view returns (bool allowed_);
-    function setLenderAllowlist(address poolManager_, address[] calldata lenders_, bool[] calldata booleans_)
-        external;
+    function setLenderAllowlist(address poolManager_, address[] calldata lenders_, bool[] calldata booleans_) external;
 }
 
 /// @notice The withdrawal-manager surface beyond `ISyrupWithdrawalManager`: the queue cursor, the escrow

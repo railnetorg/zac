@@ -8,7 +8,6 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {IMaplePool} from "src/interfaces/IMaplePool.sol";
 
 import {PoolPermissionManagerMock} from "./PoolPermissionManagerMock.sol";
-import {SyrupPoolMock} from "./SyrupPoolMock.sol";
 import {SyrupWithdrawalManager} from "./SyrupWithdrawalManager.sol";
 
 /// @title  SyrupPoolManager
@@ -54,16 +53,20 @@ contract SyrupPoolManager {
         return SyrupWithdrawalManager($withdrawalManager).removeShares(shares_, owner_);
     }
 
-    function spawnWithdrawalManager() external returns (SyrupWithdrawalManager) {
-        SyrupWithdrawalManager swm = new SyrupWithdrawalManager(address($pool), address(this));
-        $withdrawalManager = swm;
-        return swm;
+    /// @notice Points the manager at a pool.
+    /// @dev A setter rather than a `new SyrupPoolMock(...)` factory on purpose. Constructing a child here would
+    ///      embed the child's entire initcode in this contract's bytecode, and with both the pool and the
+    ///      withdrawal manager spawned that way this mock blew past the EIP-170 runtime limit and failed
+    ///      `forge build --sizes`. The test deploys the children and wires them.
+    function setPool(address pool_) external {
+        $pool = IMaplePool(pool_);
     }
 
-    function spawnPool() external returns (SyrupPoolMock) {
-        SyrupPoolMock p = new SyrupPoolMock($asset);
-        $pool = IMaplePool(address(p));
-        return p;
+    /// @notice Points the manager at a withdrawal manager.
+    /// @dev Also how a test reproduces a rotation: deploy a second manager and re-point. See {setPool} for why
+    ///      this is a setter and not a factory.
+    function setWithdrawalManager(address withdrawalManager_) external {
+        $withdrawalManager = SyrupWithdrawalManager(withdrawalManager_);
     }
 
     /// @dev Routes a redeem. Two paths, matching Maple: the queue path burns the withdrawal manager's shares,

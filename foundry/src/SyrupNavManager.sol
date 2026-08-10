@@ -256,12 +256,7 @@ contract SyrupNavManager is ReentrancyGuard {
     /// @param escrowedAssets The exit value of the pool shares queued for withdrawal.
     /// @param manualAssets The exit value of shares awaiting a manual redeem.
     event NavPushed(
-        uint256 nav,
-        uint256 rate,
-        uint256 idleAssets,
-        uint256 heldAssets,
-        uint256 escrowedAssets,
-        uint256 manualAssets
+        uint256 nav, uint256 rate, uint256 idleAssets, uint256 heldAssets, uint256 escrowedAssets, uint256 manualAssets
     );
 
     /// @dev Emitted when idle assets are deployed into the Maple pool.
@@ -705,8 +700,7 @@ contract SyrupNavManager is ReentrancyGuard {
         uint256 sharesBefore_ = SYRUP_POOL.balanceOf(SAFE);
 
         _exec(
-            address(withdrawalManager_),
-            abi.encodeCall(ISyrupWithdrawalManager.removeSharesById, (requestId, queued_))
+            address(withdrawalManager_), abi.encodeCall(ISyrupWithdrawalManager.removeSharesById, (requestId, queued_))
         );
 
         sharesReturned = SYRUP_POOL.balanceOf(SAFE) - sharesBefore_;
@@ -734,12 +728,7 @@ contract SyrupNavManager is ReentrancyGuard {
     ///      this call is about liquidity, not about correcting a valuation.
     /// @param shares The shares to redeem out of the manual bucket.
     /// @return assetsReceived The assets the Safe received.
-    function redeemManual(uint256 shares)
-        external
-        onlyRole(NAV_REDEEM)
-        nonReentrant
-        returns (uint256 assetsReceived)
-    {
+    function redeemManual(uint256 shares) external onlyRole(NAV_REDEEM) nonReentrant returns (uint256 assetsReceived) {
         if (shares == 0) {
             revert ZeroAmount();
         }
@@ -954,9 +943,8 @@ contract SyrupNavManager is ReentrancyGuard {
     ///      pool -- `maxDeposit` returns 0 for both and never reverts.
     /// @return allowed True when the Safe holds `P:deposit` permission.
     function isDepositAllowlisted() public view returns (bool allowed) {
-        return IPoolPermissionManager(SYRUP_ROUTER.poolPermissionManager()).hasPermission(
-            SYRUP_ROUTER.poolManager(), SAFE, FUNCTION_ID_DEPOSIT
-        );
+        return IPoolPermissionManager(SYRUP_ROUTER.poolPermissionManager())
+            .hasPermission(SYRUP_ROUTER.poolManager(), SAFE, FUNCTION_ID_DEPOSIT);
     }
 
     /// @notice The exchange-rate band the next push would accept.
