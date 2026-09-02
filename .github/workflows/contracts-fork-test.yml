@@ -1,9 +1,9 @@
-name: forge-test-fork
+name: contracts-fork-test
 
 on: [push]
 
 jobs:
-  forge-test-fork:
+  contracts-fork-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
