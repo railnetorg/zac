@@ -1,9 +1,12 @@
 {#-
-  Aave V3 — supply / withdraw on the canonical chain pool.
+  Aave V3 — supply / withdraw / borrow / repay / setUserEMode on the
+  canonical chain pool.
 
   Required template params:
     deposit_assets — list of token alias keys (e.g. ["USDC", "DAI"]) the
-                     Safe is permitted to supply / withdraw.
+                     Safe is permitted to supply / withdraw / borrow / repay.
+    emode_category — E-Mode category id (uint8) the Safe is pinned to via
+                     setUserEMode. 0 = no E-Mode (the same-asset default).
 
   Resolved from aliases (NOT params):
     aliases.tokens[<key>] — token address for each entry in deposit_assets
@@ -12,6 +15,10 @@
   Deployment configs only declare *what* assets are in scope; the pool and
   token addresses are pulled from the per-chain alias registry. Both must
   be defined on the active chain or rendering fails fast.
+
+  borrow / repay pin interestRateMode to 2 (variable); stable mode (1) is
+  disabled on most reserves. onBehalfOf is pinned to the avatar (the Safe),
+  so the Safe can only borrow against / repay its own position.
 -#}
 {%- from "_macros/common.tmpl" import approve -%}
 roles:
@@ -59,3 +66,61 @@ roles:
           - name: onBehalfOf
             param_type: "static"
             operator: "equal_to_avatar"
+
+      - signature: "function borrow(address asset, uint256 amount, uint256 interestRateMode, uint16 referralCode, address onBehalfOf)"
+        execution_options: "none"
+        params:
+          - name: asset
+            param_type: "static"
+            operator: "oneOf"
+            values:
+              {%- for token in deposit_assets %}
+              - "{{ aliases.tokens[token] }}"
+              {%- endfor %}
+            value_type: "address"
+          - name: amount
+            param_type: "static"
+            operator: "pass"
+          - name: interestRateMode
+            param_type: "static"
+            operator: "equal_to"
+            value: "2"
+            value_type: "uint256"
+          - name: referralCode
+            param_type: "static"
+            operator: "pass"
+          - name: onBehalfOf
+            param_type: "static"
+            operator: "equal_to_avatar"
+
+      - signature: "function repay(address asset, uint256 amount, uint256 interestRateMode, address onBehalfOf)"
+        execution_options: "none"
+        params:
+          - name: asset
+            param_type: "static"
+            operator: "oneOf"
+            values:
+              {%- for token in deposit_assets %}
+              - "{{ aliases.tokens[token] }}"
+              {%- endfor %}
+            value_type: "address"
+          - name: amount
+            param_type: "static"
+            operator: "pass"
+          - name: interestRateMode
+            param_type: "static"
+            operator: "equal_to"
+            value: "2"
+            value_type: "uint256"
+          - name: onBehalfOf
+            param_type: "static"
+            operator: "equal_to_avatar"
+
+      - signature: "function setUserEMode(uint8 categoryId)"
+        execution_options: "none"
+        params:
+          - name: categoryId
+            param_type: "static"
+            operator: "equal_to"
+            value: "{{ emode_category }}"
+            value_type: "uint8"
