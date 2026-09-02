@@ -25,8 +25,10 @@ contracts-test:
 
 # run the forge fork suite (contract + ZAC policy template tests) against an <upstream> RPC
 # usage: just forge-test-fork "$ETH_RPC_URL"
+# `@` suppresses the recipe echo: <upstream> is a credentialled endpoint and would
+# otherwise be printed verbatim to the terminal and to CI logs.
 forge-test-fork upstream:
-    cd foundry && \
+    @cd foundry && \
       FOUNDRY_PROFILE=contracts-fork MAINNET_RPC_URL="{{upstream}}" forge test -vvv
 
 # run action ts tests
