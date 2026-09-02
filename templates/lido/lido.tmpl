@@ -1,0 +1,96 @@
+{#-
+  Lido — mint wstETH from ETH.
+
+  Scopes the one-way conversion WETH → ETH → stETH → wstETH. This is the
+  collateral-acquisition leg of a leveraged wstETH/WETH position: `submit`
+  mints stETH at Lido's exchange rate with no market involved, so the leg
+  carries no slippage and needs no price checker.
+
+  Required template params:
+    (none)
+
+  Optional params:
+    max_approval — exclusive upper bound (in wei) for the stETH `approve`
+                   amount, emitted as `less_than max_approval`. Defaults to
+                   uint256.max, which only rules out the literal
+                   infinite-approval sentinel and does NOT bound exposure.
+                   Set it to a realistic operational ceiling.
+
+  Resolved from aliases (NOT params):
+    aliases.tokens.WETH   — WETH, unwrapped to ETH
+    aliases.tokens.stETH  — Lido's stETH; also the staking entrypoint
+    aliases.tokens.wstETH — the wstETH wrapper
+    aliases.ZERO          — auto-injected, used to pin the referral
+
+  The three addresses are fixed by the protocol, so none of them is a param:
+  there is nothing for a deployment to choose. The reverse direction
+  (`unwrap`, or Lido's withdrawal queue) is deliberately absent — exits go
+  through a swap venue, which is scoped by its own template.
+
+  Policy enforced:
+    WETH.withdraw(amount)          amount pass
+    stETH.submit(referral)         referral == aliases.ZERO,
+                                   execution_options: "send"
+    stETH.approve(wstETH, amount)  spender pinned to the wrapper,
+                                   amount < max_approval
+    wstETH.wrap(amount)            amount pass
+
+  Two things worth knowing about this policy:
+
+  `submit` is the only value-bearing call in the repo, hence the `send`
+  execution option. Roles V2's Send flag permits attaching ETH to the call
+  but does NOT bound how much, so the amount is limited only by the Safe's
+  ETH balance. That is acceptable here because the destination is pinned to
+  stETH, which mints to `msg.sender` — the Safe converts its own ETH into
+  its own stETH, so a compromised role member can change the Safe's asset
+  mix but cannot move value out of it. Do not reuse `send` against a target
+  that can forward funds elsewhere without re-examining this.
+
+  The referral is pinned to the zero address rather than left to the caller.
+  Lido pays referral rewards to whoever is named, so an unpinned parameter
+  would let a role member redirect a benefit away from the vault on every
+  mint, without ever failing the gate.
+-#}
+roles:
+  - address: "{{ aliases.tokens.WETH }}"
+    functions:
+      - signature: "function withdraw(uint256 amount)"
+        execution_options: "none"
+        params:
+          - name: amount
+            param_type: "static"
+            operator: "pass"
+
+  - address: "{{ aliases.tokens.stETH }}"
+    functions:
+      - signature: "function submit(address referral)"
+        execution_options: "send"
+        params:
+          - name: referral
+            param_type: "static"
+            operator: "equal_to"
+            value: "{{ aliases.ZERO }}"
+            value_type: "address"
+
+      - signature: "function approve(address spender, uint256 amount)"
+        execution_options: "none"
+        params:
+          - name: spender
+            param_type: "static"
+            operator: "equal_to"
+            value: "{{ aliases.tokens.wstETH }}"
+            value_type: "address"
+          - name: amount
+            param_type: "static"
+            operator: "less_than"
+            value: "{{ max_approval | default('115792089237316195423570985008687907853269984665640564039457584007913129639935') }}"
+            value_type: "uint256"
+
+  - address: "{{ aliases.tokens.wstETH }}"
+    functions:
+      - signature: "function wrap(uint256 amount)"
+        execution_options: "none"
+        params:
+          - name: amount
+            param_type: "static"
+            operator: "pass"
