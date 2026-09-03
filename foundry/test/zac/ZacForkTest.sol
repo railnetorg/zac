@@ -175,11 +175,29 @@ abstract contract ZacForkTest is Test {
         uint8 operation,
         bytes32 roleKey
     ) internal {
+        expectPolicyRejectWithValue(modifier_, member, to, 0, data, operation, roleKey);
+    }
+
+    /// @notice Same assertion, with an ETH value attached to the call.
+    /// @dev    Needed to pin the negative cases around `execution_options: "send"`: that a
+    ///         function granted `none` refuses value even when a sibling selector on the same
+    ///         target is granted `send`, and that a bare value transfer with no calldata is
+    ///         not reachable under the role. `expectPolicyReject` hardcodes zero, which
+    ///         cannot express either.
+    function expectPolicyRejectWithValue(
+        address modifier_,
+        address member,
+        address to,
+        uint256 value,
+        bytes memory data,
+        uint8 operation,
+        bytes32 roleKey
+    ) internal {
         vm.prank(member);
         // Partial match: assert the `ConditionViolation` selector, ignoring its
         // `Status`/`info` args (which differ per violated parameter).
         vm.expectPartialRevert(ROLES_CONDITION_VIOLATION);
-        IRoles(modifier_).execTransactionWithRole(to, 0, data, operation, roleKey, false);
+        IRoles(modifier_).execTransactionWithRole(to, value, data, operation, roleKey, false);
     }
 
     /// @dev Generate + `plan` via the ZAC CLI (FFI), then execute each planned

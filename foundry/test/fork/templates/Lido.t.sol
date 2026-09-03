@@ -44,8 +44,8 @@ contract LidoRoleMainnetTest is ZacForkTest {
 
     uint256 constant ROUND = 1 ether;
 
-    /// @dev `encodeKey('LIDO')` — right-padded ASCII bytes32.
-    bytes32 constant ROLE_KEY = 0x4c49444f00000000000000000000000000000000000000000000000000000000;
+    /// @dev Matches `encodeKey('LIDO')` — right-padded ASCII bytes32.
+    bytes32 constant ROLE_KEY = bytes32("LIDO");
 
     address safeAddr;
     address modAddr;
@@ -125,13 +125,37 @@ contract LidoRoleMainnetTest is ZacForkTest {
 
     /// TF-6 — the reverse direction is deliberately out of scope: exits go through a swap
     ///        venue, scoped by its own template. `unwrap` is not in the policy, so the
-    ///        Modifier refuses it. The revert is asserted generically rather than by
-    ///        selector: the Roles bytecode is fetched from the fork, not vendored, so the
-    ///        exact status this raises for an unscoped function is not verifiable here.
+    ///        Modifier refuses it at the gate. Roles V2 funnels its rejections through
+    ///        `ConditionViolation`, so an unscoped selector is asserted the same way as a
+    ///        violated parameter.
     function test_TF6_UnwrapRejected() public {
-        vm.prank(ALICE);
-        vm.expectRevert();
-        IRoles(modAddr)
-            .execTransactionWithRole(WSTETH, 0, abi.encodeCall(IWstETH.unwrap, (ROUND)), CALL, ROLE_KEY, false);
+        expectPolicyReject(modAddr, ALICE, WSTETH, abi.encodeCall(IWstETH.unwrap, (ROUND)), CALL, ROLE_KEY);
+    }
+
+    /// TF-7 — `send` is granted per function, not per target. `approve` sits on the same
+    ///        target as `submit` and is granted `none`, so attaching value to it must be
+    ///        refused. This is the case that would catch a regression in how execution
+    ///        options are keyed, since stETH is the only target carrying both.
+    function test_TF7_ValueOnApproveRejected() public {
+        expectPolicyRejectWithValue(
+            modAddr, ALICE, STETH, ROUND, abi.encodeCall(IERC20.approve, (WSTETH, ROUND)), CALL, ROLE_KEY
+        );
+    }
+
+    /// TF-8 — the same property across targets: `wrap` is on a different contract and is
+    ///        granted `none`, so value attached to it is refused too.
+    function test_TF8_ValueOnWrapRejected() public {
+        expectPolicyRejectWithValue(
+            modAddr, ALICE, WSTETH, ROUND, abi.encodeCall(IWstETH.wrap, (ROUND)), CALL, ROLE_KEY
+        );
+    }
+
+    /// TF-9 — a bare value transfer to stETH, with no calldata at all, is not reachable.
+    ///        This one carries weight: stETH's own receive path stakes, so if empty calldata
+    ///        were admitted under this role the pinned referral would be bypassable by
+    ///        sending ETH with no calldata. Empty calldata is not a scoped selector, so the
+    ///        Modifier refuses it — asserted here rather than left to be re-derived.
+    function test_TF9_BareEthTransferToStethRejected() public {
+        expectPolicyRejectWithValue(modAddr, ALICE, STETH, ROUND, bytes(""), CALL, ROLE_KEY);
     }
 }
