@@ -9,5 +9,6 @@ configs:
     members:
       - "{{ aliases.signers.sepolia_member }}"
     params:
+      borrow: false
       markets:
         - "usdc_weth_915"

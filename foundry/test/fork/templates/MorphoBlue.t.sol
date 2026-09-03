@@ -18,6 +18,10 @@ struct MarketParams {
     uint256 lltv;
 }
 
+interface ISafeStorage {
+    function getStorageAt(uint256 offset, uint256 length) external view returns (bytes memory);
+}
+
 interface IMorpho {
     function supplyCollateral(MarketParams memory marketParams, uint256 assets, address onBehalf, bytes memory data)
         external;
@@ -68,8 +72,11 @@ contract MorphoBlueRoleMainnetTest is ZacForkTest {
     uint256 constant RELEASE = 1 ether;
     uint256 constant BORROW = 1_000e6;
 
-    /// @dev `encodeKey('MORPHO_BLUE')` — right-padded ASCII bytes32.
-    bytes32 constant ROLE_KEY = 0x4d4f5250484f5f424c5545000000000000000000000000000000000000000000;
+    /// @dev Matches `encodeKey('MORPHO_BLUE')` — right-padded ASCII bytes32.
+    bytes32 constant ROLE_KEY = bytes32("MORPHO_BLUE");
+
+    /// @dev keccak256("fallback_manager.handler.address") — Safe v1.4's handler slot.
+    bytes32 constant FALLBACK_HANDLER_SLOT = 0x6c9a6c4a39284e37ed1cf53d337577d14212a4870fb976a4366c693b939918d5;
 
     address safeAddr;
     address modAddr;
@@ -197,5 +204,46 @@ contract MorphoBlueRoleMainnetTest is ZacForkTest {
             CALL,
             ROLE_KEY
         );
+    }
+
+    /// TF-8 — released collateral can only land in the Safe. `withdrawCollateral` pins
+    ///        `receiver` to the avatar, and this is the leg that moves the collateral, so the
+    ///        pin is asserted end to end at the Modifier rather than only at render level.
+    function test_TF8_WithdrawCollateralToForeignReceiverRejected() public {
+        _openPosition();
+        expectPolicyReject(
+            modAddr,
+            ALICE,
+            MORPHO,
+            abi.encodeCall(IMorpho.withdrawCollateral, (_market(), RELEASE, safeAddr, ATTACKER)),
+            CALL,
+            ROLE_KEY
+        );
+    }
+
+    /// TF-9 — `data` is `pass`, so the policy admits a non-empty payload, and Morpho then
+    ///        fires `onMorphoSupplyCollateral` on the Safe. The call completes anyway: Safe's
+    ///        FallbackManager answers any unknown selector with `return(0, 0)` when no
+    ///        fallback handler is set, so the callback is a silent no-op rather than a
+    ///        rejection.
+    ///
+    ///        Both halves are asserted because both are load-bearing. The absent handler is
+    ///        what makes the callback harmless; the completing call is what proves the
+    ///        callback is reached at all rather than being skipped. A vehicle that installs a
+    ///        fallback handler — ERC-1271 order signing wants one — would dispatch Morpho's
+    ///        callback into it, and this test is what would notice.
+    ///
+    ///        The approve runs first on purpose: without it the call would fail on the
+    ///        transfer and say nothing about the callback.
+    function test_TF9_NonEmptyDataIsAnsweredByTheSafeAsANoOp() public {
+        bytes memory handlerSlot = ISafeStorage(safeAddr).getStorageAt(uint256(FALLBACK_HANDLER_SLOT), 1);
+        assertEq(abi.decode(handlerSlot, (address)), address(0), "fixture Safe has a fallback handler");
+
+        _asMember(WSTETH, abi.encodeCall(IERC20.approve, (MORPHO, COLLATERAL)));
+        _asMember(MORPHO, abi.encodeCall(IMorpho.supplyCollateral, (_market(), COLLATERAL, safeAddr, hex"01")));
+
+        bytes32 id = keccak256(abi.encode(_market()));
+        (,, uint128 collateral) = IMorpho(MORPHO).position(id, safeAddr);
+        assertEq(collateral, COLLATERAL, "collateral was not posted despite the non-empty data");
     }
 }

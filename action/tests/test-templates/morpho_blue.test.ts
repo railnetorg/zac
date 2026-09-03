@@ -58,14 +58,14 @@ describe('morpho_blue/morpho_blue.tmpl', () => {
     },
   });
 
-  const rolesOf = (markets: string[]): RenderedRole[] => {
-    const doc = parseDocument(env.render('morpho_blue/morpho_blue.tmpl', { markets }));
+  const rolesOf = (markets: string[], borrow = true): RenderedRole[] => {
+    const doc = parseDocument(env.render('morpho_blue/morpho_blue.tmpl', { markets, borrow }));
     expect(doc.errors).toEqual([]);
     return (doc.toJS() as { roles: RenderedRole[] }).roles;
   };
 
-  const singletonFunctions = (markets: string[]): RenderedFunction[] => {
-    const role = rolesOf(markets).find((r) => r.address === SINGLETON);
+  const singletonFunctions = (markets: string[], borrow = true): RenderedFunction[] => {
+    const role = rolesOf(markets, borrow).find((r) => r.address === SINGLETON);
     if (role === undefined) throw new Error('no role scoped on the singleton');
     return role.functions;
   };
@@ -155,6 +155,37 @@ describe('morpho_blue/morpho_blue.tmpl', () => {
   });
 
   it('T12-7: an unknown market key throws rather than rendering a hole', () => {
-    expect(() => env.render('morpho_blue/morpho_blue.tmpl', { markets: ['nope'] })).toThrow();
+    expect(() =>
+      env.render('morpho_blue/morpho_blue.tmpl', { markets: ['nope'], borrow: false }),
+    ).toThrow();
+  });
+
+  it('T12-8: borrow=false scopes lending only, with no collateral approve', () => {
+    const roles = rolesOf(['usdc_wsteth_86'], false);
+    expect(
+      singletonFunctions(['usdc_wsteth_86'], false).map(
+        (f) => f.signature.replace(/^function /, '').split('(')[0],
+      ),
+    ).toEqual(['supply', 'withdraw']);
+    // Only the loan token is approved: the Safe never hands collateral to the singleton
+    // when it cannot post any.
+    expect(roles.filter((r) => r.address !== SINGLETON).map((r) => r.address)).toEqual([USDC]);
+  });
+
+  it('T12-9: omitting borrow throws rather than defaulting to lending only', () => {
+    // The gate is emitted as a value, not merely tested in an `{% if %}` — `throwOnUndefined`
+    // only fires on emitted values, so a gate alone would leave the param optional and let an
+    // existing config silently render as lending-only with nobody deciding.
+    expect(() =>
+      env.render('morpho_blue/morpho_blue.tmpl', { markets: ['usdc_wsteth_86'] }),
+    ).toThrow();
+  });
+
+  it('T12-10: duplicate market keys collapse to one branch', () => {
+    // A repeated key would otherwise emit two identical `or` branches and defeat the
+    // length-1 collapse.
+    for (const fn of singletonFunctions(['usdc_wsteth_86', 'usdc_wsteth_86'])) {
+      expect(paramOf(fn, 'marketParams').operator).toBe('matches');
+    }
   });
 });

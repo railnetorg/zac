@@ -15,6 +15,8 @@ configs:
     members:
       - "__MEMBER__"
     params:
+      # The suite exercises the collateral and borrow legs, so the gate is on.
+      borrow: true
       # A single market on purpose: it exercises the length-1 collapse to a
       # bare `matches`, which is load-bearing (an `or` with one branch is
       # rejected at apply time). The `or` path is covered by the render tests.
