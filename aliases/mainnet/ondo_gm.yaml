@@ -1,11 +1,12 @@
+# Ondo Global Markets: GM Router + Chainlink "Calculated" feeds.
+# GM token addresses live in tokens.yaml (aliases.tokens) — the standard registry the templates resolve.
 router: "0x2c158BC456e027b2AfFCCadF1BDBD9f5fC4c5C8c"
 
-# GM token addresses the role can mint into / redeem from.
-tokens:
-  HYGon: "0xed3618bb8778f8ebbe2f241da532227591771d04"
-  TLTon: "0x992651bfeb9a0dcc4457610e284ba66d86489d4d"
-  SHYon: "0x5c424b9b60383fce7fe7069d2a2b1047bcd04a73"
-  IEFon: "0xa2ec76139028f279a1c790d323c57cc4158098d6"
-  SGOVon: "0x8de5d49725550f7b318b2fa0f1b1f118e98e8d0f"
-  USFRon: "0xfb82561a955bf59b9263301126af490d3799e231"
-  AGGon: "0xff7cf16aa2ffc463b996db2f7b7cf0130336899d"
+# Chainlink "Calculated" (Total-Return-Value) feed proxies — AggregatorV3, 8-dec, ~86400s heartbeat.
+feeds:
+  SPYon:  "0xd16cC387E87d37350f57421DaDF811968441C1a5"
+  QQQon:  "0x2098C245Fe4C80cdA93cF85Cff0718328D4eEa85"
+  TSLAon: "0x89904B6fcF8dAD1e5DA47dFdF69fC38Ad6be0bd5"
+  IAUon:  "0x1f09475Fe4D212fC24611bAE180201869956c238"
+  STRCon: "0xC353ac4b425f818Ad87E228bf816E15c2173AC07"
+  FLHYon: "0xe35CcF1bE62Bc13f2f259acE624db10C3d527135"  # "FLHYon / USD"; alt "FLHYon-USD" 0x1f82248A… — confirm canonical w/ Chainlink
