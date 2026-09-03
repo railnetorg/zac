@@ -1,0 +1,67 @@
+{#-
+  market_params(markets, aliases)
+
+  Emit the `marketParams` tuple scoping shared by every Morpho Blue function:
+  a `matches` over all five MarketParams fields, wrapped in an `or` across the
+  configured markets.
+
+  `markets` is the list of alias KEYS; each is resolved via
+  `aliases.morpho_blue.markets[<key>]`. Every field is pinned with no
+  existence guard, so a missing key or a missing field throws at render time.
+
+  Length-1 optimization: a single market emits a bare `matches` with no `or`
+  wrapper, because `or` with fewer than two conditions is rejected at apply
+  time (action/apply/toSdkTargets.ts).
+
+  Output starts at column 0 with `operator: …`. Callers indent it to the
+  depth of the enclosing param, e.g.:
+
+      - name: marketParams
+        param_type: "tuple"
+        {{ market_params(markets, aliases) | indent(8) }}
+-#}
+{%- macro market_params(markets, aliases) -%}
+{%- if markets | length == 1 -%}
+{%- set m = aliases.morpho_blue.markets[markets[0]] -%}
+operator: "matches"
+conditions:
+  - operator: "equal_to"
+    value: "{{ m.loan_token }}"
+    value_type: "address"
+  - operator: "equal_to"
+    value: "{{ m.collateral_token }}"
+    value_type: "address"
+  - operator: "equal_to"
+    value: "{{ m.oracle }}"
+    value_type: "address"
+  - operator: "equal_to"
+    value: "{{ m.irm }}"
+    value_type: "address"
+  - operator: "equal_to"
+    value: "{{ m.lltv }}"
+    value_type: "uint256"
+{%- else -%}
+operator: "or"
+conditions:
+{%- for key in markets %}
+{%- set m = aliases.morpho_blue.markets[key] %}
+  - operator: "matches"
+    conditions:
+      - operator: "equal_to"
+        value: "{{ m.loan_token }}"
+        value_type: "address"
+      - operator: "equal_to"
+        value: "{{ m.collateral_token }}"
+        value_type: "address"
+      - operator: "equal_to"
+        value: "{{ m.oracle }}"
+        value_type: "address"
+      - operator: "equal_to"
+        value: "{{ m.irm }}"
+        value_type: "address"
+      - operator: "equal_to"
+        value: "{{ m.lltv }}"
+        value_type: "uint256"
+{%- endfor %}
+{%- endif -%}
+{%- endmacro -%}

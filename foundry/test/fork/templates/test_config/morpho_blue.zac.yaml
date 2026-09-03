@@ -1,0 +1,22 @@
+# Policy fixture for MorphoBlueRoleMainnetTest. A full deployment config; the
+# ZacForkTest harness substitutes the runtime placeholders before applying:
+#   __MODIFIER__  → the freshly deployed Roles Modifier
+#   __SAFE__      → the freshly deployed Safe
+#   __MEMBER__    → the role member the test authorises
+#   __TEMPLATES__ → the absolute templates/ directory
+roles_modifier_address: "__MODIFIER__"
+safe_address: "__SAFE__"
+chain_id: 1
+name: ZAC morpho_blue policy fork test
+description: In-process policy fork test for morpho_blue.tmpl, collateral and borrow side.
+configs:
+  - template: "__TEMPLATES__/morpho_blue/morpho_blue.tmpl"
+    key: MORPHO_BLUE
+    members:
+      - "__MEMBER__"
+    params:
+      # A single market on purpose: it exercises the length-1 collapse to a
+      # bare `matches`, which is load-bearing (an `or` with one branch is
+      # rejected at apply time). The `or` path is covered by the render tests.
+      markets:
+        - "usdc_wsteth_86"

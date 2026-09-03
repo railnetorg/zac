@@ -1,5 +1,6 @@
 {#-
-  Morpho Blue — supply / withdraw on a curated market set.
+  Morpho Blue — supply / withdraw the loan token, and the collateral and
+  borrow side of the same markets.
 
   Singleton is canonical-per-chain, resolved from
   aliases.morpho_blue.singleton (NOT a param). Markets are referenced by
@@ -9,11 +10,12 @@
   All five are resolved with no existence guard — a missing key (or a
   missing field on the resolved entry) throws at render time.
 
-  Loan-token approves are AUTO-DERIVED from the union of
-  markets[*].loan_token. The Safe only needs approve scopes for tokens
-  it can actually supply, and the markets list already names them — so
-  there is no separate `deposit_assets` param. Approves go straight to
-  the loan-token address pulled from the alias entry, bypassing
+  Approves are AUTO-DERIVED from the union of markets[*].loan_token and
+  markets[*].collateral_token, deduplicated. The Safe only needs approve
+  scopes for tokens it can actually hand to the singleton — it supplies the
+  loan token and posts the collateral token — and the markets list already
+  names both, so there is no separate `deposit_assets` param. Approves go
+  straight to the addresses pulled from the alias entries, bypassing
   aliases.tokens (the alias registry is already the ground truth).
 
   Required template params:
@@ -26,14 +28,32 @@
     aliases.morpho_blue.markets[<key>]     — MarketParams tuple per market
 
   Output shape:
-    - One approve role per UNIQUE loan_token, with
+    - One approve role per UNIQUE token across both roles, with
       spender = equal_to singleton.
-    - One supply / withdraw role on the singleton, with marketParams =
-      `or` of per-market `matches` over all five MarketParams fields.
-      `shares = 0` is pinned on supply (forces the assets-mode supply
-      path — shares-mode is a documented footgun). `onBehalf` is pinned
-      to the avatar on both functions; `receiver` is pinned to the
-      avatar on withdraw.
+    - One role on the singleton scoping six functions, each with
+      marketParams pinned to the configured markets (see the shared
+      `market_params` macro). `onBehalf` is pinned to the avatar on all
+      six; `receiver` is pinned to the avatar on `withdraw`, `borrow` and
+      `withdrawCollateral`, so borrowed assets and released collateral can
+      only land back in the Safe.
+
+  Assets vs shares — entry directions pin it, exit directions do not.
+  Morpho itself requires exactly one of `assets` and `shares` to be zero
+  (`UtilsLib.exactlyOneZero`, Morpho.sol), so pinning one is not about
+  preventing an invalid combination; the protocol already does that. It is
+  about which of the two the caller has to state.
+
+    Entry — `supply` and `borrow` pin `shares = 0`. Shares-mode would mean
+            "deposit (or borrow) whatever assets correspond to N shares",
+            so the amount entering or the debt taken on would not be the
+            number the caller wrote.
+    Exit  — `withdraw` and `repay` leave both `pass`. Shares-mode is the
+            only way to leave a position exactly: assets-mode has to name a
+            figure derived from an index that moves between the read and the
+            transaction, so it either leaves dust or overshoots and reverts.
+            Both calls can only unwind the Safe's own position, so admitting
+            shares-mode costs nothing. Do not pin these to zero for symmetry
+            with the entry pair — it would make a clean exit impossible.
 
   Length-1 optimization: when `markets` has exactly one entry, the
   marketParams scoping emits a bare `matches` (no `or` wrapper).
@@ -41,17 +61,23 @@
   (action/apply/toSdkTargets.ts:67).
 -#}
 {%- from "_macros/common.tmpl" import approve -%}
+{%- from "_macros/morpho.tmpl" import market_params -%}
 {%- set singleton = aliases.morpho_blue.singleton -%}
-{#- Pass 1: collect unique loan_tokens across the configured markets -#}
-{%- set loan_tokens = [] -%}
+{#- Pass 1: collect the unique tokens the Safe hands to the singleton, across
+    both roles. A token that is the loan asset of one configured market and
+    the collateral of another must still get exactly one approve entry. -#}
+{%- set approved_tokens = [] -%}
 {%- for key in markets -%}
   {%- set market = aliases.morpho_blue.markets[key] -%}
-  {%- if market.loan_token not in loan_tokens -%}
-    {%- set _ = loan_tokens.push(market.loan_token) -%}
+  {%- if market.loan_token not in approved_tokens -%}
+    {%- set _ = approved_tokens.push(market.loan_token) -%}
+  {%- endif -%}
+  {%- if market.collateral_token not in approved_tokens -%}
+    {%- set _ = approved_tokens.push(market.collateral_token) -%}
   {%- endif -%}
 {%- endfor -%}
 roles:
-{%- for token in loan_tokens %}
+{%- for token in approved_tokens %}
   {{ approve(token, singleton) | indent(2) }}
 {%- endfor %}
 
@@ -62,49 +88,7 @@ roles:
         params:
           - name: marketParams
             param_type: "tuple"
-{%- if markets | length == 1 %}
-{%- set m = aliases.morpho_blue.markets[markets[0]] %}
-            operator: "matches"
-            conditions:
-              - operator: "equal_to"
-                value: "{{ m.loan_token }}"
-                value_type: "address"
-              - operator: "equal_to"
-                value: "{{ m.collateral_token }}"
-                value_type: "address"
-              - operator: "equal_to"
-                value: "{{ m.oracle }}"
-                value_type: "address"
-              - operator: "equal_to"
-                value: "{{ m.irm }}"
-                value_type: "address"
-              - operator: "equal_to"
-                value: "{{ m.lltv }}"
-                value_type: "uint256"
-{%- else %}
-            operator: "or"
-            conditions:
-              {%- for key in markets %}
-              {%- set m = aliases.morpho_blue.markets[key] %}
-              - operator: "matches"
-                conditions:
-                  - operator: "equal_to"
-                    value: "{{ m.loan_token }}"
-                    value_type: "address"
-                  - operator: "equal_to"
-                    value: "{{ m.collateral_token }}"
-                    value_type: "address"
-                  - operator: "equal_to"
-                    value: "{{ m.oracle }}"
-                    value_type: "address"
-                  - operator: "equal_to"
-                    value: "{{ m.irm }}"
-                    value_type: "address"
-                  - operator: "equal_to"
-                    value: "{{ m.lltv }}"
-                    value_type: "uint256"
-              {%- endfor %}
-{%- endif %}
+            {{ market_params(markets, aliases) | indent(12) }}
           - name: assets
             param_type: "static"
             operator: "pass"
@@ -125,49 +109,7 @@ roles:
         params:
           - name: marketParams
             param_type: "tuple"
-{%- if markets | length == 1 %}
-{%- set m = aliases.morpho_blue.markets[markets[0]] %}
-            operator: "matches"
-            conditions:
-              - operator: "equal_to"
-                value: "{{ m.loan_token }}"
-                value_type: "address"
-              - operator: "equal_to"
-                value: "{{ m.collateral_token }}"
-                value_type: "address"
-              - operator: "equal_to"
-                value: "{{ m.oracle }}"
-                value_type: "address"
-              - operator: "equal_to"
-                value: "{{ m.irm }}"
-                value_type: "address"
-              - operator: "equal_to"
-                value: "{{ m.lltv }}"
-                value_type: "uint256"
-{%- else %}
-            operator: "or"
-            conditions:
-              {%- for key in markets %}
-              {%- set m = aliases.morpho_blue.markets[key] %}
-              - operator: "matches"
-                conditions:
-                  - operator: "equal_to"
-                    value: "{{ m.loan_token }}"
-                    value_type: "address"
-                  - operator: "equal_to"
-                    value: "{{ m.collateral_token }}"
-                    value_type: "address"
-                  - operator: "equal_to"
-                    value: "{{ m.oracle }}"
-                    value_type: "address"
-                  - operator: "equal_to"
-                    value: "{{ m.irm }}"
-                    value_type: "address"
-                  - operator: "equal_to"
-                    value: "{{ m.lltv }}"
-                    value_type: "uint256"
-              {%- endfor %}
-{%- endif %}
+            {{ market_params(markets, aliases) | indent(12) }}
           - name: assets
             param_type: "static"
             operator: "pass"
@@ -180,3 +122,75 @@ roles:
           - name: receiver
             param_type: "static"
             operator: "equal_to_avatar"
+
+      - signature: "function supplyCollateral((address loanToken, address collateralToken, address oracle, address irm, uint256 lltv) marketParams, uint256 assets, address onBehalf, bytes data)"
+        execution_options: "none"
+        params:
+          - name: marketParams
+            param_type: "tuple"
+            {{ market_params(markets, aliases) | indent(12) }}
+          - name: assets
+            param_type: "static"
+            operator: "pass"
+          - name: onBehalf
+            param_type: "static"
+            operator: "equal_to_avatar"
+          - name: data
+            param_type: "dynamic"
+            operator: "pass"
+
+      - signature: "function withdrawCollateral((address loanToken, address collateralToken, address oracle, address irm, uint256 lltv) marketParams, uint256 assets, address onBehalf, address receiver)"
+        execution_options: "none"
+        params:
+          - name: marketParams
+            param_type: "tuple"
+            {{ market_params(markets, aliases) | indent(12) }}
+          - name: assets
+            param_type: "static"
+            operator: "pass"
+          - name: onBehalf
+            param_type: "static"
+            operator: "equal_to_avatar"
+          - name: receiver
+            param_type: "static"
+            operator: "equal_to_avatar"
+
+      - signature: "function borrow((address loanToken, address collateralToken, address oracle, address irm, uint256 lltv) marketParams, uint256 assets, uint256 shares, address onBehalf, address receiver)"
+        execution_options: "none"
+        params:
+          - name: marketParams
+            param_type: "tuple"
+            {{ market_params(markets, aliases) | indent(12) }}
+          - name: assets
+            param_type: "static"
+            operator: "pass"
+          - name: shares
+            param_type: "static"
+            operator: "equal_to"
+            value: "0"
+            value_type: "uint256"
+          - name: onBehalf
+            param_type: "static"
+            operator: "equal_to_avatar"
+          - name: receiver
+            param_type: "static"
+            operator: "equal_to_avatar"
+
+      - signature: "function repay((address loanToken, address collateralToken, address oracle, address irm, uint256 lltv) marketParams, uint256 assets, uint256 shares, address onBehalf, bytes data)"
+        execution_options: "none"
+        params:
+          - name: marketParams
+            param_type: "tuple"
+            {{ market_params(markets, aliases) | indent(12) }}
+          - name: assets
+            param_type: "static"
+            operator: "pass"
+          - name: shares
+            param_type: "static"
+            operator: "pass"
+          - name: onBehalf
+            param_type: "static"
+            operator: "equal_to_avatar"
+          - name: data
+            param_type: "dynamic"
+            operator: "pass"
