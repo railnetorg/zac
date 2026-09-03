@@ -24,12 +24,16 @@ contracts-test:
     cd foundry && forge test -vvv
 
 # run the forge fork suite (contract + ZAC policy template tests) against an <upstream> RPC
-# usage: just forge-test-fork "$ETH_RPC_URL"
+# usage: just forge-test-fork "$ETH_RPC_URL" [threads]
 # `@` suppresses the recipe echo: <upstream> is a credentialled endpoint and would
 # otherwise be printed verbatim to the terminal and to CI logs.
-forge-test-fork upstream:
+#
+# `threads` maps to `forge test -j`. The default 0 means "one per logical core",
+# which is forge's own default — so a plain invocation is unchanged. Pass 1 to
+# serialize the test contracts; see the CI workflow for why it does.
+forge-test-fork upstream threads="0":
     @cd foundry && \
-      FOUNDRY_PROFILE=contracts-fork MAINNET_RPC_URL="{{upstream}}" forge test -vvv
+      FOUNDRY_PROFILE=contracts-fork MAINNET_RPC_URL="{{upstream}}" forge test -vvv -j {{threads}}
 
 # run action ts tests
 action-test:
