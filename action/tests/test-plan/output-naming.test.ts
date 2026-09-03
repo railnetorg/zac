@@ -1,5 +1,5 @@
 import { describe, it, expect, afterAll } from 'vitest';
-import { join } from 'node:path';
+import { join, basename } from 'node:path';
 import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync, writeFile } from 'node:fs';
 import { tmpdir } from 'node:os';
 import {
@@ -78,32 +78,43 @@ function safeInitStub() {
 }
 
 describe('plan output naming', () => {
-  it('TS-30: per-safe-dir plan path uses lowercased safe address', () => {
+  it('TS-30: per-safe-dir plan path is `<network>.<lower-safe-addr>.plan.json`', () => {
     const path = safeDirPlanPathFor({
       dirPath: '/configs/mainnet/0xAaaaAaAaaAAAAaAAAAAAaaAaAaaAaaaAaaaAAAaA',
       safeAddress: '0xAaaaAaAaaAAAAaAAAAAAaaAaAaaAaaaAaaaAAAaA',
+      network: 'mainnet',
     });
     expect(path).toBe(
       join(
         '/configs/mainnet/0xAaaaAaAaaAAAAaAAAAAAaaAaAaaAaaaAaaaAAAaA',
-        '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.plan.json',
+        'mainnet.0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.plan.json',
       ),
     );
   });
 
-  it('TS-31: per-safe-dir plan filename is `<lower-safe-addr>.plan.json` (no leakage of stem)', () => {
-    const path = safeDirPlanPathFor({
-      dirPath: '/tmp/x/y',
-      safeAddress: '0xBBbbbbBBbbbbbbBBbBBBbBBbbbbbBbBbBbbbBbBb',
+  it('TS-31: per-safe-dir plan basename is network-qualified so it is globally unique', () => {
+    const base = { safeAddress: '0xBBbbbbBBbbbbbbBBbBBBbBBbbbbbBbBbBbbbBbBb' };
+    const mainnet = safeDirPlanPathFor({
+      ...base,
+      dirPath: '/cfg/mainnet/0xBB',
+      network: 'mainnet',
     });
-    expect(path.endsWith('/0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.plan.json')).toBe(true);
+    const baseChain = safeDirPlanPathFor({ ...base, dirPath: '/cfg/base/0xBB', network: 'base' });
+    expect(mainnet.endsWith('/mainnet.0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.plan.json')).toBe(
+      true,
+    );
+    expect(baseChain.endsWith('/base.0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.plan.json')).toBe(
+      true,
+    );
+    // Same address on two chains => DISTINCT basenames (no flat-namespace collision).
+    expect(join('flat', basename(mainnet))).not.toBe(join('flat', basename(baseChain)));
   });
 
   it('TS-32: per-file (legacy) plan path is `<stem>.plan.json` next to the generated file', () => {
     expect(planPathFor('/x/y/aave_safe.yaml')).toBe('/x/y/aave_safe.plan.json');
   });
 
-  it('TS-33: dir-mode default (safe-dir) — one plan file per safe-dir, named `<safe-addr>.plan.json`', async () => {
+  it('TS-33: dir-mode default (safe-dir) — one plan file per safe-dir, named `<network>.<safe-addr>.plan.json`', async () => {
     const { root, safeDir } = plantTwoSourceSafeDir();
     const safeDirs = findSafeDirs(root);
     expect(safeDirs).toHaveLength(1);
@@ -120,8 +131,8 @@ describe('plan output naming', () => {
     expect(plan).not.toBeNull();
     const outPath = safeDirPlanPathFor(safeDirs[0]!);
     writeFileSync(outPath, serializePlan(plan!));
-    // Exactly one plan file, named by lowercased safe address.
-    expect(outPath).toBe(join(safeDir, `${SAFE_A.toLowerCase()}.plan.json`));
+    // Exactly one plan file, named <network>.<lowercased safe address>.plan.json.
+    expect(outPath).toBe(join(safeDir, `mainnet.${SAFE_A.toLowerCase()}.plan.json`));
   });
 
   it('TS-34: dir-mode legacy (per-file) — one plan file per source, named `<stem>.plan.json`', async () => {
@@ -215,10 +226,10 @@ roles:
         join(dirs[1]!, 'b.plan.json'),
       ].sort(),
     );
-    // (b) no per-modifier <safe-addr>.plan.json was written.
+    // (b) no per-modifier <network>.<safe-addr>.plan.json was written.
     for (const safe of safes) {
       const dir = join(root, 'mainnet', safe);
-      expect(existsSync(join(dir, `${safe}.plan.json`))).toBe(false);
+      expect(existsSync(join(dir, `mainnet.${safe}.plan.json`))).toBe(false);
     }
   });
 });

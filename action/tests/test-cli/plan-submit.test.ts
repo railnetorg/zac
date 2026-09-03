@@ -94,7 +94,7 @@ describe('cli plan + submit', () => {
     const safe = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
     const dir = join(root, 'mainnet', safe);
     mkdirSync(dir, { recursive: true });
-    const aggregatedPath = join(dir, `${safe}.plan.json`);
+    const aggregatedPath = join(dir, `mainnet.${safe}.plan.json`);
     const perFilePath = join(dir, 'aave_safe.plan.json');
     // The legacy per-file detection looks for a sibling `<stem>.zac.yaml`.
     writeFileSync(join(dir, 'aave_safe.zac.yaml'), '# x\n');

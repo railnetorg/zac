@@ -25,7 +25,7 @@ In both flows, the resulting calls are batched into a Safe MultiSend via `@safe-
 
 Layout is strict: every `*.zac.yaml` must live at `<network>/<safe-address>/<name>.zac.yaml`. The `<safe-address>` dir name must match the rendered `safe_address` (case-insensitive); all siblings must agree on `(chain_id, safe_address, roles_modifier_address)`. Violations surface as `phase=validate` errors at discovery time.
 
-Discovery is centralized in `discover.ts` (`findZacSources`, `findGeneratedConfigs`, `findPlans`, `findSafeDirs`); the CLI iterates and writes outputs alongside the source by convention (`*.zac.yaml` → `*.yaml`; safe-dir mode → `<safe-address>.plan.json` per dir; legacy mode → `<stem>.plan.json` per file).
+Discovery is centralized in `discover.ts` (`findZacSources`, `findGeneratedConfigs`, `findPlans`, `findSafeDirs`); the CLI iterates and writes outputs alongside the source by convention (`*.zac.yaml` → `*.yaml`; safe-dir mode → `<network>.<safe-address>.plan.json` per dir; legacy mode → `<stem>.plan.json` per file).
 
 ## Adding a new operator
 
