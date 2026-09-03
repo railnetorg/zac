@@ -281,4 +281,65 @@ describe('runValidate integration', () => {
     };
     expect(() => validateRenderedTemplate(t)).toThrow(ZacError);
   });
+
+  // --- execution_options ---
+  //
+  // The allowed set is also enforced at apply time by `executionFlags`
+  // (fail-closed, and the boundary that maps to the SDK). These cases pin
+  // that an author hears about a typo in the same phase as every other
+  // policy error instead of at plan or apply time.
+
+  const approveSig = 'function approve(address spender, uint256 amount)';
+  const approveParams = [
+    { name: 'spender', operator: 'equal_to', value: VALID_ADDR, value_type: 'address' },
+    { name: 'amount', operator: 'pass' },
+  ];
+  const withExecutionOptions = (
+    execution_options?: string,
+  ): Parameters<typeof validateRenderedTemplate>[0] => ({
+    templatePath: 'fake/lido.tmpl',
+    roles: [
+      {
+        address: VALID_ADDR,
+        functions: [
+          {
+            signature: approveSig,
+            ...(execution_options === undefined ? {} : { execution_options }),
+            params: approveParams,
+          },
+        ],
+      },
+    ],
+  });
+
+  it('EO-1: every value in the taxonomy is accepted, and omitting the key is too', () => {
+    for (const value of [undefined, 'none', 'send', 'delegatecall', 'both']) {
+      expect(() => validateRenderedTemplate(withExecutionOptions(value))).not.toThrow();
+    }
+  });
+
+  it('EO-2: a wrong-case value is rejected at validate time with the field and the allowed set', () => {
+    // `"Send"` is the SDK's own spelling of the enum member and the typo an
+    // author is most likely to reach for.
+    expect(() => validateRenderedTemplate(withExecutionOptions('Send'))).toThrow(ZacError);
+    expect(() => validateRenderedTemplate(withExecutionOptions('Send'))).toThrow(
+      /execution_options "Send" on 'function approve\(address spender, uint256 amount\)' is not one of none \| send \| delegatecall \| both/,
+    );
+  });
+
+  it('EO-3: an invented value is rejected and the error carries phase=validate', () => {
+    let caught: unknown;
+    try {
+      validateRenderedTemplate(withExecutionOptions('sendValue'));
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(ZacError);
+    expect((caught as ZacError).phase).toBe('validate');
+    expect((caught as ZacError).message).toContain('none | send | delegatecall | both');
+  });
+
+  it('EO-4: an empty string is rejected — it is not the same as omitting the key', () => {
+    expect(() => validateRenderedTemplate(withExecutionOptions(''))).toThrow(ZacError);
+  });
 });

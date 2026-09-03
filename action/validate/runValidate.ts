@@ -4,6 +4,7 @@ import { parseSignature } from './signatureValidation';
 import { validateParamAgainstInput } from './dynamicParamSchema';
 import { checkParamSanity, checkParamCoverage, checksumAddress } from './sanityChecks';
 import { OperatorSchema } from './operatorSchemas';
+import { checkExecutionOptions } from './executionOptionsSchema';
 import { ZacError } from '../errors';
 
 type ParamYaml = Record<string, unknown> & { name: string; operator?: string };
@@ -16,6 +17,8 @@ export interface RenderedTemplate {
     address: string;
     functions: Array<{
       signature: string;
+      /** Roles V2 `ExecutionOptions`, lowercase; absent means `none`. */
+      execution_options?: string;
       params?: ParamYaml[];
       /** Function-root `or` of branches (alternative to a single `params` set). */
       operator?: string;
@@ -37,6 +40,7 @@ export function validateRenderedTemplate(t: RenderedTemplate): void {
 
     for (const fn of role.functions) {
       const parsed = parseSignature(fn.signature);
+      checkExecutionOptions(fn.execution_options, fn.signature);
 
       // Function-root `or`: each branch is a full positional param set,
       // validated independently against the same signature.
