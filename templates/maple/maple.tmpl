@@ -1,18 +1,19 @@
 {#-
   Maple — deposit / requestRedeem / redeem on ERC-4626-style Maple pools.
 
-  Each entry in deposit_assets is the UNDERLYING asset of a Maple pool.
-  The template resolves the pool via aliases.maple[<asset_lower>_pool]
+  Each entry in deposit_assets pairs a token alias key (the pool's
+  UNDERLYING asset) with the pool_alias key used to resolve the pool
+  itself. The template resolves the pool via aliases.maple[<pool_alias>]
   with NO existence guard. If the alias is missing on the active chain,
   rendering throws — there is no silent fall-through. To grant the Safe
-  access to a pool, add the asset to deposit_assets AND make sure the
+  access to a pool, add an entry to deposit_assets AND make sure the
   matching pool alias exists in aliases/<chain>/maple.yaml.
 
   Required template params:
-    deposit_assets — list of token alias keys, each the underlying asset
-                     of a Maple pool on the active chain. Example: ["USDC"].
-                     - aliases.tokens[<key>]            must exist
-                     - aliases.maple[<key_lower>_pool]  must exist
+    deposit_assets — list of {asset, pool_alias} entries. Example:
+                     [{asset: "USDC", pool_alias: "usdc_pool"}].
+                     - aliases.tokens[<asset>]        must exist
+                     - aliases.maple[<pool_alias>]    must exist
                      Either lookup missing ⇒ render-time error.
 
   Exit flow (two-step, Maple-specific):
@@ -23,22 +24,35 @@
       3. redeem(shares, receiver=safe, owner=safe) — claims the assets
 
   Output shape:
-    - One approve role per asset; spender = oneOf(all resolved pools) so
-      the Safe can approve any in-scope pool to pull its underlying.
+    - One approve role per UNIQUE asset; spender = oneOf(every pool whose
+      underlying is that asset), so the Safe can approve any in-scope pool
+      sharing that underlying to pull it. Multiple pools sharing an
+      underlying are aggregated into a single approve role — required, as
+      the emit-phase merger rejects duplicate (address, signature) pairs
+      within a role key.
     - One deposit / requestRedeem / redeem role per resolved pool, with
       every address parameter pinned to the avatar so shares and assets
       can never be routed off the Safe.
 -#}
 {%- from "_macros/common.tmpl" import approve -%}
-{%- set pools = [] -%}
-{%- for token in deposit_assets -%}
-  {%- set _ = pools.push(aliases.maple[(token | lower) + "_pool"]) -%}
+{%- set assets = [] -%}
+{%- for entry in deposit_assets -%}
+  {%- if entry.asset not in assets -%}
+    {%- set _ = assets.push(entry.asset) -%}
+  {%- endif -%}
 {%- endfor -%}
 roles:
-{%- for token in deposit_assets %}
-  {{ approve(aliases.tokens[token], pools) | indent(2) }}
+{%- for asset in assets %}
+  {%- set spenders = [] -%}
+  {%- for entry in deposit_assets -%}
+    {%- if entry.asset == asset -%}
+      {%- set _ = spenders.push(aliases.maple[entry.pool_alias]) -%}
+    {%- endif -%}
+  {%- endfor %}
+  {{ approve(aliases.tokens[asset], spenders) | indent(2) }}
 {%- endfor %}
-{%- for pool in pools %}
+{%- for entry in deposit_assets %}
+{%- set pool = aliases.maple[entry.pool_alias] %}
 
   - address: "{{ pool }}"
     functions:

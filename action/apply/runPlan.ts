@@ -26,9 +26,16 @@ export interface RunPlanOpts {
 
 /**
  * Compute the role-state-update `calls` for a generated ZAC config — pure
- * calldata, no Safe transaction. RPC-free: `planApplyRole` reads no chain
- * state and no Safe is initialized, so `plan` needs neither an RPC nor a
- * deployed Safe. The Safe tx (nonce, hash) is built later, at submit time.
+ * calldata, no Safe transaction. No JSON-RPC endpoint and no deployed Safe
+ * are needed, but this is NOT offline: `planApplyRole` diffs the desired
+ * state against the role's current state, which it reads from the
+ * gnosis-guild Roles indexer (a Subsquid GraphQL endpoint) whenever no
+ * `current` is supplied — and nothing here supplies one. It also fetches the
+ * modifier's config from that same indexer and, for a modifier the indexer
+ * knows, the owner's Zodiac license over plain HTTP. So `plan` requires
+ * network access, and it inherits the indexer's eventual consistency: a role
+ * whose last update is not yet indexed diffs against stale state.
+ * The Safe tx (nonce, hash) is built later, at submit time.
  *
  * Returns `null` when `planApplyRole` produces 0 calls — i.e. the on-chain
  * role state already matches the desired state and there is nothing to

@@ -220,7 +220,7 @@ fallback: ~
 modules:
   - "${MOD}"
 `);
-    const planPath = join(safeDir, `${SAFE.toLowerCase()}.plan.json`);
+    const planPath = join(safeDir, `mainnet.${SAFE.toLowerCase()}.plan.json`);
     expect(existsSync(planPath)).toBe(false);
     const prevRpc = process.env['MAINNET_RPC_URL'];
     process.env['MAINNET_RPC_URL'] = 'http://stub.invalid';
@@ -345,7 +345,7 @@ fallback: "${FALLBACK_DESIRED}"
 modules:
   - "${MOD}"
 `);
-    const planPath = join(safeDir, `${SAFE.toLowerCase()}.plan.json`);
+    const planPath = join(safeDir, `mainnet.${SAFE.toLowerCase()}.plan.json`);
     const prevRpc = process.env['MAINNET_RPC_URL'];
     process.env['MAINNET_RPC_URL'] = 'http://stub.invalid';
     try {
@@ -378,7 +378,7 @@ fallback: "0x0000000000000000000000000000000000000000"
 modules:
   - "${MOD}"
 `);
-    const planPath = join(safeDir, `${SAFE.toLowerCase()}.plan.json`);
+    const planPath = join(safeDir, `mainnet.${SAFE.toLowerCase()}.plan.json`);
     const prevRpc = process.env['MAINNET_RPC_URL'];
     process.env['MAINNET_RPC_URL'] = 'http://stub.invalid';
     try {
@@ -407,7 +407,7 @@ fallback: ~
 modules:
   - "${MOD}"
 `);
-    const planPath = join(safeDir, `${SAFE.toLowerCase()}.plan.json`);
+    const planPath = join(safeDir, `mainnet.${SAFE.toLowerCase()}.plan.json`);
     const prevRpc = process.env['MAINNET_RPC_URL'];
     process.env['MAINNET_RPC_URL'] = 'http://stub.invalid';
     try {
@@ -436,7 +436,7 @@ fallback: ~
 modules:
   - "${MOD}"
 `);
-    const planPath = join(safeDir, `${SAFE.toLowerCase()}.plan.json`);
+    const planPath = join(safeDir, `mainnet.${SAFE.toLowerCase()}.plan.json`);
     const prevRpc = process.env['MAINNET_RPC_URL'];
     process.env['MAINNET_RPC_URL'] = 'http://stub.invalid';
     let outErr: { stdout: string; stderr: string };
@@ -461,7 +461,7 @@ fallback: "0x0000000000000000000000000000000000000000"
 modules:
   - "${MOD}"
 `);
-    const planPath = join(safeDir, `${SAFE.toLowerCase()}.plan.json`);
+    const planPath = join(safeDir, `mainnet.${SAFE.toLowerCase()}.plan.json`);
     const prevRpc = process.env['MAINNET_RPC_URL'];
     process.env['MAINNET_RPC_URL'] = 'http://stub.invalid';
     let outErr: { stdout: string; stderr: string };
@@ -492,7 +492,7 @@ modules:
   - "${MOD}"
   - "${NEW_MOD}"
 `);
-    const planPath = join(safeDir, `${SAFE.toLowerCase()}.plan.json`);
+    const planPath = join(safeDir, `mainnet.${SAFE.toLowerCase()}.plan.json`);
     const prevRpc = process.env['MAINNET_RPC_URL'];
     process.env['MAINNET_RPC_URL'] = 'http://stub.invalid';
     try {
@@ -523,7 +523,7 @@ fallback: ~
 modules:
   - "${MOD}"
 `);
-    const planPath = join(safeDir, `${SAFE.toLowerCase()}.plan.json`);
+    const planPath = join(safeDir, `mainnet.${SAFE.toLowerCase()}.plan.json`);
     const prevRpc = process.env['MAINNET_RPC_URL'];
     process.env['MAINNET_RPC_URL'] = 'http://stub.invalid';
     try {
@@ -553,7 +553,7 @@ fallback: ~
 modules:
   - "${MOD}"
 `);
-    const planPath = join(safeDir, `${SAFE.toLowerCase()}.plan.json`);
+    const planPath = join(safeDir, `mainnet.${SAFE.toLowerCase()}.plan.json`);
     const prevRpc = process.env['MAINNET_RPC_URL'];
     process.env['MAINNET_RPC_URL'] = 'http://stub.invalid';
     try {
@@ -583,7 +583,7 @@ modules:
 fallback: ~
 modules: ~
 `);
-    const planPath = join(safeDir, `${SAFE.toLowerCase()}.plan.json`);
+    const planPath = join(safeDir, `mainnet.${SAFE.toLowerCase()}.plan.json`);
     expect(existsSync(planPath)).toBe(false);
     const prevRpc = process.env['MAINNET_RPC_URL'];
     process.env['MAINNET_RPC_URL'] = 'http://stub.invalid';
@@ -617,7 +617,7 @@ fallback: ~
 modules:
   - "${MOD}"
 `);
-    const planPath = join(safeDir, `${SAFE.toLowerCase()}.plan.json`);
+    const planPath = join(safeDir, `mainnet.${SAFE.toLowerCase()}.plan.json`);
     const prevRpc = process.env['MAINNET_RPC_URL'];
     process.env['MAINNET_RPC_URL'] = 'http://stub.invalid';
     let outErr: { stdout: string; stderr: string };

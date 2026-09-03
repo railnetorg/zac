@@ -11,4 +11,5 @@ configs:
       - "{{ aliases.signers.bob }}"
     params:
       deposit_assets:
-        - "USDC"
+        - asset: "USDC"
+          pool_alias: "high_yield_secured_lending_maple_pool_USDC1"
