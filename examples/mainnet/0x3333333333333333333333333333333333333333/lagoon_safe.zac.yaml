@@ -2,15 +2,19 @@ roles_modifier_address: "{{ aliases.modifiers.my_modifier }}"
 safe_address: "{{ aliases.safes.my_safe }}"
 chain_id: 1
 name: My Safe Lagoon Vault Manager
-description: Settle deposits/redeems and manage NAV on Lagoon vault(s)
+description: Approve the vault to spend its asset, settle deposits/redeems, and manage NAV on a Lagoon vault
 configs:
   - template: "../../../templates/lagoon/lagoon.tmpl"
     key: LAGOON
     members:
       - "{{ aliases.signers.alice }}"
     params:
-      # Pass each vault contract address directly — a literal 0x… string,
-      # or an alias expression once you've added an entry to
-      # aliases/<chain>/lagoon.yaml (referenced as aliases.lagoon.<key>).
-      vaults:
-        - "0x30a3699e0dcea6bdc8bb2c13e74a2324e0b20116"
+      # One vault per config. Pass the vault contract address directly — a
+      # literal 0x… string, or an alias expression once you've added an entry
+      # to aliases/<chain>/lagoon.yaml (referenced as aliases.lagoon.<key>).
+      vault: "0x30a3699e0dcea6bdc8bb2c13e74a2324e0b20116"
+      # The vault's underlying asset token (its `asset()`): the ERC-20 the
+      # vault pulls on deposit. The role is granted approve(spender = vault)
+      # on THIS token only. Pass the token alias KEY (resolved via
+      # aliases.tokens[<key>]) — replace with the vault's actual underlying.
+      asset: "USDC"

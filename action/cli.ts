@@ -18,6 +18,8 @@ import {
 } from './discover';
 import { runGenerate } from './runGenerate';
 import { parseGenerated } from './apply/parseGenerated';
+import { readSafeNonce, type ReadSafeNonceFn } from './apply/safeApi';
+import type { Plan, SafeTxData } from './apply/planSchema';
 
 declare const Bun: { main: string } | undefined;
 
@@ -153,6 +155,187 @@ async function buildAddressLabelMapForSources(
     }
   }
   return out;
+}
+
+/** One nested-signer preview row (mirrors `PrintPlanDiffOpts['nestedPreview']`). */
+interface NestedPreviewRow {
+  child: string;
+  label?: string;
+  domainHash: string;
+  messageHash?: string;
+  safeTxHash?: string;
+  nonce?: number | string;
+}
+
+/**
+ * Plan-time Ledger-hash preview (mirrors `printPlanDiff`'s
+ * `mainTxPreview` + `nestedPreview` opts). The parent (main) Safe tx's
+ * three hashes plus one row per nested signer. `messageHash`/`safeTxHash`/
+ * per-child `messageHash`+`safeTxHash`+`nonce` are present only when the live
+ * Safe tx was built (and the child nonce read succeeded); `domainHash` is
+ * offline-computable so it is always present.
+ */
+interface NestedPreview {
+  mainTx?: {
+    domainHash: string;
+    messageHash?: string;
+    safeTxHash?: string;
+    nonce?: number | string;
+  };
+  rows: NestedPreviewRow[];
+}
+
+/**
+ * Build the LIVE Ledger-hash preview for a non-null plan that declares
+ * `nestedSigners`. Resolves an RPC and builds the parent Safe tx to recover
+ * its `safeTxHash` + struct message hash + nonce, then derives each child
+ * Safe's domain/message/final hashes. This is best-effort: any failure (RPC
+ * down, Safe not deployed) degrades to OFFLINE-computable domain hashes only
+ * (parent + each child) and writes a one-line WARN — preview failure must
+ * NEVER throw out of the plan/apply step, so the plan itself still succeeds.
+ */
+async function buildNestedPreview(
+  plan: Plan,
+  addressLabelMap: Record<string, string>,
+  rpcUrlOverride: string | undefined,
+  readNonce: ReadSafeNonceFn = readSafeNonce,
+): Promise<NestedPreview> {
+  if (plan.nestedSigners === undefined || plan.nestedSigners.length === 0) return { rows: [] };
+  const { buildSafeTransaction, computeSafeTxMessageHash } = await import('./apply/safeApi');
+  const { resolveRpcUrl } = await import('./apply/rpc');
+  const { computeNestedApproveHashDetails, computeSafeDomainSeparator } =
+    await import('./apply/nestedSafeHash');
+  const labelFor = (child: string): string | undefined => addressLabelMap[child.toLowerCase()];
+  // Degraded row: OFFLINE-computable child domain hash only (no RPC needed).
+  const degradedRow = (child: string): NestedPreviewRow => {
+    const label = labelFor(child);
+    return {
+      child,
+      ...(label !== undefined ? { label } : {}),
+      domainHash: computeSafeDomainSeparator(plan.chainId, child),
+    };
+  };
+  const nestedSigners = plan.nestedSigners;
+  try {
+    const rpcUrl = resolveRpcUrl({
+      chainId: plan.chainId,
+      ...(rpcUrlOverride !== undefined ? { overrideUrl: rpcUrlOverride } : {}),
+    });
+    const { safeTxHash, safeTxData } = await buildSafeTransaction({
+      chainId: plan.chainId,
+      safeAddress: plan.safeAddress,
+      calls: plan.calls,
+      rpcUrl,
+    });
+    // Per-child: read the CHILD Safe's live nonce, then derive its approveHash
+    // tx hashes. A child whose nonce read fails still gets a domain-only row.
+    const rows: NestedPreviewRow[] = [];
+    for (const child of nestedSigners) {
+      const label = labelFor(child);
+      try {
+        const childNonce = await readNonce(rpcUrl, child);
+        const d = computeNestedApproveHashDetails({
+          parentSafe: plan.safeAddress,
+          parentSafeTxHash: safeTxHash,
+          childSafe: child,
+          childNonce,
+          chainId: plan.chainId,
+        });
+        rows.push({
+          child,
+          ...(label !== undefined ? { label } : {}),
+          domainHash: d.domainHash,
+          messageHash: d.messageHash,
+          safeTxHash: d.safeTxHash,
+          nonce: childNonce.toString(),
+        });
+      } catch (err) {
+        process.stderr.write(
+          `WARN: nested-signer preview hash for ${child} unavailable (child Safe nonce could not be read): ${
+            err instanceof Error ? err.message : String(err)
+          }\n`,
+        );
+        rows.push(degradedRow(child));
+      }
+    }
+    return {
+      mainTx: {
+        domainHash: computeSafeDomainSeparator(plan.chainId, plan.safeAddress),
+        messageHash: computeSafeTxMessageHash(safeTxData),
+        safeTxHash,
+        nonce: safeTxData.nonce,
+      },
+      rows,
+    };
+  } catch (err) {
+    process.stderr.write(
+      `WARN: nested-signer preview hash unavailable (live Safe tx could not be built): ${
+        err instanceof Error ? err.message : String(err)
+      }\n`,
+    );
+    // Degraded: domain hashes only (offline-computable), no message/final.
+    return {
+      mainTx: { domainHash: computeSafeDomainSeparator(plan.chainId, plan.safeAddress) },
+      rows: nestedSigners.map(degradedRow),
+    };
+  }
+}
+
+/**
+ * Emit the Ledger-hash lines after a submit/apply succeeds: ONE `main-tx`
+ * line carrying the parent Safe tx's three hashes, then one `nested-signer`
+ * line per child carrying its three PLUS the child's live nonce. The nested
+ * flow is the standard Safe approval: a child Safe that is an owner of the
+ * parent approves by executing `parentSafe.approveHash(parentSafeTxHash)`; the
+ * child's own owners sign that child tx (nonce-derived — read live here). A
+ * child whose nonce read fails is skipped with a WARN (never throws). No alias
+ * labels here (they aren't threaded to submit) — addresses + hashes only.
+ */
+export async function emitNestedSignerLines(
+  args: {
+    safe: string;
+    chainId: number;
+    safeTxHash: string;
+    safeTxData: SafeTxData;
+    nestedSigners: string[];
+    rpcUrl: string;
+  },
+  readNonce: ReadSafeNonceFn = readSafeNonce,
+): Promise<void> {
+  if (args.nestedSigners.length === 0) return;
+  const { computeSafeTxMessageHash } = await import('./apply/safeApi');
+  const { computeNestedApproveHashDetails, computeSafeDomainSeparator } =
+    await import('./apply/nestedSafeHash');
+  const mainDomainHash = computeSafeDomainSeparator(args.chainId, args.safe);
+  const mainMessageHash = computeSafeTxMessageHash(args.safeTxData);
+  process.stdout.write(
+    `main-tx safe=${args.safe} chain=${args.chainId} ` +
+      `domainHash=${mainDomainHash} messageHash=${mainMessageHash} safeTxHash=${args.safeTxHash}\n`,
+  );
+  for (const child of args.nestedSigners) {
+    let childNonce: bigint;
+    try {
+      childNonce = await readNonce(args.rpcUrl, child);
+    } catch (err) {
+      process.stderr.write(
+        `WARN: nested-signer hash for ${child} unavailable: ${
+          err instanceof Error ? err.message : String(err)
+        }\n`,
+      );
+      continue;
+    }
+    const d = computeNestedApproveHashDetails({
+      parentSafe: args.safe,
+      parentSafeTxHash: args.safeTxHash,
+      childSafe: child,
+      childNonce,
+      chainId: args.chainId,
+    });
+    process.stdout.write(
+      `nested-signer safe=${args.safe} chain=${args.chainId} child=${child} nonce=${childNonce} ` +
+        `domainHash=${d.domainHash} messageHash=${d.messageHash} safeTxHash=${d.safeTxHash}\n`,
+    );
+  }
 }
 
 interface BatchOutcome {
@@ -487,18 +670,25 @@ export function buildProgram(): Command {
             const json = serializePlan(plan);
             const outPath = safeDirPlanPathFor(sd);
             writeFileSync(outPath, json);
+            const addressLabelMap = await buildAddressLabelMapForSources(
+              sd.sources,
+              buildAddressLabelMap,
+              loadAllAliases,
+              findConfig,
+            );
+            // LIVE Ledger-hash preview (best-effort; never throws out).
+            const preview = plan.nestedSigners?.length
+              ? await buildNestedPreview(plan, addressLabelMap, options.rpcUrl)
+              : { rows: [] };
             printPlanDiff(plan, {
               planPath: displayPath(outPath),
               safeAddress: plan.safeAddress,
               declaredRoleKeys: declaredRoleKeysForSafeDir(sd),
               selectorMap: buildSelectorMapForSources(sd.sources, buildSelectorMap),
-              addressLabelMap: await buildAddressLabelMapForSources(
-                sd.sources,
-                buildAddressLabelMap,
-                loadAllAliases,
-                findConfig,
-              ),
+              addressLabelMap,
               functionParamMap: buildFunctionParamMapForSources(sd.sources, buildFunctionParamMap),
+              ...(preview.mainTx !== undefined ? { mainTxPreview: preview.mainTx } : {}),
+              ...(preview.rows.length > 0 ? { nestedPreview: preview.rows } : {}),
               sdk,
             });
             process.stdout.write(`planned: ${displayPath(outPath)}\n`);
@@ -564,6 +754,7 @@ export function buildProgram(): Command {
       const { runSubmit, runBundledSubmit } = await import('./apply/runSubmit');
       const { parsePlan } = await import('./apply/planSchema');
       const { computeSafeTxMessageHash } = await import('./apply/safeApi');
+      const { resolveRpcUrl } = await import('./apply/rpc');
       const proposerKey = process.env['ZAC_PROPOSER_PRIVATE_KEY'] as `0x${string}` | undefined;
       if (proposerKey === undefined) {
         throw new ZacError({
@@ -603,6 +794,16 @@ export function buildProgram(): Command {
             `nonce=${result.safeTxData.nonce} operation=${result.safeTxData.operation} ` +
             `safeTxHash=${result.safeTxHash} messageHash=${messageHash}\n`,
         );
+        if (plan.nestedSigners?.length) {
+          await emitNestedSignerLines({
+            safe: plan.safeAddress,
+            chainId: plan.chainId,
+            safeTxHash: result.safeTxHash,
+            safeTxData: result.safeTxData,
+            nestedSigners: plan.nestedSigners,
+            rpcUrl: resolveRpcUrl({ chainId: plan.chainId }),
+          });
+        }
         return;
       }
 
@@ -640,6 +841,23 @@ export function buildProgram(): Command {
             `nonce=${result.safeTxData.nonce} operation=${result.safeTxData.operation} ` +
             `safeTxHash=${result.safeTxHash} messageHash=${messageHash}\n`,
         );
+        // Union of nested signers across the bundled plans (lowercase +
+        // dedupe). Emitted once per child under the group's safeTxHash.
+        const groupNested = [
+          ...new Set(
+            group.plans.flatMap((p) => (p.nestedSigners ?? []).map((s) => s.toLowerCase())),
+          ),
+        ];
+        if (groupNested.length > 0) {
+          await emitNestedSignerLines({
+            safe: group.safeAddress,
+            chainId: group.chainId,
+            safeTxHash: result.safeTxHash,
+            safeTxData: result.safeTxData,
+            nestedSigners: groupNested,
+            rpcUrl: resolveRpcUrl({ chainId: group.chainId }),
+          });
+        }
       });
       if (!ok) {
         throw new ZacError({ phase: 'apply', message: 'one or more submit steps failed' });
@@ -674,6 +892,7 @@ export function buildProgram(): Command {
         const { runPlan } = await import('./apply/runPlan');
         const { runPlanForSafeDir } = await import('./apply/runPlanForSafeDir');
         const { runSubmit } = await import('./apply/runSubmit');
+        const { resolveRpcUrl } = await import('./apply/rpc');
         const { printPlanDiff } = await import('./apply/printPlanDiff');
         const { buildSelectorMap } = await import('./apply/buildSelectorMap');
         const { buildFunctionParamMap } = await import('./apply/buildFunctionParamMap');
@@ -716,18 +935,25 @@ export function buildProgram(): Command {
             // Print the diff using the safe-dir's plan-file path as the
             // header (it's the canonical artifact name even when we don't
             // write it — `apply` doesn't persist the plan).
+            const addressLabelMap = await buildAddressLabelMapForSources(
+              sd.sources,
+              buildAddressLabelMap,
+              loadAllAliases,
+              findConfig,
+            );
+            // LIVE Ledger-hash preview (best-effort; never throws out).
+            const preview = plan.nestedSigners?.length
+              ? await buildNestedPreview(plan, addressLabelMap, options.rpcUrl)
+              : { rows: [] };
             printPlanDiff(plan, {
               planPath: displayPath(safeDirPlanPathFor(sd)),
               safeAddress: plan.safeAddress,
               declaredRoleKeys: declaredRoleKeysForSafeDir(sd),
               selectorMap: buildSelectorMapForSources(sd.sources, buildSelectorMap),
-              addressLabelMap: await buildAddressLabelMapForSources(
-                sd.sources,
-                buildAddressLabelMap,
-                loadAllAliases,
-                findConfig,
-              ),
+              addressLabelMap,
               functionParamMap: buildFunctionParamMapForSources(sd.sources, buildFunctionParamMap),
+              ...(preview.mainTx !== undefined ? { mainTxPreview: preview.mainTx } : {}),
+              ...(preview.rows.length > 0 ? { nestedPreview: preview.rows } : {}),
               sdk,
             });
             const submitArgs: Parameters<typeof runSubmit>[0] = {
@@ -740,6 +966,19 @@ export function buildProgram(): Command {
             process.stdout.write(
               `applied safe=${sd.safeAddress} chain=${sd.chainId} (${sd.sources.length} source${sd.sources.length === 1 ? '' : 's'}): safeTxHash ${result.safeTxHash}\n`,
             );
+            if (plan.nestedSigners?.length) {
+              await emitNestedSignerLines({
+                safe: plan.safeAddress,
+                chainId: plan.chainId,
+                safeTxHash: result.safeTxHash,
+                safeTxData: result.safeTxData,
+                nestedSigners: plan.nestedSigners,
+                rpcUrl: resolveRpcUrl({
+                  chainId: plan.chainId,
+                  ...(options.rpcUrl ? { overrideUrl: options.rpcUrl } : {}),
+                }),
+              });
+            }
           });
           if (!ok) {
             throw new ZacError({ phase: 'apply', message: 'one or more apply steps failed' });
@@ -783,6 +1022,21 @@ export function buildProgram(): Command {
           process.stdout.write(
             `applied ${displayPath(genPath)}: safeTxHash ${result.safeTxHash}\n`,
           );
+          // Legacy `runPlan` never sets `nestedSigners` (file-mode ignores
+          // safe.yaml); the guard keeps the emit uniform across branches.
+          if (plan.nestedSigners?.length) {
+            await emitNestedSignerLines({
+              safe: plan.safeAddress,
+              chainId: plan.chainId,
+              safeTxHash: result.safeTxHash,
+              safeTxData: result.safeTxData,
+              nestedSigners: plan.nestedSigners,
+              rpcUrl: resolveRpcUrl({
+                chainId: plan.chainId,
+                ...(options.rpcUrl ? { overrideUrl: options.rpcUrl } : {}),
+              }),
+            });
+          }
         });
         if (!ok) {
           throw new ZacError({ phase: 'apply', message: 'one or more apply steps failed' });

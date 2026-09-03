@@ -1,4 +1,5 @@
 import nunjucks from 'nunjucks';
+import { abiEncode } from './abiEncodeFilter';
 import { keccak } from './keccakFilter';
 
 export interface ConfigEnvOpts {
@@ -20,5 +21,6 @@ export function makeConfigEnv(opts: ConfigEnvOpts): nunjucks.Environment {
   const env = new nunjucks.Environment(loader, { throwOnUndefined: true });
   env.addGlobal('aliases', opts.aliases);
   env.addFilter('keccak', keccak);
+  env.addFilter('abi_encode', abiEncode);
   return env;
 }

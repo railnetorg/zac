@@ -100,6 +100,24 @@ describe('dynamicParamSchema', () => {
     expect(() => validateParamAgainstInput(bad, i[0]!)).toThrow(ZacError);
   });
 
+  it('T6-31b: tuple + pass accepted (unscoped tuple slot — symmetric with scalar/array pass)', () => {
+    // A bare `pass` leaves the whole tuple unscoped; the SDK skips the slot just
+    // like it does for scalars and arrays. Previously only `matches`/composites
+    // were allowed on tuples, which made unconstrained tuple params — and any
+    // `tuple[]`-bearing signature (e.g. Pendle's LimitOrderData) — inexpressible.
+    const i = inputs('function foo((address tok, uint256 amt) order)');
+    expect(() =>
+      validateParamAgainstInput({ name: 'order', operator: 'pass' }, i[0]!),
+    ).not.toThrow();
+  });
+
+  it('T6-31c: tuple[] + pass accepted (array-of-tuple slot left unscoped)', () => {
+    const i = inputs('function foo((address tok, uint256 amt)[] orders)');
+    expect(() =>
+      validateParamAgainstInput({ name: 'orders', operator: 'pass' }, i[0]!),
+    ).not.toThrow();
+  });
+
   it('T6-32: address[] array_every(address) accepted; child uint256 rejected', () => {
     const i = inputs('function foo(address[] addrs)');
     const ok = {

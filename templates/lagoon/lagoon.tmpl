@@ -1,34 +1,64 @@
 {#-
-  Lagoon — NAV settlement and operations on Lagoon vault(s).
+  Lagoon — approve + NAV settlement and operations on a single Lagoon vault.
 
-  Each entry in `vaults` is a RESOLVED vault contract address — pass it
-  as a literal `0x…` string or a template expression (`{{ aliases.lagoon.<key> }}`
-  if you've defined one). The template does no further alias lookup;
-  vaults are case-specific so the registry doesn't ship globals.
+  ONE vault per config. Pass the RESOLVED vault contract address (a literal
+  `0x…` string or `{{ aliases.lagoon.<key> }}`) — the template does no
+  further lookup on the vault, as Lagoon vaults are case-specific and the
+  registry ships no globals. The `asset`, by contrast, is a TOKEN ALIAS KEY
+  (e.g. "USDC") resolved via aliases.tokens[<key>] INSIDE the template — the
+  same way aave_v3 / compound_v3 / ondo_* take their deposit/payment assets.
 
   Required template params:
-    vaults — list of 0x-prefixed vault contract addresses, e.g.
-             ["{{ aliases.lagoon.my_vault }}", "0xabc…"].
+    vault — the 0x-prefixed Lagoon vault contract address.
+    asset — the token alias KEY of the vault's underlying (the vault's
+            `asset()`), e.g. "USDC". Resolved via aliases.tokens[<asset>]
+            with NO existence guard ⇒ render-time error if missing. The role
+            is granted approve(spender = vault, amount = *) on this token ONLY.
+
+  Resolved from aliases (NOT passed as a raw address):
+    aliases.tokens[asset] — the underlying ERC-20 the vault pulls on deposit.
 
   Output shape:
-    - One target per vault, with six allowed functions, all
+    - One approve role on the resolved asset token: erc20.approve(spender,
+      amount) with the spender pinned to `vault` (equal_to) and amount left
+      `pass`. This lets the Safe authorize the vault to pull its underlying
+      on deposit, and authorize nothing else — the spender is hard-scoped to
+      the vault, and approve on any other token is not granted.
+    - One vault role on `vault`, with six allowed functions, all
       execution_options: "none". Every parameter is declared `pass`
       explicitly (zac's validator requires every signature param to be
       covered); the all-pass optimization in `toSdkTargets` then
       collapses this to `allowFunction` on-chain.
-    - Six functions covered (see Lagoon docs §Smart-Contract Reference):
+    - Seven functions covered (see Lagoon docs §Smart-Contract Reference):
+      • updateNewTotalAssets(uint256)     — propose a new NAV value
       • settleDeposit(uint256)            — confirm NAV + settle pending deposits
       • settleRedeem(uint256)             — confirm NAV + settle pending redemptions
       • expireTotalAssets()               — force the current NAV value to expire
       • updateTotalAssetsLifespan(uint128)— adjust how long a posted NAV stays valid
       • claimSharesOnBehalf(address[])    — push minted shares to depositors post-settlement
       • claimAssetsOnBehalf(address[])    — push redeemed assets to redeemers post-settlement
+
+  Settlement on the vault (v0.6.0) is a two-step flow: the vault's
+  valuationManager proposes a NAV via updateNewTotalAssets(x), then the
+  vault's safe confirms it by calling settleDeposit(x) / settleRedeem(x)
+  with the SAME value — the vault reverts on a mismatch or when no
+  proposal is pending. updateNewTotalAssets only executes through the
+  Roles modifier when the Safe itself is the vault's valuationManager;
+  for vaults with an external valuationManager the permission is inert.
 -#}
+{%- from "_macros/common.tmpl" import approve -%}
 roles:
-{%- for vault in vaults %}
+  {{ approve(aliases.tokens[asset], vault) | indent(2) }}
 
   - address: "{{ vault }}"
     functions:
+      - signature: "function updateNewTotalAssets(uint256 _newTotalAssets)"
+        execution_options: "none"
+        params:
+          - name: _newTotalAssets
+            param_type: "static"
+            operator: "pass"
+
       - signature: "function settleDeposit(uint256 _newTotalAssets)"
         execution_options: "none"
         params:
@@ -66,4 +96,3 @@ roles:
           - name: controllers
             param_type: "dynamic"
             operator: "pass"
-{%- endfor %}

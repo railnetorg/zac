@@ -5,6 +5,11 @@
 # per-deployment as you need them, then reference them in templates via
 # the standard alias syntax (aliases.lagoon.<your_key>).
 #
+# The lagoon template takes ONE vault per config (params: `vault` + `asset`).
+# `asset` is NOT a vault alias and does not belong here: it is a TOKEN ALIAS
+# KEY (e.g. "USDC"), resolved inside the template via aliases.tokens[<key>]
+# from aliases/<chain>/tokens.yaml. A raw 0x… address is NOT accepted there.
+#
 # Lagoon docs: https://docs.lagoon.finance/developer-hub/smart-contract-reference
 #
 # Example (uncomment and replace with your vault address):

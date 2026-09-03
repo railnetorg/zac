@@ -22,6 +22,11 @@ function recordingC() {
         scoping,
         abiTypes: [...abiTypes],
       }),
+      abiEncodedMatches: (scoping: unknown, abiTypes: readonly string[]) => ({
+        kind: 'abiEncodedMatches',
+        scoping,
+        abiTypes: [...abiTypes],
+      }),
       avatar: avatarToken,
     },
     processPermissions: (perms: unknown[]) => {
@@ -34,7 +39,7 @@ function recordingC() {
 
 function makeGenerated(target: {
   address: string;
-  functions: Array<{ signature: string; params?: unknown[] }>;
+  functions: Array<Record<string, unknown> & { signature: string }>;
 }): Generated {
   return {
     deployment: {
@@ -48,11 +53,9 @@ function makeGenerated(target: {
         targets: [
           {
             address: target.address,
-            functions: target.functions.map((f) => ({
-              signature: f.signature,
-              execution_options: 'none',
-              params: f.params,
-            })),
+            // Spread every function field through (signature, params, and the
+            // root-`or` `operator`/`branches`) so test fixtures control them.
+            functions: target.functions.map((f) => ({ execution_options: 'none', ...f })),
           },
         ],
       },
@@ -376,6 +379,158 @@ describe('toSdkTargets', () => {
     expect(allPassPerms[0]).not.toHaveProperty('condition');
   });
 
+  it('TC-11: `param_type: abi_encoded` emits c.abiEncodedMatches over the declared children', () => {
+    const r = recordingC();
+    const gen = makeGenerated({
+      address: '0xmilkman',
+      functions: [
+        {
+          signature:
+            'function requestSwap(address fromToken, address priceChecker, bytes priceCheckerData)',
+          params: [
+            { name: 'fromToken', operator: 'equal_to', value: '0xusdc', value_type: 'address' },
+            {
+              name: 'priceChecker',
+              operator: 'equal_to',
+              value: '0xchecker',
+              value_type: 'address',
+            },
+            {
+              name: 'priceCheckerData',
+              param_type: 'abi_encoded',
+              children: [
+                {
+                  name: 'slippageBps',
+                  param_type: 'static',
+                  operator: 'less_than',
+                  value: '501',
+                  value_type: 'uint256',
+                },
+                { name: 'innerData', param_type: 'dynamic', operator: 'pass' },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    toSdkTargets(gen, 'ROLE', r);
+    const perms = r.getProcessPermissionsArg() as Array<{ condition: { scoping: unknown[] } }>;
+    const sc = perms[0]!.condition.scoping;
+    expect(sc[2]).toEqual({
+      kind: 'abiEncodedMatches',
+      scoping: [{ kind: 'lt', value: '501' }, { kind: 'pass' }],
+      abiTypes: ['uint256', 'bytes'],
+    });
+  });
+
+  it('TC-12: function-root `or` of branches emits c.or(calldataMatches, calldataMatches)', () => {
+    const r = recordingC();
+    const branch = (to: string, cap: string) => ({
+      operator: 'matches',
+      params: [
+        { name: 'fromToken', operator: 'equal_to', value: '0xusdc', value_type: 'address' },
+        { name: 'toToken', operator: 'equal_to', value: to, value_type: 'address' },
+        {
+          name: 'priceCheckerData',
+          param_type: 'abi_encoded',
+          children: [
+            {
+              name: 'slippageBps',
+              param_type: 'static',
+              operator: 'less_than',
+              value: cap,
+              value_type: 'uint256',
+            },
+            { name: 'innerData', param_type: 'dynamic', operator: 'pass' },
+          ],
+        },
+      ],
+    });
+    const gen = makeGenerated({
+      address: '0xmilkman',
+      functions: [
+        {
+          signature:
+            'function requestSwap(address fromToken, address toToken, bytes priceCheckerData)',
+          operator: 'or',
+          branches: [branch('0xpyusd', '501'), branch('0xrlusd', '701')],
+        },
+      ],
+    });
+    toSdkTargets(gen, 'ROLE', r);
+    const perms = r.getProcessPermissionsArg() as Array<{
+      condition: { kind: string; branches: Array<{ kind: string; scoping: unknown[] }> };
+    }>;
+    const root = perms[0]!.condition;
+    expect(root.kind).toBe('or');
+    expect(root.branches).toHaveLength(2);
+    expect(root.branches[0]!.kind).toBe('calldataMatches');
+    // branch 0: toToken == 0xpyusd, slippage < 501
+    expect(root.branches[0]!.scoping[1]).toEqual({ kind: 'eq', value: '0xpyusd' });
+    expect(root.branches[1]!.scoping[1]).toEqual({ kind: 'eq', value: '0xrlusd' });
+    const abiEnc0 = root.branches[0]!.scoping[2] as { scoping: unknown[] };
+    expect(abiEnc0.scoping[0]).toEqual({ kind: 'lt', value: '501' });
+  });
+
+  it('TC-13: `abi_encoded` with no children throws ZacError(phase=apply)', () => {
+    const r = recordingC();
+    const gen = makeGenerated({
+      address: '0xmilkman',
+      functions: [
+        {
+          signature: 'function f(bytes data)',
+          params: [{ name: 'data', param_type: 'abi_encoded', children: [] }],
+        },
+      ],
+    });
+    try {
+      toSdkTargets(gen, 'ROLE', r);
+      throw new Error('expected throw');
+    } catch (e) {
+      expect(e).toBeInstanceOf(ZacError);
+      expect((e as ZacError).message).toContain('requires ≥ 1 child');
+    }
+  });
+
+  it('TC-14: function-root `or` with a single branch collapses to a plain calldataMatches', () => {
+    const r = recordingC();
+    const gen = makeGenerated({
+      address: '0xmilkman',
+      functions: [
+        {
+          signature: 'function f(address a)',
+          operator: 'or',
+          branches: [
+            { params: [{ name: 'a', operator: 'equal_to', value: '0x1', value_type: 'address' }] },
+          ],
+        },
+      ],
+    });
+    toSdkTargets(gen, 'ROLE', r);
+    const perms = r.getProcessPermissionsArg() as Array<{
+      condition: { kind: string; scoping: unknown[] };
+    }>;
+    const root = perms[0]!.condition;
+    // No `or` wrapper — the lone branch is the condition.
+    expect(root.kind).toBe('calldataMatches');
+    expect(root.scoping[0]).toEqual({ kind: 'eq', value: '0x1' });
+  });
+
+  it('TC-15: function-root `or` with 0 branches throws', () => {
+    const r = recordingC();
+    const gen = makeGenerated({
+      address: '0xmilkman',
+      functions: [{ signature: 'function f(address a)', operator: 'or', branches: [] }],
+    });
+    try {
+      toSdkTargets(gen, 'ROLE', r);
+      throw new Error('expected throw');
+    } catch (e) {
+      expect(e).toBeInstanceOf(ZacError);
+      expect((e as ZacError).message).toContain('requires ≥ 1 branch');
+    }
+  });
+
   it('TC-10: unsupported operator (`and`) still throws', () => {
     const r = recordingC();
     const gen = makeGenerated({
@@ -402,6 +557,44 @@ describe('toSdkTargets', () => {
     } catch (e) {
       expect(e).toBeInstanceOf(ZacError);
       expect((e as ZacError).message).toContain("unsupported operator 'and'");
+    }
+  });
+
+  it('TC-16: an `or` branch that omits a signature parameter throws ZacError(phase=apply)', () => {
+    const r = recordingC();
+    // branch 0 pins both params; branch 1 omits `toToken` — which would otherwise
+    // leave that slot unconstrained, widening the whole `or` to any toToken.
+    const gen = makeGenerated({
+      address: '0xmilkman',
+      functions: [
+        {
+          signature: 'function requestSwap(address fromToken, address toToken)',
+          operator: 'or',
+          branches: [
+            {
+              operator: 'matches',
+              params: [
+                { name: 'fromToken', operator: 'equal_to', value: '0xusdc', value_type: 'address' },
+                { name: 'toToken', operator: 'equal_to', value: '0xpyusd', value_type: 'address' },
+              ],
+            },
+            {
+              operator: 'matches',
+              params: [
+                { name: 'fromToken', operator: 'equal_to', value: '0xusdc', value_type: 'address' },
+                // toToken intentionally missing
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    try {
+      toSdkTargets(gen, 'ROLE', r);
+      throw new Error('expected toSdkTargets to throw');
+    } catch (e) {
+      expect(e).toBeInstanceOf(ZacError);
+      expect((e as ZacError).message).toContain("branch 1 does not constrain parameter 'toToken'");
     }
   });
 });

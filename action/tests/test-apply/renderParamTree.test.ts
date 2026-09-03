@@ -219,4 +219,69 @@ describe('renderParamTree', () => {
     const tree = renderParamTree(fn('f', [], []), undefined);
     expect(tree).toEqual([]);
   });
+
+  it('`display_decode` expands a pinned bytes value into labeled (feeds, reverses) children', () => {
+    // abi.encode([USDC/USD, PYUSD/USD], [false, true]) — the Milkman innerData.
+    const innerData =
+      '0x' +
+      '0000000000000000000000000000000000000000000000000000000000000040' +
+      '00000000000000000000000000000000000000000000000000000000000000a0' +
+      '0000000000000000000000000000000000000000000000000000000000000002' +
+      '0000000000000000000000008fffffd4afb6115b954bd326cbe7b4ba576818f6' +
+      '00000000000000000000000039e31761911b9aabaef5fb81b18fd1c24a60e884' +
+      '0000000000000000000000000000000000000000000000000000000000000002' +
+      '0000000000000000000000000000000000000000000000000000000000000000' +
+      '0000000000000000000000000000000000000000000000000000000000000001';
+    // Exercise the equal_to + display_decode branch in isolation (in the real
+    // tree this leaf lives under an abi_encoded priceCheckerData parent).
+    const leaf = renderParamTree(
+      fn(
+        'f',
+        [input('bytes', 'innerData')],
+        [
+          {
+            name: 'innerData',
+            operator: 'equal_to',
+            value: innerData,
+            value_type: 'bytes',
+            display_decode: [
+              { name: 'feeds', type: 'address[]' },
+              { name: 'reverses', type: 'bool[]' },
+            ],
+          },
+        ],
+      ),
+      { '0x8fffffd4afb6115b954bd326cbe7b4ba576818f6': 'feeds.USDC_USD' },
+    );
+    const flat = flatten(leaf);
+    expect(flat[0]).toMatch(/innerData\s+= abiEncoded/);
+    expect(flat[1]).toMatch(
+      /address\[\] feeds\s+= \[0x8fFf…18f6 \(feeds\.USDC_USD\), 0x39E3…E884\]/,
+    );
+    expect(flat[2]).toMatch(/bool\[\]\s+reverses\s+= \[false, true\]/);
+  });
+
+  it('`display_decode` falls back to the raw hex leaf when the value cannot be decoded', () => {
+    const tree = renderParamTree(
+      fn(
+        'f',
+        [input('bytes', 'blob')],
+        [
+          {
+            name: 'blob',
+            operator: 'equal_to',
+            value: '0xdeadbeef', // too short for (address[], bool[])
+            value_type: 'bytes',
+            display_decode: [
+              { name: 'feeds', type: 'address[]' },
+              { name: 'reverses', type: 'bool[]' },
+            ],
+          },
+        ],
+      ),
+      undefined,
+    );
+    expect(tree[0]?.children).toBeUndefined();
+    expect(tree[0]?.label).toMatch(/blob\s+= 0xdeadbeef/);
+  });
 });

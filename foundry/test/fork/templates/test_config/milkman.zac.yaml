@@ -1,0 +1,37 @@
+# Policy fixture for MilkmanRoleMainnetTest. A full deployment config; the
+# ZacForkTest harness substitutes the runtime placeholders before applying:
+#   __MODIFIER__  → the freshly deployed Roles Modifier
+#   __SAFE__      → the freshly deployed Safe
+#   __MEMBER__    → the role member the test authorises
+#   __TEMPLATES__ → the absolute templates/ directory
+roles_modifier_address: "__MODIFIER__"
+safe_address: "__SAFE__"
+chain_id: 1
+name: ZAC milkman policy fork test
+description: In-process policy fork test for milkman.tmpl.
+configs:
+  - template: "__TEMPLATES__/milkman/milkman.tmpl"
+    key: STRATEGY_MANAGER
+    members:
+      - "__MEMBER__"
+    params:
+      from_tokens: ["USDC"]
+      to_tokens:
+        # feeds/reverses pin the price oracle the slippage cap is measured against
+        # (USDC/USD → {dest}/USD path; reverses [false, true]). These are the Aave
+        # PriceCapAdapterStable feeds, NOT the raw Chainlink aggregators: the raw
+        # aggregators block the Milkman calculator's read, so a swap pinned to them
+        # would never settle. The capped adapters wrap the same aggregators with
+        # public reads (Aave V3 Ethereum asset oracles).
+        - token: "PYUSD"
+          max_slippage_bps: 500
+          feeds:
+            - "0x3f73F03aa83B2A48ed27E964eD0fDb590332095B" # USDC/USD (Aave capped)
+            - "0x36964C0579D02E0a5AaAb89E24Cf8d7CDF3549EE" # PYUSD/USD (Aave capped)
+          reverses: [false, true]
+        - token: "RLUSD"
+          max_slippage_bps: 700
+          feeds:
+            - "0x3f73F03aa83B2A48ed27E964eD0fDb590332095B" # USDC/USD (Aave capped)
+            - "0xf0eaC18E908B34770FDEe46d069c846bDa866759" # RLUSD/USD (Aave capped)
+          reverses: [false, true]

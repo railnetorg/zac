@@ -17,3 +17,4 @@ configs:
     params:
       deposit_assets:
         - "USDC"
+      emode_category: 0

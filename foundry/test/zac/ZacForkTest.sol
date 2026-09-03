@@ -53,6 +53,14 @@ abstract contract ZacForkTest is Test {
         address modifier_;
     }
 
+    /// @dev Monotonic counter scoping every on-disk path and CREATE2 salt this harness
+    ///      derives. Nothing reachable from inside forge's EVM is unique per test —
+    ///      `address(this)` is the same constant for every test contract and
+    ///      `vm.randomUint()` is re-seeded per test — so uniqueness has to be carried
+    ///      explicitly. Test contracts run in parallel over a shared filesystem, so two
+    ///      suites that agree on a path race each other's `generate`/`plan` output.
+    uint256 private _zacNonce;
+
     /// @notice Per-chain `SafeConfig`s. The Safe v1.4.1 + Zodiac deployments are
     ///         CREATE2-deterministic — identical addresses on every chain they're on — so a
     ///         chain that ever diverges overrides just its own entry.
@@ -76,7 +84,10 @@ abstract contract ZacForkTest is Test {
     /// @dev    Deploys run through `cfg`'s factories in forge's EVM; module wiring is
     ///         applied as the Safe via `vm.prank`.
     function deployRolesFixture(SafeConfig memory cfg, address member) internal returns (RolesFixture memory fx) {
-        uint256 saltNonce = vm.randomUint();
+        // `vm.randomUint()` alone is NOT unique: forge re-seeds the RNG per test, so it
+        // returns the same value in every test function of every test contract. Mixing in a
+        // per-instance counter and the wall clock keeps each fixture at its own address.
+        uint256 saltNonce = uint256(keccak256(abi.encode(vm.randomUint(), vm.unixTime(), _zacNonce++, member)));
 
         address[] memory owners = new address[](1);
         owners[0] = member;
@@ -128,8 +139,14 @@ abstract contract ZacForkTest is Test {
         cfg = vm.replace(cfg, "__MEMBER__", vm.toString(member));
         cfg = vm.replace(cfg, "__TEMPLATES__", templatesDir);
 
-        // CLI layout: <network>/<safe-address>/<name>.zac.yaml.
-        string memory configDir = string.concat(vm.projectRoot(), "/cache/zac-fork-test/mainnet/", vm.toString(fx.safe));
+        // CLI layout: <network>/<safe-address>/<name>.zac.yaml. The safe address alone is
+        // NOT a safe key for this directory — every template test builds a byte-identical
+        // Safe initializer, so a repeated salt lands two suites on the same address and
+        // therefore the same config file. A per-call slot above `<network>/` keeps the
+        // layout the CLI validates while making the path unique to this fixture.
+        string memory slot = string.concat(vm.replace(fixtureName, ".zac.yaml", ""), "-", vm.toString(_zacNonce++));
+        string memory configDir =
+            string.concat(vm.projectRoot(), "/cache/zac-fork-test/", slot, "/mainnet/", vm.toString(fx.safe));
         string[] memory mkdir = new string[](3);
         mkdir[0] = "mkdir";
         mkdir[1] = "-p";
@@ -140,7 +157,7 @@ abstract contract ZacForkTest is Test {
 
         // The repo's root `examples/config.yaml` is passed via `--config` so alias namespaces
         // resolve from outside the `examples/` hierarchy.
-        _applyInProcess(configPath, string.concat(vm.projectRoot(), "/../examples/config.yaml"));
+        _applyInProcess(fx, configPath, string.concat(vm.projectRoot(), "/../examples/config.yaml"), configDir);
     }
 
     /// @dev Roles v2 `PermissionChecker.ConditionViolation(Status,bytes32)` selector — the
@@ -168,13 +185,19 @@ abstract contract ZacForkTest is Test {
     /// @dev Generate + `plan` via the ZAC CLI (FFI), then execute each planned
     ///      role-state-update call as the Safe (the Modifier's owner). `plan` emits the
     ///      role-update calls, which the test applies directly.
-    function _applyInProcess(string memory configPath, string memory rootConfigPath) private {
-        // Unique temp path per (test contract, call site).
-        string memory id = string.concat(vm.toString(uint256(uint160(address(this)))), "-", vm.toString(gasleft()));
+    function _applyInProcess(
+        RolesFixture memory fx,
+        string memory configPath,
+        string memory rootConfigPath,
+        string memory outDir
+    ) private {
         // `plan` takes the `.zac.yaml` source and derives its sibling generated
         // `.yaml`, so generate must write the generated config alongside the source.
         string memory generatedPath = vm.replace(configPath, ".zac.yaml", ".yaml");
-        string memory planPath = string.concat("/tmp/zac-plan-", id, ".json");
+        // Keep the plan beside its own source. A shared scratch path (e.g. one keyed on
+        // `address(this)`, which is the same constant in every test contract) lets a
+        // parallel suite overwrite this plan between the write and the read below.
+        string memory planPath = string.concat(outDir, "/plan.out.json");
 
         _zac("generate", configPath, generatedPath, rootConfigPath);
         _zac("plan", configPath, planPath, rootConfigPath);
@@ -185,11 +208,22 @@ abstract contract ZacForkTest is Test {
         uint256 callsCount = vm.parseJsonUint(planJson, ".callsCount");
         require(callsCount > 0, "ZacForkTest: plan produced no calls");
 
+        // Assert the plan describes THIS fixture. Without these checks a plan belonging to
+        // another suite applies silently: its calls target an address that holds no code on
+        // this fork, `call` on a codeless address succeeds, `require(ok)` passes, and the
+        // Modifier is left unconfigured — surfacing much later as `NoMembership()`.
+        require(owner == fx.safe, "ZacForkTest: plan safeAddress is not this fixture's Safe");
+        require(
+            vm.parseJsonAddress(planJson, ".modifierAddress") == fx.modifier_,
+            "ZacForkTest: plan modifierAddress is not this fixture's Modifier"
+        );
+
         for (uint256 i = 0; i < callsCount; i++) {
             string memory base = string.concat(".calls[", vm.toString(i), "]");
             address to = vm.parseJsonAddress(planJson, string.concat(base, ".to"));
             bytes memory data = vm.parseJsonBytes(planJson, string.concat(base, ".data"));
             // Every planned call targets the Modifier (value 0) and is owner-gated.
+            require(to == fx.modifier_, "ZacForkTest: planned call targets a foreign address");
             vm.prank(owner);
             (bool ok,) = to.call(data);
             require(ok, "ZacForkTest: plan call reverted");
