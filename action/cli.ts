@@ -465,18 +465,31 @@ function warnIfFileFlagNoOp(
   );
 }
 
+/** A safe-dir is `<network>/<safe-address>/`; its own dir name is the 0x address. */
+const SAFE_DIR_ADDR_RE = /^0x[0-9a-f]{40}$/;
+
 /**
- * Within each safe-dir, reject the mixed-style condition: a safe-dir must
- * contain EITHER one `<network>.<safe-address>.plan.json` (aggregated,
- * per-modifier mode) OR one-or-more `<stem>.plan.json` files matching a
- * sibling `<stem>.zac.yaml` (legacy per-file mode) — never both. This catches the
- * case where the user runs `plan` once with each flag value and the
- * resulting plan files coexist; bundling both styles would duplicate
- * calls in the proposed Safe transaction.
+ * Within each safe-dir, reject plan-file sets that would bundle unintended
+ * calls into the proposed Safe transaction. A safe-dir must contain EITHER a
+ * single aggregated `<network>.<safe-address>.plan.json` (per-modifier mode)
+ * OR one-or-more `<stem>.plan.json` files matching a sibling
+ * `<stem>.zac.yaml` (legacy per-file mode).
  *
- * Plan files outside both classifications (e.g. orphan `<stem>.plan.json`
- * with no sibling `<stem>.zac.yaml`) are ignored — they predate or
- * post-date the current source set and are not part of the mix check.
+ * Four conditions are rejected:
+ *  - A legacy-named `<safe-address>.plan.json` aggregated plan. `plan` writes
+ *    the network-qualified basename, so this name can only come from a tree
+ *    planned by an older build; the file is stale by construction and its
+ *    calls describe a config revision that is no longer current.
+ *  - MIXED styles, from running `plan` once with each `--revoke-unmentioned`
+ *    value; bundling both would duplicate every grant/revoke.
+ *  - MULTIPLE aggregated plans in one dir.
+ *  - ORPHAN `<stem>.plan.json` with no sibling `<stem>.zac.yaml`: the source
+ *    that produced it is gone, so its calls are unreviewable against the
+ *    current source set.
+ *
+ * Only safe-dirs are inspected. A flat directory of collected plan files (e.g.
+ * downloaded release assets) carries no `<network>/<safe-address>/` structure
+ * to classify against and is left alone.
  */
 function assertNoMixedSafeDirPlans(planPaths: string[]): void {
   // Group plan paths by their parent dir.
@@ -489,27 +502,51 @@ function assertNoMixedSafeDirPlans(planPaths: string[]): void {
   }
   for (const [dir, paths] of byDir) {
     const dirAddrLower = basename(dir).toLowerCase();
+    if (!SAFE_DIR_ADDR_RE.test(dirAddrLower)) continue;
+    const networkLower = basename(dirname(dir)).toLowerCase();
     const aggregatedNames: string[] = [];
+    const staleAggregatedNames: string[] = [];
     const perFileStems: string[] = [];
+    const orphanNames: string[] = [];
     for (const p of paths) {
       const stem = basename(p).slice(0, -'.plan.json'.length);
       const stemLower = stem.toLowerCase();
-      // Aggregated (per-modifier) plans are named `<network>.<safe-address>.plan.json`
-      // (current) or `<safe-address>.plan.json` (legacy) — either way the stem
-      // ends with the dir's safe address.
-      if (stemLower === dirAddrLower || stemLower.endsWith(`.${dirAddrLower}`)) {
+      // Match the aggregated basenames exactly. A suffix test would also
+      // swallow a per-file plan whose stem merely ends in `.<safe-address>`,
+      // dropping it from the mixed-style check below.
+      const hasSource = existsSync(resolve(dir, `${stem}.zac.yaml`));
+      if (stemLower === `${networkLower}.${dirAddrLower}`) {
         aggregatedNames.push(basename(p));
-        continue;
-      }
-      const sibling = resolve(dir, `${stem}.zac.yaml`);
-      if (existsSync(sibling)) {
+      } else if (stemLower === dirAddrLower && !hasSource) {
+        staleAggregatedNames.push(basename(p));
+      } else if (hasSource) {
         perFileStems.push(stem);
+      } else {
+        orphanNames.push(basename(p));
       }
+    }
+    if (staleAggregatedNames.length > 0) {
+      throw new ZacError({
+        phase: 'apply',
+        message: `safe-dir ${dir} contains stale aggregated plan(s) (${staleAggregatedNames.join(', ')}) using the un-qualified '${dirAddrLower}.plan.json' basename; the current aggregated basename is '${networkLower}.${dirAddrLower}.plan.json', so these were written by an older build and would bundle a superseded revision into the proposal — delete them and re-run plan`,
+      });
+    }
+    if (aggregatedNames.length > 1) {
+      throw new ZacError({
+        phase: 'apply',
+        message: `safe-dir ${dir} contains MULTIPLE aggregated plans (${aggregatedNames.join(', ')}); exactly one is expected — delete all but the current one or re-run plan`,
+      });
     }
     if (aggregatedNames.length > 0 && perFileStems.length > 0) {
       throw new ZacError({
         phase: 'apply',
         message: `safe-dir ${dir} contains BOTH legacy per-file plan(s) (${perFileStems.map((s) => `${s}.plan.json`).join(', ')}) AND an aggregated plan (${aggregatedNames.join(', ')}); these are mutually exclusive — delete one set or re-run plan with the desired mode`,
+      });
+    }
+    if (orphanNames.length > 0) {
+      throw new ZacError({
+        phase: 'apply',
+        message: `safe-dir ${dir} contains orphan plan file(s) (${orphanNames.join(', ')}) with no sibling '<stem>.zac.yaml'; the source that produced them is gone, so their calls cannot be reviewed against the current sources — delete them or restore the source`,
       });
     }
   }
@@ -662,8 +699,10 @@ export function buildProgram(): Command {
             if (options.rpcUrl !== undefined) planOpts.rpcUrl = options.rpcUrl;
             const plan = await runPlanForSafeDir(planOpts);
             if (plan === null) {
-              // In sync: skip write, skip diff. Do NOT touch any existing
-              // stale plan.json — surface as a quiet success line.
+              // In sync: skip write, skip diff — surface as a quiet success
+              // line. Any pre-existing plan.json is left on disk; `submit`
+              // rejects the stale ones rather than bundling them (see
+              // `assertNoMixedSafeDirPlans`).
               process.stdout.write(`in sync: ${displayPath(sd.dirPath)} — nothing to plan\n`);
               return;
             }
