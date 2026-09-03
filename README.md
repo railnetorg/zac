@@ -36,7 +36,7 @@ The CLI is directory-driven: every subcommand accepts either a single file or a 
 - Generated configs: `*.yaml` next to the source (`aave_v3.zac.yaml` → `aave_v3.yaml`).
 - Plan files:
   - default (`--revoke-unmentioned=false`): one `<stem>.plan.json` next to each source — `planApplyRole` is called per source, no revokes emitted. Roles not declared in any source are left untouched on the modifier.
-  - `--revoke-unmentioned=true` (directory mode only): one `<safe-address>.plan.json` per safe-dir — the SDK's `planApply` aggregates roles across siblings and natively revokes any role on the modifier not in the aggregated set.
+  - `--revoke-unmentioned=true` (directory mode only): one `<network>.<safe-address>.plan.json` per safe-dir — the SDK's `planApply` aggregates roles across siblings and natively revokes any role on the modifier not in the aggregated set. The basename is network-qualified so plans for the same Safe address on different chains stay distinct when flattened into one namespace (e.g. release assets).
 
 ## Try the example
 
@@ -61,7 +61,7 @@ bun run zac plan   <path>   # default: one <stem>.plan.json per source (no revok
 bun run zac submit <path>   # posts every *.plan.json found under <path>, bundled per safe
 ```
 
-Pass `--revoke-unmentioned=true` (directory mode only) to aggregate roles per safe-dir and emit revoke calls — one `<safe-address>.plan.json` per safe-dir, the SDK natively revokes any role on the modifier not in the aggregated set. The flag is a no-op in file-mode (one source → no aggregation to do); passing it explicitly with a single `*.zac.yaml` triggers a stderr WARN.
+Pass `--revoke-unmentioned=true` (directory mode only) to aggregate roles per safe-dir and emit revoke calls — one `<network>.<safe-address>.plan.json` per safe-dir, the SDK natively revokes any role on the modifier not in the aggregated set. The flag is a no-op in file-mode (one source → no aggregation to do); passing it explicitly with a single `*.zac.yaml` triggers a stderr WARN.
 
 The proposer signs and submits the transaction proposal; other Safe owners then sign in the Safe UI. Optional env vars: `SAFE_API_KEY` (forwarded to api-kit if rate-limited). RPC is resolved per-chain via `<NETWORK>_RPC_URL` (e.g. `MAINNET_RPC_URL`, `BASE_RPC_URL`); `RPC_URL` is the universal fallback. The CLI `--rpc-url` flag overrides both. If neither is set for a chain in scope, the run errors out before contacting the chain.
 

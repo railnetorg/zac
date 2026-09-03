@@ -199,7 +199,7 @@ describe('cli plan — in-sync (0 calls)', () => {
 
   it('per-safe-dir (`--revoke-unmentioned=true`): 0 calls prints "in sync: <dir> — nothing to plan" and does NOT write plan.json', async () => {
     const { root } = plantSource();
-    const planPath = join(root, 'mainnet', SAFE, `${SAFE.toLowerCase()}.plan.json`);
+    const planPath = join(root, 'mainnet', SAFE, `mainnet.${SAFE.toLowerCase()}.plan.json`);
     expect(existsSync(planPath)).toBe(false);
     const prevRpc = process.env['MAINNET_RPC_URL'];
     process.env['MAINNET_RPC_URL'] = 'http://stub.invalid';
