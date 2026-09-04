@@ -1,0 +1,154 @@
+{#-
+  Wildcat V2 markets — LENDER side.
+
+  A Wildcat market is an uncollateralised credit line, not an ERC-4626 vault:
+  the market contract is itself the position token (`wmtWETH` for the
+  Wintermute WETH market) and exits run through a batched withdrawal queue.
+  No ERC-4626 template applies.
+
+  Each entry in `markets` is a market alias KEY. The template resolves it via
+  aliases.wildcat[<key>] with NO existence guard. If the alias is missing on
+  the active chain, rendering throws — there is no silent fall-through. To
+  grant the Safe access to a market, add the key to `markets` AND ensure the
+  matching entry exists in aliases/<chain>/wildcat.yaml.
+
+  Each resolved alias entry must declare:
+    address — the WildcatMarket contract
+    asset   — the TOKEN ALIAS KEY of the market's underlying (e.g. "WETH");
+              resolved via aliases.tokens[<asset>], also with no guard.
+
+  Required template params:
+    markets — list of market alias keys, e.g. ["wintermute_weth"].
+              - aliases.wildcat[<key>]              must exist
+              - aliases.tokens[<resolved asset>]    must exist
+              Either lookup missing ⇒ render-time error.
+
+  Lender flow (request-then-claim, three steps):
+    Deposit:
+      1. approve(market, amount)   — on the underlying
+      2. depositUpTo(amount)       — deposits up to remaining capacity and
+                                     returns the amount actually taken, or
+         deposit(amount)           — deposits exactly `amount` or reverts
+                                     with `MaxSupplyExceeded`
+      Market tokens mint to `msg.sender`; neither entry point takes a
+      recipient, so shares can only ever land on the Safe.
+    Exit:
+      1. queueWithdrawal(amount) / queueFullWithdrawal()
+                                   — burn market tokens into the current
+                                     withdrawal batch and return that batch's
+                                     `expiry`. Available liquidity is applied
+                                     to the batch at queue time.
+      2. (wait until block.timestamp >= expiry)
+      3. executeWithdrawal(avatar, expiry)
+                                   — transfer the batch's paid share of the
+                                     underlying to `accountAddress`.
+    The wait is the market's own `withdrawalBatchDuration`, an immutable set
+    at market creation — read it off the market rather than assuming a value.
+
+  Both deposit entry points and both queue entry points forward any calldata
+  past their declared arguments to the market's hooks contract as `hooksData`
+  (the market passes a `baseCalldataSize` of 0x24 / 0x04 into its internal
+  path). A market whose access-control hooks use a signature-based role
+  provider needs that trailing blob to authorise the lender. Roles V2 scopes
+  by ABI position and does not constrain calldata length, so the roles below
+  admit those longer calls — asserted by
+  `test_deposit_withTrailingHooksData_allowed`.
+
+  Output shape:
+    - One approve role per UNIQUE underlying. Multiple markets sharing an
+      underlying are aggregated into a single
+      approve(spender = oneOf(market_addresses)) role. This is required —
+      the emit-phase merger rejects duplicate (address, signature) pairs
+      within a role key.
+    - One role per market. The only address parameter on the whole lender
+      surface is `executeWithdrawal`'s `accountAddress`, pinned to the avatar
+      so a claim can only ever pay the Safe. Its `expiry` names a batch, not a
+      counterparty — with `accountAddress` pinned, the Safe can only ever
+      claim its own batches — so the batch selector is left open.
+
+  Composing with other templates:
+    The approve role targets the UNDERLYING, so a sibling config in the same
+    safe-dir that also approves that token — `lagoon.tmpl` emits
+    approve(spender = vault) on the vault's `asset` — must use a DIFFERENT
+    role key. The emit-phase merger aggregates per role key and throws on a
+    duplicate (address, signature) pair within one key, so two templates
+    approving the same token under one key fail `generate`.
+
+  Deliberately NOT granted:
+    - executeWithdrawals(address[], uint32[]) — the batch-claim variant. Its
+      `accountAddresses` array cannot be pinned to the avatar: `apply` rejects
+      every `array_*` operator (see `buildScoping` in
+      action/apply/toSdkTargets.ts), and leaving the slot `pass` would let the
+      Safe settle arbitrary third parties' withdrawals. Claim one batch at a
+      time with `executeWithdrawal` instead.
+    - updateState(), collectFees(), repay(uint256) — permissionless on the
+      market, so any address can call them and the Safe gains nothing from
+      holding the grant. `repay` would additionally send the Safe's underlying
+      to the market as an unrecoverable gift.
+    - borrow, closeMarket, rescueTokens, setMaxTotalSupply,
+      setAnnualInterestAndReserveRatioBips — `onlyBorrower`.
+    - approve / transfer / transferFrom on the MARKET token. The market token
+      is the position; moving it off the Safe is precisely what this policy
+      exists to prevent. Note the underlying `approve` role below targets the
+      UNDERLYING, never the market token.
+-#}
+{%- from "_macros/common.tmpl" import approve -%}
+{#- Pass 1: build the unique list of underlying token alias keys -#}
+{%- set assets = [] -%}
+{%- for key in markets -%}
+  {%- set market = aliases.wildcat[key] -%}
+  {%- if market.asset not in assets -%}
+    {%- set _ = assets.push(market.asset) -%}
+  {%- endif -%}
+{%- endfor -%}
+roles:
+{%- for asset in assets %}
+  {#- Pass 2: gather every market address whose underlying == asset -#}
+  {%- set spenders = [] -%}
+  {%- for k in markets -%}
+    {%- set m = aliases.wildcat[k] -%}
+    {%- if m.asset == asset -%}
+      {%- set _ = spenders.push(m.address) -%}
+    {%- endif -%}
+  {%- endfor %}
+  {{ approve(aliases.tokens[asset], spenders) | indent(2) }}
+{%- endfor %}
+{%- for key in markets %}
+{%- set market = aliases.wildcat[key] %}
+
+  - address: "{{ market.address }}"
+    functions:
+      - signature: "function depositUpTo(uint256 amount)"
+        execution_options: "none"
+        params:
+          - name: amount
+            param_type: "static"
+            operator: "pass"
+
+      - signature: "function deposit(uint256 amount)"
+        execution_options: "none"
+        params:
+          - name: amount
+            param_type: "static"
+            operator: "pass"
+
+      - signature: "function queueWithdrawal(uint256 amount)"
+        execution_options: "none"
+        params:
+          - name: amount
+            param_type: "static"
+            operator: "pass"
+
+      - signature: "function queueFullWithdrawal()"
+        execution_options: "none"
+
+      - signature: "function executeWithdrawal(address accountAddress, uint32 expiry)"
+        execution_options: "none"
+        params:
+          - name: accountAddress
+            param_type: "static"
+            operator: "equal_to_avatar"
+          - name: expiry
+            param_type: "static"
+            operator: "pass"
+{%- endfor %}
