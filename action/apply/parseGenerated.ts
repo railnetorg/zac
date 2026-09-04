@@ -12,6 +12,11 @@ const Address = z.string().refine((s) => isAddress(s), {
 // through to planApplyRole — passthrough so we don't have to re-encode the
 // operator taxonomy validated by the Phase 6 schemas. `operator` is optional
 // because a `param_type: abi_encoded` node carries `children` instead.
+//
+// This is the one place a stray key is not rejected, and it is a deliberate
+// trade: closing it here would mean restating the operator vocabulary in a
+// second schema that could drift from the first. `toSdkTargets` is what reads
+// these fields, and it fails closed on anything it does not recognize.
 const Param = z
   .object({
     name: z.string(),
@@ -30,24 +35,38 @@ const FunctionRule = z
   })
   .passthrough();
 
-const Target = z.object({
-  address: Address,
-  functions: z.array(FunctionRule),
-});
+// The levels with a closed vocabulary are strict, unlike the two above. This
+// file is the only gate on the generated artifact: `plan` and `apply` read it
+// without re-running the validate phase, so a key nothing reads here is a key
+// nothing reads at all before the calls go on chain. A stale artifact left by
+// an older ZAC is the way one gets there — `zac generate` rejects a stray key
+// at render time, so it never writes one.
+const Target = z
+  .object({
+    address: Address,
+    functions: z.array(FunctionRule),
+  })
+  .strict();
 
-const RoleEntry = z.object({
-  members: z.array(Address),
-  targets: z.array(Target),
-});
+const RoleEntry = z
+  .object({
+    members: z.array(Address),
+    targets: z.array(Target),
+  })
+  .strict();
 
-export const GeneratedSchema = z.object({
-  deployment: z.object({
-    chain_id: z.number().int().positive(),
-    safe_address: Address,
-    roles_modifier_address: Address,
-  }),
-  roles: z.record(z.string(), RoleEntry),
-});
+export const GeneratedSchema = z
+  .object({
+    deployment: z
+      .object({
+        chain_id: z.number().int().positive(),
+        safe_address: Address,
+        roles_modifier_address: Address,
+      })
+      .strict(),
+    roles: z.record(z.string(), RoleEntry),
+  })
+  .strict();
 
 export type Generated = z.infer<typeof GeneratedSchema>;
 

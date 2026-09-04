@@ -1,6 +1,8 @@
 import { ZacError } from '../errors';
-import { OperatorSchema } from './operatorSchemas';
+import { parseOperatorObject } from './operatorSchemas';
+import { checkParamType } from './paramTypeSchema';
 import { checkParamSanity } from './sanityChecks';
+import { ABI_ENCODED_CHILD_KEYS, checkNoStrayKeys } from './strayKeys';
 
 export interface AbiInput {
   name?: string;
@@ -258,19 +260,30 @@ function validateAbiEncodedParam(
     });
   }
   for (const child of children) {
+    const childWhere = `abi_encoded child '${child.name ?? '<unnamed>'}' of '${param.name}'`;
+    // `param_type` decides this child's ABI type, so a misspelling here is
+    // read as a missing declaration rather than as the typo it is.
+    checkParamType(child.param_type, childWhere);
     const abiType = abiTypeOfChild(child);
     if (child.param_type === 'abi_encoded') {
+      // A nested encoded blob: no operator object, so its key set is the
+      // whole check, exactly as for an `abi_encoded` param at the top level.
+      checkNoStrayKeys(child, ABI_ENCODED_CHILD_KEYS, childWhere);
       validateAbiEncodedParam({ ...child, name: child.name ?? '' }, { type: 'bytes' });
       continue;
     }
     // Schema-shape check (required fields per operator) on the operator object,
-    // mirroring runValidate's top-level loop.
-    const { name: _n, param_type: _pt, children: _ch, display_decode: _dd, ...opObj } = child;
+    // mirroring runValidate's top-level loop — and, because the operator
+    // schemas are strict, the check that closes this child's vocabulary.
+    // `children` is deliberately NOT stripped: it is read only on the
+    // `abi_encoded` branch above, so on any other child it is a key that
+    // states a nested layout ZAC will not decode, and the strict schema is
+    // what says so.
+    const { name: _n, param_type: _pt, display_decode: _dd, ...opObj } = child;
     void _n;
     void _pt;
-    void _ch;
     void _dd;
-    OperatorSchema.parse(opObj);
+    parseOperatorObject(opObj, childWhere);
     checkParamSanity(
       child as { operator: string; value?: unknown; value_type?: string },
       child.name ?? '',
