@@ -37,6 +37,7 @@ contract LidoRoleMainnetTest is ZacForkTest {
     address constant ALICE = 0x1111111111111111111111111111111111111111;
     address constant ATTACKER = 0x2222222222222222222222222222222222222222;
     uint8 constant CALL = 0;
+    uint8 constant DELEGATECALL = 1;
 
     /// @dev Policy-pinned values (mirror `lido.zac.yaml` + the template).
     address constant NO_REFERRAL = address(0);
@@ -157,5 +158,22 @@ contract LidoRoleMainnetTest is ZacForkTest {
     ///        Modifier refuses it — asserted here rather than left to be re-derived.
     function test_TF9_BareEthTransferToStethRejected() public {
         expectPolicyRejectWithValue(modAddr, ALICE, STETH, ROUND, bytes(""), CALL, ROLE_KEY);
+    }
+
+    /// TF-10 — the operation is `Call` on every scoped function, so a delegatecall is refused
+    ///         even on a target the role is otherwise allowed to reach. Asserted on stETH
+    ///         because that is the target carrying `send`: a delegatecall there would run
+    ///         stETH's code in the Safe's own storage while the role is also permitted to
+    ///         attach ETH, which is the worst pairing available under this policy.
+    function test_TF10_DelegatecallToStethRejected() public {
+        expectPolicyReject(modAddr, ALICE, STETH, abi.encodeCall(ILido.submit, (NO_REFERRAL)), DELEGATECALL, ROLE_KEY);
+    }
+
+    /// TF-11 — the same on a plain `none` target, so the property is pinned as policy-wide
+    ///         rather than a peculiarity of the one function granted `send`. Neither of these
+    ///         should ever be reachable; they exist so an upstream change to how execution
+    ///         options are derived breaks a test rather than widening the policy quietly.
+    function test_TF11_DelegatecallToWstethRejected() public {
+        expectPolicyReject(modAddr, ALICE, WSTETH, abi.encodeCall(IWstETH.wrap, (ROUND)), DELEGATECALL, ROLE_KEY);
     }
 }
