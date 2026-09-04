@@ -113,4 +113,41 @@ roles: {}
       expect((e as ZacError).message).toContain('YAML parse failed');
     }
   });
+
+  // --- stray keys ---
+  //
+  // This file is the only gate on the generated artifact: `plan` and `apply`
+  // read it without re-running the validate phase, so a key nothing reads
+  // here is a key nothing reads at all before the calls go on chain.
+
+  it('T11-7: a stray key on `deployment` is rejected', () => {
+    const p = writeFixture(VALID_YAML.replace('  chain_id: 1', '  chain_id: 1\n  chain: 1'));
+    expect(() => parseGenerated(p)).toThrow(/Unrecognized key: "chain"/);
+  });
+
+  it('T11-8: a stray key on a role entry is rejected', () => {
+    const p = writeFixture(VALID_YAML.replace('    members:', '    member_list: []\n    members:'));
+    expect(() => parseGenerated(p)).toThrow(/Unrecognized key: "member_list"/);
+  });
+
+  it('T11-9: a stray key on a target is rejected', () => {
+    const p = writeFixture(
+      VALID_YAML.replace(
+        '        functions:',
+        '        addres: "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"\n        functions:',
+      ),
+    );
+    expect(() => parseGenerated(p)).toThrow(/Unrecognized key: "addres"/);
+  });
+
+  it('T11-10: a function rule still forwards keys this schema does not name', () => {
+    // Deliberate: closing the function and param levels here would mean
+    // restating the operator vocabulary in a second schema that could drift
+    // from the validate phase's. `toSdkTargets` is what reads these, and it
+    // fails closed on anything it does not recognize.
+    const p = writeFixture(
+      VALID_YAML.replace('            execution_options: none', '            operator: or'),
+    );
+    expect(() => parseGenerated(p)).not.toThrow();
+  });
 });

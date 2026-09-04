@@ -306,4 +306,40 @@ nested_signers:
     const result = parseAndValidateSafeYaml(defaultOpts(path, { childSafe: ALIASED }));
     expect(result.nestedSigners).toEqual([ALIASED.toLowerCase()]);
   });
+
+  // --- stray keys ---
+
+  it('a stray key is rejected, and the message names it and the allowed set', () => {
+    // `nested_signers` is the optional key, so a misspelling of it parses,
+    // normalizes to `[]`, and drops the nested-signer signing-hash preview
+    // without saying anything.
+    const path = writeYaml(`guard: ~
+fallback: ~
+modules: ~
+nested_signer:
+  - "${MOD_A}"
+`);
+    expect(() => parseAndValidateSafeYaml(defaultOpts(path))).toThrowError(ZacError);
+    try {
+      parseAndValidateSafeYaml(defaultOpts(path));
+    } catch (e) {
+      expect((e as ZacError).phase).toBe('validate');
+      expect((e as ZacError).message).toContain('nested_signer');
+      expect((e as ZacError).message).toContain(
+        'allowed: guard, fallback, modules, nested_signers',
+      );
+    }
+  });
+
+  it('a stray key beside every required key is still rejected', () => {
+    // The required three are present, so nothing else in the pipeline has a
+    // reason to complain — `guar:` would just sit in the file looking like it
+    // manages the guard slot.
+    const path = writeYaml(`guard: ~
+fallback: ~
+modules: ~
+guar: "${GUARD}"
+`);
+    expect(() => parseAndValidateSafeYaml(defaultOpts(path))).toThrowError(/unrecognized key/i);
+  });
 });

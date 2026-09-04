@@ -41,6 +41,33 @@ async function loadSdk(): Promise<DecodeSdk> {
   return { decodeKey: mod.decodeKey, rolesAbi: mod.rolesAbi };
 }
 
+/**
+ * Encode a Roles call THROUGH THE SDK'S OWN `rolesAbi`, so the argument
+ * positions exercised by the assertions below are the ABI's and not ours.
+ * If `decodeCall` read `ExecutionOptions` from the wrong index for any of
+ * these functions, the round-trip would not come back.
+ */
+async function encodeRolesCall(functionName: string, args: unknown[]): Promise<PlanCall> {
+  const mod = (await import('zodiac-roles-sdk')) as unknown as {
+    rolesAbi: readonly unknown[];
+    encodeKey: (key: string) => `0x${string}`;
+  };
+  const data = encodeFunctionData({
+    abi: mod.rolesAbi as unknown as Parameters<typeof encodeFunctionData>[0]['abi'],
+    functionName,
+    args,
+  } as never);
+  return { to: MODIFIER, value: '0', data };
+}
+
+/** `encodeKey` from the SDK — the bytes32 form of a role key. */
+async function roleKeyBytes(key: string): Promise<`0x${string}`> {
+  const mod = (await import('zodiac-roles-sdk')) as unknown as {
+    encodeKey: (key: string) => `0x${string}`;
+  };
+  return mod.encodeKey(key);
+}
+
 describe('decodeCall', () => {
   it('decodes assignRoles into member + roleKeys[] + assigned[]', async () => {
     const sdk = await loadSdk();
@@ -286,5 +313,144 @@ describe('decodeCall', () => {
     expect(decoded.roleKey.toLowerCase()).toBe(
       '0x455448454e415f494e535449545554494f4e414c000000000000000000000000',
     );
+  });
+
+  // --- ExecutionOptions ---
+  //
+  // The Roles V2 enum is `None = 0 | Send = 1 | DelegateCall = 2 | Both = 3`.
+  // The argument is the TRAILING one on every function that carries it, but
+  // at a different index on each, and three of the recognized functions do
+  // not carry it at all:
+  //   scopeFunction(roleKey, target, selector, conditions, options)
+  //   allowFunction(roleKey, target, selector, options)
+  //   allowTarget(roleKey, target, options)
+  //   scopeTarget / revokeTarget / revokeFunction — none
+
+  const LIDO_STETH = '0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84';
+  const SUBMIT = '0xa1903eab';
+
+  it('scopeFunction with Send decodes executionOptions = send (options is args[4], after the conditions array)', async () => {
+    const sdk = await loadSdk();
+    const call = await encodeRolesCall('scopeFunction', [
+      await roleKeyBytes('LIDO'),
+      LIDO_STETH,
+      SUBMIT,
+      [],
+      1,
+    ]);
+    const decoded = decodeCall(call, sdk);
+    expect(decoded.kind).toBe('scopeFunction');
+    if (decoded.kind !== 'scopeFunction') return;
+    expect(decoded.executionOptions).toEqual({ raw: 1, name: 'send' });
+  });
+
+  it('the same scopeFunction with None decodes executionOptions = none — nothing about it says value-bearing', async () => {
+    const sdk = await loadSdk();
+    const call = await encodeRolesCall('scopeFunction', [
+      await roleKeyBytes('LIDO'),
+      LIDO_STETH,
+      SUBMIT,
+      [],
+      0,
+    ]);
+    const decoded = decodeCall(call, sdk);
+    expect(decoded.kind).toBe('scopeFunction');
+    if (decoded.kind !== 'scopeFunction') return;
+    expect(decoded.executionOptions).toEqual({ raw: 0, name: 'none' });
+  });
+
+  it('scopeFunction with DelegateCall and Both decode to their own names', async () => {
+    const sdk = await loadSdk();
+    for (const [raw, name] of [
+      [2, 'delegatecall'],
+      [3, 'both'],
+    ] as const) {
+      const call = await encodeRolesCall('scopeFunction', [
+        await roleKeyBytes('HELPER'),
+        LIDO_STETH,
+        SUBMIT,
+        [],
+        raw,
+      ]);
+      const decoded = decodeCall(call, sdk);
+      expect(decoded.kind).toBe('scopeFunction');
+      if (decoded.kind !== 'scopeFunction') continue;
+      expect(decoded.executionOptions).toEqual({ raw, name });
+    }
+  });
+
+  it('allowFunction reads options from args[3] — one slot earlier than scopeFunction', async () => {
+    const sdk = await loadSdk();
+    const call = await encodeRolesCall('allowFunction', [
+      await roleKeyBytes('HELPER'),
+      LIDO_STETH,
+      SUBMIT,
+      2,
+    ]);
+    const decoded = decodeCall(call, sdk);
+    expect(decoded.kind).toBe('allowFunction');
+    if (decoded.kind !== 'allowFunction') return;
+    expect(decoded.executionOptions).toEqual({ raw: 2, name: 'delegatecall' });
+  });
+
+  it('allowTarget reads options from args[2] — a whole target, not one function', async () => {
+    const sdk = await loadSdk();
+    const call = await encodeRolesCall('allowTarget', [
+      await roleKeyBytes('HELPER'),
+      LIDO_STETH,
+      1,
+    ]);
+    const decoded = decodeCall(call, sdk);
+    expect(decoded.kind).toBe('allowTarget');
+    if (decoded.kind !== 'allowTarget') return;
+    expect(decoded.executionOptions).toEqual({ raw: 1, name: 'send' });
+  });
+
+  it('revokeFunction has NO executionOptions field — not a field set to undefined, absent', async () => {
+    const sdk = await loadSdk();
+    const decoded = decodeCall(FIX_REVOKE_FUNCTION_ETHENA_USDE_APPROVE, sdk);
+    expect(decoded.kind).toBe('revokeFunction');
+    // `in` rather than a value check: a removal takes no options argument,
+    // so decoding one out of a missing arg would be inventing it.
+    expect('executionOptions' in decoded).toBe(false);
+  });
+
+  it('revokeTarget and scopeTarget have NO executionOptions field either', async () => {
+    const sdk = await loadSdk();
+    const revoke = decodeCall(FIX_REVOKE_TARGET_ETHENA_USDE, sdk);
+    expect(revoke.kind).toBe('revokeTarget');
+    expect('executionOptions' in revoke).toBe(false);
+    const scope = decodeCall(
+      await encodeRolesCall('scopeTarget', [await roleKeyBytes('LIDO'), LIDO_STETH]),
+      sdk,
+    );
+    expect(scope.kind).toBe('scopeTarget');
+    expect('executionOptions' in scope).toBe(false);
+  });
+
+  it('a raw options byte outside 0..3 keeps `raw` and gets no name (a plan file is JSON on disk)', async () => {
+    const sdk = await loadSdk();
+    const call = await encodeRolesCall('allowTarget', [await roleKeyBytes('LIDO'), LIDO_STETH, 7]);
+    const decoded = decodeCall(call, sdk);
+    expect(decoded.kind).toBe('allowTarget');
+    if (decoded.kind !== 'allowTarget') return;
+    expect(decoded.executionOptions).toEqual({ raw: 7 });
+    expect(decoded.executionOptions.name).toBeUndefined();
+  });
+
+  it('the real-world ONDO_GM scopeFunction fixture decodes to none', async () => {
+    const sdk = await loadSdk();
+    const decoded = decodeCall(FIX_SCOPE_FUNCTION_ONDO_GM, sdk);
+    expect(decoded.kind).toBe('scopeFunction');
+    if (decoded.kind !== 'scopeFunction') return;
+    expect(decoded.executionOptions).toEqual({ raw: 0, name: 'none' });
+  });
+
+  it('the real-world all-pass allowFunction fixture decodes to none', async () => {
+    const sdk = await loadSdk();
+    const decoded = decodeCall(FIX_ALLOW_FUNCTION_ALL_PASS_TAG, sdk);
+    expect(decoded.kind).toBe('allowFunction');
+    if (decoded.kind !== 'allowFunction') return;
+    expect(decoded.executionOptions).toEqual({ raw: 0, name: 'none' });
   });
 });

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ZacError } from '../errors';
 
 const HexRegex = /^0x[0-9a-fA-F]+$/;
 
@@ -143,3 +144,44 @@ export const OperatorSchema: z.ZodType<Op> = z.lazy(() =>
 );
 
 export type OperatorObject = Op;
+
+/**
+ * Parse an operator object, reporting a failure as a validate-phase
+ * `ZacError` rather than letting a raw `ZodError` reach the CLI.
+ *
+ * Every schema above is `.strict()`, which makes this the check that rejects
+ * a stray key on an ordinary param: the caller strips the param-level keys
+ * off the param object and hands the remainder here, so anything left that
+ * the operator does not declare arrives as an unrecognized key. That is the
+ * error an author is most likely to see from this function, and a raw
+ * `ZodError` dump names neither the param nor the file — hence `where`, which
+ * should locate the param in the rendered template.
+ */
+export function parseOperatorObject(opObj: unknown, where: string): void {
+  const result = OperatorSchema.safeParse(opObj);
+  if (result.success) return;
+  const first = result.error.issues[0]!;
+  const path = first.path.length > 0 ? ` (${first.path.join('.')})` : '';
+
+  // Phrase a stray key the way `strayKeys.ts` phrases one, and name the
+  // operator it is not part of — the allowed set is per-operator here, so
+  // "not declared by 'equal_to'" is the actionable half.
+  if (first.code === 'unrecognized_keys') {
+    const operator = (opObj as { operator?: unknown }).operator;
+    const declaredBy =
+      typeof operator === 'string'
+        ? `not declared by operator '${operator}'`
+        : 'not part of any operator';
+    throw new ZacError({
+      phase: 'validate',
+      message:
+        `unknown ${first.keys.length > 1 ? 'keys' : 'key'} ` +
+        `${first.keys.map((k) => `'${k}'`).join(', ')} at ${where}${path} — ${declaredBy}`,
+    });
+  }
+
+  throw new ZacError({
+    phase: 'validate',
+    message: `${where}${path}: ${first.message}`,
+  });
+}
