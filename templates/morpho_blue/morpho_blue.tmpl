@@ -99,6 +99,13 @@
 -#}
 {%- from "_macros/common.tmpl" import approve -%}
 {%- from "_macros/morpho.tmpl" import market_params -%}
+{#- Assert `borrow` is a real boolean before anything reads it. YAML quoting picks
+    the type and nunjucks picks truthiness, and together they fail open: `false` is
+    the boolean, but `"false"` is a non-empty string, which is truthy, so a bare
+    `{% if borrow %}` would open the gate on the value an author wrote to close it.
+    `"0"` and `"no"` behave the same. Reassigning through the filter means every
+    later read — the emit and both gates — sees the validated value. -#}
+{%- set borrow = borrow | bool("borrow") -%}
 {%- set singleton = aliases.morpho_blue.singleton -%}
 {#- Pass 1: collapse duplicate market keys. Two identical `or` branches are
     harmless but pointless, and a repeated key would otherwise defeat the

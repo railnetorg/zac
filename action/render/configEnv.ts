@@ -1,5 +1,6 @@
 import nunjucks from 'nunjucks';
 import { abiEncode } from './abiEncodeFilter';
+import { bool } from './boolFilter';
 import { keccak } from './keccakFilter';
 
 export interface ConfigEnvOpts {
@@ -22,5 +23,6 @@ export function makeConfigEnv(opts: ConfigEnvOpts): nunjucks.Environment {
   env.addGlobal('aliases', opts.aliases);
   env.addFilter('keccak', keccak);
   env.addFilter('abi_encode', abiEncode);
+  env.addFilter('bool', bool);
   return env;
 }

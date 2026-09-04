@@ -2,8 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseDocument } from 'yaml';
-import nunjucks from 'nunjucks';
-import { keccak } from '../../render/keccakFilter';
+import { makeConfigEnv } from '../../render/configEnv';
 
 const __dirname = resolve(fileURLToPath(import.meta.url), '..');
 const REPO_ROOT = resolve(__dirname, '../../..');
@@ -24,35 +23,37 @@ type RenderedFunction = { signature: string; params: Param[] };
 type RenderedRole = { address: string; functions: RenderedFunction[] };
 
 describe('morpho_blue/morpho_blue.tmpl', () => {
-  const env = new nunjucks.Environment(new nunjucks.FileSystemLoader([TEMPLATES_DIR]), {
-    throwOnUndefined: true,
-  });
-  env.addFilter('keccak', keccak);
-  env.addGlobal('aliases', {
-    morpho_blue: {
-      singleton: SINGLETON,
-      markets: {
-        usdc_wsteth_86: {
-          loan_token: USDC,
-          collateral_token: WSTETH,
-          oracle: ORACLE_A,
-          irm: IRM,
-          lltv: LLTV,
-        },
-        usdc_cbbtc_86: {
-          loan_token: USDC,
-          collateral_token: CBBTC,
-          oracle: ORACLE_B,
-          irm: IRM,
-          lltv: LLTV,
-        },
-        // Loan token equals the other market's collateral, to exercise approve dedup.
-        wsteth_cbbtc_86: {
-          loan_token: WSTETH,
-          collateral_token: CBBTC,
-          oracle: ORACLE_B,
-          irm: IRM,
-          lltv: LLTV,
+  // The production environment builder, not a hand-rolled one: a filter registered
+  // for the CLI has to be present here too, or a template can pass its tests and fail
+  // when rendered for real (or the reverse).
+  const env = makeConfigEnv({
+    searchPaths: [TEMPLATES_DIR],
+    aliases: {
+      morpho_blue: {
+        singleton: SINGLETON,
+        markets: {
+          usdc_wsteth_86: {
+            loan_token: USDC,
+            collateral_token: WSTETH,
+            oracle: ORACLE_A,
+            irm: IRM,
+            lltv: LLTV,
+          },
+          usdc_cbbtc_86: {
+            loan_token: USDC,
+            collateral_token: CBBTC,
+            oracle: ORACLE_B,
+            irm: IRM,
+            lltv: LLTV,
+          },
+          // Loan token equals the other market's collateral, to exercise approve dedup.
+          wsteth_cbbtc_86: {
+            loan_token: WSTETH,
+            collateral_token: CBBTC,
+            oracle: ORACLE_B,
+            irm: IRM,
+            lltv: LLTV,
+          },
         },
       },
     },
@@ -179,6 +180,18 @@ describe('morpho_blue/morpho_blue.tmpl', () => {
     expect(() =>
       env.render('morpho_blue/morpho_blue.tmpl', { markets: ['usdc_wsteth_86'] }),
     ).toThrow();
+  });
+
+  it('T12-11: a quoted borrow value is rejected rather than widening the policy', () => {
+    // YAML quoting picks the type and nunjucks picks truthiness: `"false"` is a
+    // non-empty string, so a bare `{% if borrow %}` would scope the whole borrow
+    // surface on the value an author wrote to withhold it. Measured before the fix:
+    // `false` rendered 3 signatures, `"false"` rendered 8.
+    for (const v of ['false', 'true', '0', 'no']) {
+      expect(() =>
+        env.render('morpho_blue/morpho_blue.tmpl', { markets: ['usdc_wsteth_86'], borrow: v }),
+      ).toThrow(/must be a YAML boolean/);
+    }
   });
 
   it('T12-10: duplicate market keys collapse to one branch', () => {
