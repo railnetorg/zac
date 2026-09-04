@@ -318,7 +318,14 @@ contract WildcatRoleMainnetTest is ZacForkTest {
     /// 24h, not the 48h `delinquencyGracePeriod`.
     function test_lifecycle_depositQueueWarpClaim() public {
         HookedMarket memory hooked = IOpenTermHooks(HOOKS).getHookedMarket(MARKET);
-        uint256 depositAmount = hooked.minimumDeposit > AMOUNT ? hooked.minimumDeposit : AMOUNT;
+        // One WETH clear of the market's floor, NOT exactly on it. The hooks check the
+        // minimum against the amount round-tripped through the scale factor
+        // (`onDeposit` re-normalizes `scaledAmount.rayMul(state.scaleFactor)`), and that
+        // round trip loses a wei to rounding for most scale factors — so a deposit of
+        // exactly `minimumDeposit` sits on the boundary and reverts `DepositBelowMinimum`
+        // or not depending on where `scaleFactor` has accrued to. This suite forks at chain
+        // head, so that boundary is not a stable place to stand.
+        uint256 depositAmount = hooked.minimumDeposit + AMOUNT;
 
         // Preconditions that depend on live market state. The fork suite deliberately runs at
         // chain head, so a market that has closed or filled its cap makes the deposit path
@@ -326,7 +333,7 @@ contract WildcatRoleMainnetTest is ZacForkTest {
         vm.skip(IWildcatMarket(MARKET).isClosed(), "market is closed on this fork");
         vm.skip(
             IWildcatMarket(MARKET).maximumDeposit() < depositAmount,
-            "market has less remaining capacity than its own minimum deposit"
+            "market has less remaining capacity than the test's deposit"
         );
 
         // --- setup outside the policy ---
