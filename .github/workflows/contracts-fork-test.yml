@@ -31,4 +31,18 @@ jobs:
             echo "::error::MAINNET_RPC_URL secret is not set"
             exit 1
           fi
-          just forge-test-fork "$MAINNET_RPC_URL"
+          # `-j 1` serializes the test contracts. Run in parallel, the seven suites
+          # fetch fork state concurrently and the endpoint answers some requests
+          # with HTTP 429 and an empty body, which surfaces as a suite dying in
+          # `setUp()` with "plan call reverted" — a different suite each time. It
+          # reproduces on every run here and never locally, and the provider's own
+          # dashboard reports no failures, which points at a throttle upstream of
+          # its accounting rather than at the endpoint itself: CI runners share
+          # egress IPs, a dev machine does not.
+          #
+          # Deliberately set here and not in the justfile or the foundry profile.
+          # The harness was made safe under parallel test contracts (they share
+          # config and plan files on disk), and serializing everywhere would remove
+          # the condition that would catch a regression of that kind. Local runs
+          # stay parallel and keep exercising it.
+          just forge-test-fork "$MAINNET_RPC_URL" 1

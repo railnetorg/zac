@@ -71,6 +71,32 @@ async function loadSdk(): Promise<DecodeSdk> {
   return { decodeKey: mod.decodeKey, rolesAbi: mod.rolesAbi };
 }
 
+/**
+ * Encode a Roles call through the SDK's own `rolesAbi` — used by the
+ * ExecutionOptions cases below, which need calldata carrying a specific
+ * options byte rather than a captured plan fixture.
+ */
+async function encodeRolesCall(functionName: string, args: unknown[]): Promise<PlanCall> {
+  const { encodeFunctionData } = await import('viem');
+  const mod = (await import('zodiac-roles-sdk')) as unknown as {
+    rolesAbi: readonly unknown[];
+    encodeKey: (key: string) => `0x${string}`;
+  };
+  const data = encodeFunctionData({
+    abi: mod.rolesAbi as unknown as Parameters<typeof encodeFunctionData>[0]['abi'],
+    functionName,
+    args,
+  } as never);
+  return { to: MODIFIER, value: '0', data };
+}
+
+async function roleKeyBytes(key: string): Promise<`0x${string}`> {
+  const mod = (await import('zodiac-roles-sdk')) as unknown as {
+    encodeKey: (key: string) => `0x${string}`;
+  };
+  return mod.encodeKey(key);
+}
+
 function captureSink(): { sink: NodeJS.WritableStream; text: () => string } {
   const chunks: Buffer[] = [];
   const sink = new Writable({
@@ -703,5 +729,207 @@ describe('printPlanDiff', () => {
     expect(out).not.toContain('Nested signers');
     expect(out).not.toContain('Safe tx (preview');
     expect(out).not.toContain('verify Domain hash');
+  });
+
+  // --- ExecutionOptions ---
+  //
+  // The flag that decides whether a role may attach native ETH (`send`) or
+  // execute in the avatar storage context (`delegatecall`). It is not
+  // recoverable from anything else on the line, so a policy authorizing
+  // value-bearing calls used to render identically to one that did not.
+
+  const STETH = '0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84';
+  const SUBMIT = '0xa1903eab';
+  const APPROVE = '0x095ea7b3';
+  const EXEC_SELECTORS = { [SUBMIT]: 'submit', [APPROVE]: 'approve' };
+
+  /** `scopeFunction(LIDO, stETH, <selector>, [], <options>)`. */
+  async function scopeFnWithOptions(selector: string, options: number): Promise<PlanCall> {
+    return encodeRolesCall('scopeFunction', [
+      await roleKeyBytes('LIDO'),
+      STETH,
+      selector,
+      [],
+      options,
+    ]);
+  }
+
+  it('scopeFunction granting Send → the call line carries the flag and a banner sits under the plan header', async () => {
+    const sdk = await loadSdk();
+    const plan = makePlan([await scopeFnWithOptions(SUBMIT, 1)]);
+    const { sink, text } = captureSink();
+    printPlanDiff(plan, {
+      planPath: 'safe.plan.json',
+      safeAddress: plan.safeAddress,
+      out: sink,
+      sdk,
+      selectorMap: EXEC_SELECTORS,
+    });
+    const out = text();
+    expect(out).toMatch(
+      /scopeFunction\(.*, submit\)\s+⚠ execution_options: send — may attach native ETH/,
+    );
+    expect(out).toContain(
+      '⚠ 1 call grants non-default execution options: send ×1 (marked ⚠ below)',
+    );
+    // Banner is line 2 — before the tree, not buried inside it.
+    const lines = out.split('\n');
+    expect(lines[0]).toContain('plan: safe.plan.json');
+    expect(lines[1]).toContain('execution options');
+  });
+
+  it('the same scopeFunction with None → no flag on the line and no banner at all', async () => {
+    const sdk = await loadSdk();
+    const plan = makePlan([await scopeFnWithOptions(SUBMIT, 0)]);
+    const { sink, text } = captureSink();
+    printPlanDiff(plan, {
+      planPath: 'safe.plan.json',
+      safeAddress: plan.safeAddress,
+      out: sink,
+      sdk,
+      selectorMap: EXEC_SELECTORS,
+    });
+    const out = text();
+    expect(out).toMatch(/scopeFunction\(.*, submit\)/);
+    expect(out).not.toContain('execution_options');
+    expect(out).not.toContain('execution options');
+  });
+
+  it('send on one function and none on another of the SAME target → only the value-bearing line is marked', async () => {
+    const sdk = await loadSdk();
+    const plan = makePlan([
+      await scopeFnWithOptions(SUBMIT, 1),
+      await scopeFnWithOptions(APPROVE, 0),
+    ]);
+    const { sink, text } = captureSink();
+    printPlanDiff(plan, {
+      planPath: 'safe.plan.json',
+      safeAddress: plan.safeAddress,
+      out: sink,
+      sdk,
+      selectorMap: EXEC_SELECTORS,
+    });
+    const lines = text().split('\n');
+    const submitLine = lines.find((l) => l.includes('submit'))!;
+    const approveLine = lines.find((l) => l.includes('approve'))!;
+    expect(submitLine).toContain('execution_options: send');
+    expect(approveLine).not.toContain('execution_options');
+  });
+
+  it('delegatecall and both each render their own consequence; the banner breaks the counts down', async () => {
+    const sdk = await loadSdk();
+    const plan = makePlan([
+      await scopeFnWithOptions(SUBMIT, 2),
+      await scopeFnWithOptions(APPROVE, 3),
+    ]);
+    const { sink, text } = captureSink();
+    printPlanDiff(plan, {
+      planPath: 'safe.plan.json',
+      safeAddress: plan.safeAddress,
+      out: sink,
+      sdk,
+      selectorMap: EXEC_SELECTORS,
+    });
+    const out = text();
+    expect(out).toContain(
+      '⚠ execution_options: delegatecall — executes in the avatar storage context',
+    );
+    expect(out).toContain(
+      '⚠ execution_options: both — may attach native ETH; executes in the avatar storage context',
+    );
+    expect(out).toContain('2 calls grant non-default execution options');
+    expect(out).toContain('delegatecall ×1');
+    expect(out).toContain('both ×1');
+  });
+
+  it('allowFunction and allowTarget carry the flag too; scopeTarget has none to carry', async () => {
+    const sdk = await loadSdk();
+    const roleKey = await roleKeyBytes('HELPER');
+    const plan = makePlan([
+      await encodeRolesCall('allowTarget', [roleKey, STETH, 1]),
+      await encodeRolesCall('allowFunction', [roleKey, STETH, SUBMIT, 2]),
+      await encodeRolesCall('scopeTarget', [roleKey, STETH]),
+    ]);
+    const { sink, text } = captureSink();
+    printPlanDiff(plan, {
+      planPath: 'safe.plan.json',
+      safeAddress: plan.safeAddress,
+      out: sink,
+      sdk,
+      selectorMap: EXEC_SELECTORS,
+    });
+    const lines = text().split('\n');
+    expect(lines.find((l) => l.includes('allowTarget('))!).toContain('execution_options: send');
+    expect(lines.find((l) => l.includes('allowFunction('))!).toContain(
+      'execution_options: delegatecall',
+    );
+    expect(lines.find((l) => l.includes('scopeTarget('))!).not.toContain('execution_options');
+  });
+
+  it('revokeFunction has no execution options to show — a removal cannot grant one', async () => {
+    const sdk = await loadSdk();
+    const plan = makePlan([FIX_REVOKE_TARGET_ETHENA, FIX_REVOKE_FUNCTION_ETHENA_APPROVE]);
+    const { sink, text } = captureSink();
+    printPlanDiff(plan, {
+      planPath: 'safe.plan.json',
+      safeAddress: plan.safeAddress,
+      out: sink,
+      sdk,
+    });
+    const out = text();
+    expect(out).toMatch(/revokeFunction\(.*approve\)/);
+    expect(out).not.toContain('execution_options');
+    expect(out).not.toContain('execution options');
+  });
+
+  it('an options byte outside 0..3 renders as invalid with the raw value, never as a name', async () => {
+    const sdk = await loadSdk();
+    const plan = makePlan([await scopeFnWithOptions(SUBMIT, 7)]);
+    const { sink, text } = captureSink();
+    printPlanDiff(plan, {
+      planPath: 'safe.plan.json',
+      safeAddress: plan.safeAddress,
+      out: sink,
+      sdk,
+      selectorMap: EXEC_SELECTORS,
+    });
+    const out = text();
+    expect(out).toContain('⚠ execution_options: invalid (raw=7)');
+    expect(out).toContain('invalid (raw=7) ×1');
+    expect(out).not.toContain('execution_options: none');
+  });
+
+  it('the flag rides on the call header while the param subtree still expands underneath', async () => {
+    const sdk = await loadSdk();
+    const paramMap = {
+      [`LIDO:${STETH.toLowerCase()}:${SUBMIT}`]: {
+        signature: 'function submit(address referral)',
+        fnName: 'submit',
+        inputs: [{ type: 'address', name: 'referral' }],
+        params: [
+          {
+            name: 'referral',
+            operator: 'equal_to',
+            value: '0x0000000000000000000000000000000000000000',
+            value_type: 'address',
+          },
+        ],
+      },
+    };
+    const plan = makePlan([await scopeFnWithOptions(SUBMIT, 1)]);
+    const { sink, text } = captureSink();
+    printPlanDiff(plan, {
+      planPath: 'safe.plan.json',
+      safeAddress: plan.safeAddress,
+      out: sink,
+      sdk,
+      functionParamMap: paramMap,
+    });
+    const out = text();
+    const lines = out.split('\n');
+    const headIdx = lines.findIndex((l) => l.includes('scopeFunction('));
+    expect(lines[headIdx]).toContain('⚠ execution_options: send');
+    // The constraint the reviewer reads is still there, one level down.
+    expect(lines[headIdx + 1]).toMatch(/└─ address referral\s+= 0x0000…0000/);
   });
 });

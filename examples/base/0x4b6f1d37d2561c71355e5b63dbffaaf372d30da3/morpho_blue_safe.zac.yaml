@@ -9,5 +9,6 @@ configs:
     members:
       - "{{ aliases.signers.base_member }}"
     params:
+      borrow: false
       markets:
         - "usdc_cbeth_915"

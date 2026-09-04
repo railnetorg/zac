@@ -10,6 +10,11 @@ configs:
       - "{{ aliases.signers.alice }}"
       - "{{ aliases.signers.bob }}"
     params:
+      # Lending only: supply / withdraw of the loan token. Flip to `true` to also
+      # scope supplyCollateral / withdrawCollateral / borrow / repay and the
+      # collateral-token approves — that grants the authority to create debt, so it
+      # is a decision rather than a default.
+      borrow: false
       markets:
         - "usdc_cbbtc_86"
         - "usdc_wbtc_86"

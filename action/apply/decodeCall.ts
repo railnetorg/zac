@@ -67,12 +67,61 @@ export interface DecodeSdk {
 }
 
 /**
+ * Roles V2 `ExecutionOptions`, in the lowercase spelling the DSL's
+ * `execution_options` uses. The on-chain enum is
+ * `None = 0 | Send = 1 | DelegateCall = 2 | Both = 3` — the ordering is
+ * taken from `zodiac-roles-deployments`, which is where the SDK's own
+ * `ExecutionOptions` comes from.
+ */
+export type ExecutionOptionsName = 'none' | 'send' | 'delegatecall' | 'both';
+
+/** Enum name by raw uint8 value, indexed by the on-chain ordering. */
+const EXECUTION_OPTIONS_NAMES: readonly ExecutionOptionsName[] = [
+  'none',
+  'send',
+  'delegatecall',
+  'both',
+];
+
+/**
+ * A decoded `ExecutionOptions` argument. `raw` is carried alongside `name`
+ * so a value outside the enum's 0..3 range stays visible in the diff
+ * instead of being coerced into a name the calldata does not mean. The SDK
+ * cannot emit such a value and the modifier would revert on it, but a plan
+ * file is JSON on disk and `decodeCall` is what a signer reads it through.
+ */
+export interface DecodedExecutionOptions {
+  /** The uint8 as it appears in calldata. */
+  raw: number;
+  /** Enum name; absent when `raw` is outside 0..3. */
+  name?: ExecutionOptionsName;
+}
+
+/**
+ * Decode the `ExecutionOptions` uint8 argument. viem hands back a `number`
+ * for uint8; `Number()` also covers a bigint from a widened decoder. An
+ * out-of-range value yields `{ raw }` with no `name`.
+ */
+function decodeExecutionOptions(arg: unknown): DecodedExecutionOptions {
+  const raw = Number(arg);
+  const name = EXECUTION_OPTIONS_NAMES[raw];
+  return name === undefined ? { raw } : { raw, name };
+}
+
+/**
  * Tagged-union decode result, one variant per Roles modifier function we
  * recognize plus an `unknown` fallback. `roleKey` is the decoded
  * string-representation (e.g. `"ETHENA_INSTITUTIONAL"`); if the SDK's
  * `decodeKey` throws on the raw bytes32, we fall back to the raw hex.
  * `fnName` is the function name from the ERC20/Roles selector catalog
  * (e.g. `"approve"`), present only when we recognize the selector.
+ *
+ * The grant variants are split from the removal ones so `executionOptions`
+ * is a required field exactly where the Roles ABI carries the argument
+ * (`allowTarget`, `allowFunction`, `scopeFunction`) and is absent from the
+ * type everywhere else. `scopeTarget`, `revokeTarget`, `revokeFunction` and
+ * `unscopeFunction` take no options argument — a removal cannot grant one —
+ * so there is nothing to read and nothing for the printer to show.
  */
 export type DecodedCall =
   | {
@@ -82,12 +131,26 @@ export type DecodedCall =
       assigned: boolean[];
     }
   | {
-      kind: 'scopeTarget' | 'revokeTarget' | 'allowTarget';
+      kind: 'scopeTarget' | 'revokeTarget';
       roleKey: string;
       target: `0x${string}`;
     }
   | {
-      kind: 'scopeFunction' | 'allowFunction' | 'revokeFunction' | 'unscopeFunction';
+      kind: 'allowTarget';
+      roleKey: string;
+      target: `0x${string}`;
+      executionOptions: DecodedExecutionOptions;
+    }
+  | {
+      kind: 'scopeFunction' | 'allowFunction';
+      roleKey: string;
+      target: `0x${string}`;
+      fnSelector: `0x${string}`;
+      fnName?: string;
+      executionOptions: DecodedExecutionOptions;
+    }
+  | {
+      kind: 'revokeFunction' | 'unscopeFunction';
       roleKey: string;
       target: `0x${string}`;
       fnSelector: `0x${string}`;
@@ -230,16 +293,51 @@ export function decodeCall(
       return { kind: 'assignRoles', member, roleKeys, assigned };
     }
     case 'scopeTarget':
-    case 'revokeTarget':
-    case 'allowTarget': {
+    case 'revokeTarget': {
+      // scopeTarget(roleKey, target) / revokeTarget(roleKey, target) — no
+      // options argument on either.
       const roleKey = safeDecodeKey(sdk, args[0] as `0x${string}`);
       const target = args[1] as `0x${string}`;
       return { kind: name, roleKey, target };
     }
+    case 'allowTarget': {
+      // allowTarget(roleKey, target, options) — options at args[2].
+      const roleKey = safeDecodeKey(sdk, args[0] as `0x${string}`);
+      const target = args[1] as `0x${string}`;
+      return {
+        kind: 'allowTarget',
+        roleKey,
+        target,
+        executionOptions: decodeExecutionOptions(args[2]),
+      };
+    }
     case 'scopeFunction':
-    case 'allowFunction':
+    case 'allowFunction': {
+      // Options is the TRAILING argument of both, but NOT at the same index
+      // (positions read off the SDK's `rolesAbi`):
+      //   scopeFunction(roleKey, target, selector, conditions, options) → args[4]
+      //   allowFunction(roleKey, target, selector, options)             → args[3]
+      const roleKey = safeDecodeKey(sdk, args[0] as `0x${string}`);
+      const target = args[1] as `0x${string}`;
+      const fnSelector = args[2] as `0x${string}`;
+      const fnName = lookupFnName(fnSelector, extraSelectors);
+      const optionsArg = name === 'scopeFunction' ? args[4] : args[3];
+      const out: DecodedCall = {
+        kind: name,
+        roleKey,
+        target,
+        fnSelector,
+        executionOptions: decodeExecutionOptions(optionsArg),
+      };
+      if (fnName !== undefined) out.fnName = fnName;
+      return out;
+    }
     case 'revokeFunction':
     case 'unscopeFunction': {
+      // revokeFunction(roleKey, target, selector) takes no options argument
+      // (and `unscopeFunction` is not in the Roles ABI at all). Nothing is
+      // read past args[2], so the field stays absent rather than being set
+      // to `undefined` from a missing arg.
       const roleKey = safeDecodeKey(sdk, args[0] as `0x${string}`);
       const target = args[1] as `0x${string}`;
       const fnSelector = args[2] as `0x${string}`;
