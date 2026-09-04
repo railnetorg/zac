@@ -22,6 +22,7 @@
               - aliases.wildcat[<key>]              must exist
               - aliases.tokens[<resolved asset>]    must exist
               Either lookup missing ⇒ render-time error.
+              Duplicate keys are collapsed.
 
   Lender flow (request-then-claim, three steps):
     Deposit:
@@ -49,10 +50,16 @@
   past their declared arguments to the market's hooks contract as `hooksData`
   (the market passes a `baseCalldataSize` of 0x24 / 0x04 into its internal
   path). A market whose access-control hooks use a signature-based role
-  provider needs that trailing blob to authorise the lender. Roles V2 scopes
-  by ABI position and does not constrain calldata length, so the roles below
-  admit those longer calls — asserted by
-  `test_deposit_withTrailingHooksData_allowed`.
+  provider needs that trailing blob to authorise the lender.
+
+  The roles below admit those longer calls, and that is not a decision this
+  template made: Roles V2 scopes by ABI position and its `calldataMatches`
+  places no upper bound on calldata length, so the DSL has no way to bound
+  the blob. Admitting it happens to be what this market needs, and
+  `test_deposit_withTrailingHooksData_allowed` pins it so a future change to
+  the modifier's behaviour would surface — but read that test as a record of
+  what the modifier does, not as evidence the length could have been
+  constrained here.
 
   Output shape:
     - One approve role per UNIQUE underlying. Multiple markets sharing an
@@ -62,9 +69,11 @@
       within a role key.
     - One role per market. The only address parameter on the whole lender
       surface is `executeWithdrawal`'s `accountAddress`, pinned to the avatar
-      so a claim can only ever pay the Safe. Its `expiry` names a batch, not a
-      counterparty — with `accountAddress` pinned, the Safe can only ever
-      claim its own batches — so the batch selector is left open.
+      so a claim can only ever settle the Safe's OWN batch. That is narrower
+      than "can only pay the Safe" and it is the property the pin actually
+      buys: where the settled funds land is the market's decision, not the
+      policy's. Its `expiry` names a batch, not a counterparty, so the batch
+      selector is left open.
 
   Composing with other templates:
     The approve role targets the UNDERLYING, so a sibling config in the same
@@ -85,17 +94,31 @@
       market, so any address can call them and the Safe gains nothing from
       holding the grant. `repay` would additionally send the Safe's underlying
       to the market as an unrecoverable gift.
-    - borrow, closeMarket, rescueTokens, setMaxTotalSupply,
-      setAnnualInterestAndReserveRatioBips — `onlyBorrower`.
+    - borrow, closeMarket, setMaxTotalSupply,
+      setAnnualInterestAndReserveRatioBips — `onlyBorrower`. All four are
+      present in the deployed market's runtime and each has a negative test.
     - approve / transfer / transferFrom on the MARKET token. The market token
       is the position; moving it off the Safe is precisely what this policy
       exists to prevent. Note the underlying `approve` role below targets the
       UNDERLYING, never the market token.
 -#}
 {%- from "_macros/common.tmpl" import approve -%}
+{#- Pass 0: collapse duplicate market keys. A repeated key would emit the
+    market's role block twice, and the emit-phase merger rejects a duplicate
+    (address, signature) pair within a role key — so the duplicate fails
+    `generate` with a message naming a FUNCTION rather than the key the author
+    actually repeated. It would also push the same address into `spenders`
+    twice, producing a `oneOf` with a repeated value. Collapsing here makes a
+    repeat a no-op instead. -#}
+{%- set unique_markets = [] -%}
+{%- for key in markets -%}
+  {%- if key not in unique_markets -%}
+    {%- set _ = unique_markets.push(key) -%}
+  {%- endif -%}
+{%- endfor -%}
 {#- Pass 1: build the unique list of underlying token alias keys -#}
 {%- set assets = [] -%}
-{%- for key in markets -%}
+{%- for key in unique_markets -%}
   {%- set market = aliases.wildcat[key] -%}
   {%- if market.asset not in assets -%}
     {%- set _ = assets.push(market.asset) -%}
@@ -105,7 +128,7 @@ roles:
 {%- for asset in assets %}
   {#- Pass 2: gather every market address whose underlying == asset -#}
   {%- set spenders = [] -%}
-  {%- for k in markets -%}
+  {%- for k in unique_markets -%}
     {%- set m = aliases.wildcat[k] -%}
     {%- if m.asset == asset -%}
       {%- set _ = spenders.push(m.address) -%}
@@ -113,7 +136,7 @@ roles:
   {%- endfor %}
   {{ approve(aliases.tokens[asset], spenders) | indent(2) }}
 {%- endfor %}
-{%- for key in markets %}
+{%- for key in unique_markets %}
 {%- set market = aliases.wildcat[key] %}
 
   - address: "{{ market.address }}"

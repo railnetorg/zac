@@ -49,7 +49,6 @@ interface IWildcatMarket {
     function closeMarket() external;
     function updateState() external;
     function collectFees() external;
-    function rescueTokens(address token) external;
     // Views used by the lifecycle test.
     function currentState() external view returns (MarketState memory);
     function getAvailableWithdrawalAmount(address accountAddress, uint32 expiry) external view returns (uint256);
@@ -80,8 +79,9 @@ interface IOpenTermHooks {
 /// @dev    Coverage matrix — for every call the policy grants:
 ///           • one happy-path test (in-scope params clear the gate), and
 ///           • one out-of-scope test per scoped parameter.
-///         Plus a block of non-allowed-method / non-allowed-target rejections, and one
-///         end-to-end lifecycle test that really moves funds.
+///         Plus a block of non-allowed-method / non-allowed-target rejections, a block on
+///         the execution-mode axis (`execution_options: "none"` refuses both ETH and
+///         delegatecall), and one end-to-end lifecycle test that really moves funds.
 ///
 ///         Allowed calls (policy from `wintermute_weth`):
 ///           WETH.approve(spender ∈ {MARKET}, amount=pass)
@@ -116,6 +116,7 @@ contract WildcatRoleMainnetTest is ZacForkTest {
     address constant ALICE = 0x1111111111111111111111111111111111111111;
     address constant BOGUS = 0x000000000000000000000000000000000000dEaD;
     uint8 constant CALL = 0;
+    uint8 constant DELEGATECALL = 1;
     uint256 constant AMOUNT = 1e18; // 1 WETH; `amount` is `pass` everywhere.
     uint32 constant EXPIRY = 1_800_000_000; // Arbitrary batch id; `expiry` is `pass`.
 
@@ -297,6 +298,49 @@ contract WildcatRoleMainnetTest is ZacForkTest {
         expectPolicyReject(
             modAddr, ALICE, WETH, abi.encodeCall(IWildcatMarket.queueWithdrawal, (AMOUNT)), CALL, ROLE_KEY
         );
+    }
+
+    // ============================================================
+    // ExecutionOptions (allowed target AND selector, wrong execution mode)
+    // ============================================================
+    //
+    // Every grant in this template sets `execution_options: "none"`, and the two cases below
+    // are the only thing in the repo that would notice if one of them became `send`,
+    // `delegatecall` or `both`. Every other test in this suite passes `value=0` and
+    // `operation=Call`, so all of them stay green under that edit.
+    //
+    // The delegatecall axis is the one that matters here. The market is a 22kB contract
+    // carrying `borrow`, `closeMarket` and the interest-rate setters; a `delegatecall` grant
+    // would run any of it against the SAFE's storage, which is a total compromise reachable
+    // from a one-word template edit.
+
+    /// `execution_options: "none"` — the role may not execute in the avatar's storage
+    /// context, even for a selector the policy otherwise allows.
+    function test_executionOptions_delegatecallToMarket_rejected() public {
+        expectPolicyReject(
+            modAddr, ALICE, MARKET, abi.encodeCall(IWildcatMarket.deposit, (AMOUNT)), DELEGATECALL, ROLE_KEY
+        );
+    }
+
+    /// Same on the underlying: `approve` is granted, but only as a plain call.
+    function test_executionOptions_delegatecallToWeth_rejected() public {
+        expectPolicyReject(
+            modAddr, ALICE, WETH, abi.encodeCall(IERC20.approve, (MARKET, AMOUNT)), DELEGATECALL, ROLE_KEY
+        );
+    }
+
+    /// `execution_options: "none"` — the role may not attach the Safe's ETH. Rejected at the
+    /// gate rather than by the market, so the Safe needs no balance for this to hold; the
+    /// assertion is on the Modifier's own `ConditionViolation`, not on a downstream revert.
+    ///
+    /// Written out rather than routed through `expectPolicyReject`, which pins `value` to 0.
+    function test_executionOptions_valueAttached_rejected() public {
+        vm.prank(ALICE);
+        vm.expectPartialRevert(ROLES_CONDITION_VIOLATION);
+        IRoles(modAddr)
+            .execTransactionWithRole(
+                MARKET, 1 wei, abi.encodeCall(IWildcatMarket.deposit, (AMOUNT)), CALL, ROLE_KEY, false
+            );
     }
 
     // ============================================================
