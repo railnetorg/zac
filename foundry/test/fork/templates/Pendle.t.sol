@@ -129,7 +129,7 @@ contract PendleRoleMainnetTest is ZacForkTest {
     uint256 constant AMOUNT = 1_000e18;
 
     /// @dev `encodeKey('STRATEGY_MANAGER')` — right-padded ASCII bytes32.
-    bytes32 constant ROLE_KEY = bytes32("STRATEGY_MANAGER");
+    bytes32 constant ROLE_KEY = 0x53545241544547595f4d414e4147455200000000000000000000000000000000;
 
     address safeAddr;
     address modAddr;

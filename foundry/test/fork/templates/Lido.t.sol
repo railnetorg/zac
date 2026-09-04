@@ -46,7 +46,7 @@ contract LidoRoleMainnetTest is ZacForkTest {
     uint256 constant ROUND = 1 ether;
 
     /// @dev Matches `encodeKey('LIDO')` — right-padded ASCII bytes32.
-    bytes32 constant ROLE_KEY = bytes32("LIDO");
+    bytes32 constant ROLE_KEY = 0x4c49444f00000000000000000000000000000000000000000000000000000000;
 
     address safeAddr;
     address modAddr;
