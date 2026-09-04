@@ -1,0 +1,19 @@
+# Policy fixture for LidoRoleMainnetTest. A full deployment config; the
+# ZacForkTest harness substitutes the runtime placeholders before applying:
+#   __MODIFIER__  → the freshly deployed Roles Modifier
+#   __SAFE__      → the freshly deployed Safe
+#   __MEMBER__    → the role member the test authorises
+#   __TEMPLATES__ → the absolute templates/ directory
+roles_modifier_address: "__MODIFIER__"
+safe_address: "__SAFE__"
+chain_id: 1
+name: ZAC lido policy fork test
+description: In-process policy fork test for lido.tmpl.
+configs:
+  - template: "__TEMPLATES__/lido/lido.tmpl"
+    key: LIDO
+    members:
+      - "__MEMBER__"
+    params:
+      # 100 ether — low enough that the over-cap deny case is reachable.
+      max_approval: "100000000000000000000"

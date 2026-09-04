@@ -1,0 +1,120 @@
+{#-
+  Lido — mint wstETH from ETH.
+
+  Scopes the one-way conversion WETH → ETH → stETH → wstETH. This is the
+  collateral-acquisition leg of a leveraged wstETH/WETH position: `submit`
+  mints stETH at Lido's exchange rate with no market involved, so the leg
+  carries no slippage and needs no price checker.
+
+  Required template params:
+    (none)
+
+  Optional params:
+    max_approval — exclusive upper bound (in wei) for the stETH `approve`
+                   amount, emitted as `less_than max_approval`. Defaults to
+                   uint256.max, which only rules out the literal
+                   infinite-approval sentinel and does NOT bound exposure.
+                   Set it to a realistic operational ceiling.
+
+  Resolved from aliases (NOT params):
+    aliases.tokens.WETH   — WETH, unwrapped to ETH
+    aliases.tokens.stETH  — Lido's stETH; also the staking entrypoint
+    aliases.tokens.wstETH — the wstETH wrapper
+    aliases.ZERO          — auto-injected, used to pin the referral
+
+  The three addresses are fixed by the protocol, so none of them is a param:
+  there is nothing for a deployment to choose. The reverse direction
+  (`unwrap`, or Lido's withdrawal queue) is deliberately absent — exits go
+  through a swap venue, which is scoped by its own template.
+
+  Policy enforced:
+    WETH.withdraw(amount)          amount pass
+    stETH.submit(referral)         referral == aliases.ZERO,
+                                   execution_options: "send"
+    stETH.approve(wstETH, amount)  spender pinned to the wrapper,
+                                   amount < max_approval
+    wstETH.wrap(amount)            amount pass
+
+  Four things worth knowing about this policy:
+
+  `submit` is the only value-bearing call in the repo, hence the `send`
+  execution option. Send permits attaching ETH and says nothing about how
+  much. The amount is unbounded here because of a ZAC gap, not a platform
+  limitation: Roles V2 does have an ether allowance, surfaced by the pinned
+  SDK as `etherWithinAllowance` in the very options object where zac writes
+  `send`, but the DSL has no allowance operator and `executionFlags` maps
+  only `send` and `delegatecall`. So the value is bounded by the Safe's ETH
+  balance alone. That is the mechanism to reach for if a future policy needs
+  a real ceiling — do not conclude from this template that none exists.
+
+  The unbounded amount is acceptable here because the destination is pinned
+  to stETH, which mints to `msg.sender`: the Safe converts its own ETH into
+  its own stETH, so a compromised role member can change the Safe's asset
+  mix but cannot move value to an address it does not control. The
+  conversion is one-way under this policy — nothing here routes back to
+  WETH — so the exit belongs to a swap venue's own template. Do not reuse
+  `send` against a target that can forward funds elsewhere without
+  re-examining all of this.
+
+  The referral is pinned to the zero address rather than left to the caller.
+  Lido pays referral rewards to whoever is named, so an unpinned parameter
+  would let a role member redirect a benefit away from the vault on every
+  mint, without ever failing the gate.
+
+  `max_approval` bounds the STANDING allowance, not cumulative volume.
+  `approve` overwrites rather than increments and `increaseAllowance` is not
+  scoped, so the allowance itself can never exceed the ceiling. But `wrap`
+  takes any amount and nothing rate-limits the approve-then-wrap loop, so
+  total wrapped volume is unbounded whatever the ceiling is set to. Bounding
+  the loop would need `callWithinAllowance`, which the DSL cannot express
+  either. If `increaseAllowance` is ever added here, the ceiling becomes
+  bypassable by repeated increments.
+
+  One rendering note: `withdraw` and `wrap` have `pass` on their only
+  parameter, so the plan emits them as selector-only (wildcarded) grants.
+  Their `params:` blocks constrain nothing beyond the selector — which is
+  what `pass` means, but it reads like a constraint.
+-#}
+roles:
+  - address: "{{ aliases.tokens.WETH }}"
+    functions:
+      - signature: "function withdraw(uint256 amount)"
+        execution_options: "none"
+        params:
+          - name: amount
+            param_type: "static"
+            operator: "pass"
+
+  - address: "{{ aliases.tokens.stETH }}"
+    functions:
+      - signature: "function submit(address referral)"
+        execution_options: "send"
+        params:
+          - name: referral
+            param_type: "static"
+            operator: "equal_to"
+            value: "{{ aliases.ZERO }}"
+            value_type: "address"
+
+      - signature: "function approve(address spender, uint256 amount)"
+        execution_options: "none"
+        params:
+          - name: spender
+            param_type: "static"
+            operator: "equal_to"
+            value: "{{ aliases.tokens.wstETH }}"
+            value_type: "address"
+          - name: amount
+            param_type: "static"
+            operator: "less_than"
+            value: "{{ max_approval | default('115792089237316195423570985008687907853269984665640564039457584007913129639935') }}"
+            value_type: "uint256"
+
+  - address: "{{ aliases.tokens.wstETH }}"
+    functions:
+      - signature: "function wrap(uint256 amount)"
+        execution_options: "none"
+        params:
+          - name: amount
+            param_type: "static"
+            operator: "pass"

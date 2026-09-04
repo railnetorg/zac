@@ -1,0 +1,21 @@
+roles_modifier_address: "{{ aliases.modifiers.my_modifier }}"
+safe_address: "{{ aliases.safes.my_safe }}"
+chain_id: 1
+name: My Safe Lido Manager
+description: Mint wstETH from ETH — the collateral leg of a leveraged wstETH/WETH position
+configs:
+  - template: "../../../templates/lido/lido.tmpl"
+    key: LIDO
+    members:
+      - "{{ aliases.signers.alice }}"
+      - "{{ aliases.signers.bob }}"
+    params:
+      # Exclusive ceiling on the stETH approve to the wrapper, in wei. Omit to fall back
+      # to uint256.max, which only rules out the infinite-approval sentinel and does not
+      # bound exposure.
+      #
+      # This caps the STANDING allowance, not cumulative volume: `wrap` takes any amount
+      # and the approve-then-wrap loop is not rate-limited, so sizing this to one round
+      # bounds how much the wrapper may pull at any instant, not how much is wrapped over
+      # the life of the position.
+      max_approval: "100000000000000000000"
