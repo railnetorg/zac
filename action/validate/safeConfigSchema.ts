@@ -41,12 +41,21 @@ export interface ParsedSafeYaml {
   nestedSigners: string[];
 }
 
-export const SafeConfigSchema = z.object({
-  guard: z.union([z.null(), AddressString]),
-  fallback: z.union([z.null(), AddressString]),
-  modules: z.union([z.null(), z.array(AddressString)]),
-  nested_signers: z.union([z.null(), z.array(AddressString)]).optional(),
-});
+/**
+ * Strict: `nested_signers` is the optional key, so a misspelling of it is
+ * accepted, normalized to `[]`, and drops the nested-signer signing-hash
+ * preview without saying anything. The required three fail loudly on their
+ * own (step 4 below), but a `guar:` typo alongside them would otherwise sit in
+ * the file looking like it manages the guard slot.
+ */
+export const SafeConfigSchema = z
+  .object({
+    guard: z.union([z.null(), AddressString]),
+    fallback: z.union([z.null(), AddressString]),
+    modules: z.union([z.null(), z.array(AddressString)]),
+    nested_signers: z.union([z.null(), z.array(AddressString)]).optional(),
+  })
+  .strict();
 
 export interface ParseAndValidateSafeYamlOpts {
   /** Absolute path to the `safe.yaml` file. */
@@ -139,6 +148,17 @@ export function parseAndValidateSafeYaml(opts: ParseAndValidateSafeYamlOpts): Pa
   const parsed = SafeConfigSchema.safeParse(obj);
   if (!parsed.success) {
     const issue = parsed.error.issues[0]!;
+    // An unrecognized key is reported against the mapping that holds it, so
+    // it has no path to key the per-field branches below off. The zod message
+    // already names the key; the allowed set is what tells the author what
+    // they meant to write.
+    if (issue.code === 'unrecognized_keys') {
+      throw new ZacError({
+        phase: 'validate',
+        message: `safe.yaml: ${issue.message} — allowed: ${Object.keys(SafeConfigSchema.shape).join(', ')}`,
+        sourceLocation: { file: opts.path },
+      });
+    }
     const key = issue.path[0];
     const keyStr = typeof key === 'string' ? key : String(key);
     // Distinguish "invalid address" from other zod errors with a stable

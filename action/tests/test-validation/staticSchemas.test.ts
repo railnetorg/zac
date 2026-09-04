@@ -58,4 +58,41 @@ describe('staticSchemas', () => {
       }).success,
     ).toBe(false);
   });
+
+  it('T6-8: a stray key at the top level is rejected, and the message names it', () => {
+    const result = DeploymentConfigSchema.safeParse({ ...valid, valuation_manager: MOD_ADDR });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.message).toContain('valuation_manager');
+  });
+
+  it('T6-9: a stray key in a configs[] entry is rejected', () => {
+    expect(
+      DeploymentConfigSchema.safeParse({
+        ...valid,
+        configs: [{ template: 't.tmpl', key: 'K', members: [], params: {}, stray_key: 'x' }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it('T6-10: `member:` is rejected rather than defaulted to an empty member list', () => {
+    // The failure this closes: both `members` and `params` are defaulted, so a
+    // misspelling of either parses. `member:` yields a role with no members at
+    // all, and `--revoke-unmentioned` reads that as an instruction to revoke
+    // the members the role has on chain.
+    const withTypo = DeploymentConfigSchema.safeParse({
+      ...valid,
+      configs: [{ template: 't.tmpl', key: 'K', member: [SAFE_ADDR], params: {} }],
+    });
+    expect(withTypo.success).toBe(false);
+    expect(withTypo.error?.issues[0]?.message).toContain('member');
+  });
+
+  it('T6-11: `params` itself stays free-form — only the template knows its keys', () => {
+    expect(
+      DeploymentConfigSchema.safeParse({
+        ...valid,
+        configs: [{ template: 't.tmpl', key: 'K', params: { borrow: true, markets: ['a'] } }],
+      }).success,
+    ).toBe(true);
+  });
 });

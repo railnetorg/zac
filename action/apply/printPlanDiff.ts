@@ -1,4 +1,10 @@
-import { decodeCall, type DecodeSdk, type DecodedCall } from './decodeCall';
+import {
+  decodeCall,
+  type DecodeSdk,
+  type DecodedCall,
+  type DecodedExecutionOptions,
+  type ExecutionOptionsName,
+} from './decodeCall';
 import type { Plan } from './planSchema';
 import type { FunctionParams } from './buildFunctionParamMap';
 import { renderParamTree, type TreeNode } from './renderParamTree';
@@ -122,6 +128,58 @@ function fnIdent(selector: string, name: string | undefined): string {
 }
 
 /**
+ * Inline suffix for a call header that carries an `ExecutionOptions`.
+ *
+ * `none` renders as nothing. Every grant would otherwise carry the field and
+ * the one line that matters would be buried in the ones that don't — the
+ * signal a signer needs is the exception, not the census. Everything else is
+ * marked `⚠` and spelled out with what it authorizes, because this is the
+ * field that decides whether a role may move the Safe's ETH (`send`) or
+ * execute in the avatar's own storage context (`delegatecall`), and neither
+ * is visible anywhere else in the diff.
+ */
+function execOptionsSuffix(options: DecodedExecutionOptions): string {
+  const name: ExecutionOptionsName | undefined = options.name;
+  switch (name) {
+    case 'none':
+      return '';
+    case 'send':
+      return '  ⚠ execution_options: send — may attach native ETH';
+    case 'delegatecall':
+      return '  ⚠ execution_options: delegatecall — executes in the avatar storage context';
+    case 'both':
+      return '  ⚠ execution_options: both — may attach native ETH; executes in the avatar storage context';
+    case undefined:
+      // Outside the 0..3 enum range: the modifier would revert on this, so
+      // show the raw byte rather than name it.
+      return `  ⚠ execution_options: invalid (raw=${options.raw})`;
+  }
+}
+
+/**
+ * One-line banner counting the calls in a plan that grant a non-`none`
+ * `ExecutionOptions`, rendered directly under the plan header so a reviewer
+ * meets it before the tree rather than having to spot a `⚠` inside it.
+ * Returns `undefined` when every grant is `none` (the routine case).
+ */
+function execOptionsBanner(decoded: readonly DecodedCall[]): string | undefined {
+  const counts = new Map<string, number>();
+  for (const call of decoded) {
+    if (!('executionOptions' in call)) continue;
+    const { name, raw } = call.executionOptions;
+    if (name === 'none') continue;
+    const label = name ?? `invalid (raw=${raw})`;
+    counts.set(label, (counts.get(label) ?? 0) + 1);
+  }
+  if (counts.size === 0) return undefined;
+  let total = 0;
+  for (const n of counts.values()) total += n;
+  const breakdown = [...counts.entries()].map(([label, n]) => `${label} ×${n}`).join(', ');
+  const subject = total === 1 ? '1 call grants' : `${total} calls grant`;
+  return `  ⚠ ${subject} non-default execution options: ${breakdown} (marked ⚠ below)`;
+}
+
+/**
  * Render a list of tree nodes as `├─`/`└─`-connected lines. `prefix` is
  * the indentation accumulated by the caller — at the root it's the
  * leading spaces inside the section; recursion appends `│   ` for
@@ -156,8 +214,13 @@ function callNode(
   switch (call.kind) {
     case 'scopeTarget':
     case 'revokeTarget':
-    case 'allowTarget':
       return { label: `${call.kind}(${addrWithLabel(call.target, opts.addressLabelMap)})` };
+    case 'allowTarget':
+      return {
+        label:
+          `allowTarget(${addrWithLabel(call.target, opts.addressLabelMap)})` +
+          execOptionsSuffix(call.executionOptions),
+      };
     case 'scopeFunction': {
       const fn =
         opts.functionParamMap?.[
@@ -168,13 +231,30 @@ function callNode(
       // is consistent (and avoids showing the raw selector when we just
       // expanded the params underneath it).
       const fnNameDisplay = call.fnName ?? fn?.fnName;
-      const head = `${call.kind}(${addrWithLabel(call.target, opts.addressLabelMap)}, ${fnIdent(call.fnSelector, fnNameDisplay)})`;
+      const head =
+        `${call.kind}(${addrWithLabel(call.target, opts.addressLabelMap)}, ${fnIdent(call.fnSelector, fnNameDisplay)})` +
+        execOptionsSuffix(call.executionOptions);
       if (fn === undefined) return { label: head };
       const children = renderParamTree(fn, opts.addressLabelMap);
       if (children.length === 0) return { label: head };
       return { label: head, children };
     }
-    case 'allowFunction':
+    case 'allowFunction': {
+      // A leaf even when the source declares params: `allowFunction` is what
+      // the SDK emits when a function has NO calldata condition, so there is
+      // no constraint subtree to expand. The execution options it carries
+      // are then the only thing on the line that constrains anything.
+      const fn =
+        opts.functionParamMap?.[
+          `${call.roleKey}:${call.target.toLowerCase()}:${call.fnSelector.toLowerCase()}`
+        ];
+      const fnNameDisplay = call.fnName ?? fn?.fnName;
+      return {
+        label:
+          `allowFunction(${addrWithLabel(call.target, opts.addressLabelMap)}, ${fnIdent(call.fnSelector, fnNameDisplay)})` +
+          execOptionsSuffix(call.executionOptions),
+      };
+    }
     case 'revokeFunction':
     case 'unscopeFunction': {
       const fn =
@@ -398,6 +478,8 @@ export function printPlanDiff(plan: Plan, opts: PrintPlanDiffOpts): void {
 
   const lines: string[] = [];
   lines.push(`plan: ${opts.planPath} (${plan.calls.length} calls)`);
+  const banner = execOptionsBanner(decoded);
+  if (banner !== undefined) lines.push(banner);
   lines.push(...renderTreeLines(topNodes, ''));
 
   // Ledger-hash preview — rendered AFTER the diff. All values are
