@@ -216,7 +216,7 @@ contract DeployLagoonVault is Script {
 
     function run() external {
         Params memory p = _readParams();
-        _assertPatchedMastercopy();
+        _assertChainPrerequisites();
 
         vm.startBroadcast(p.deployer);
 
@@ -255,11 +255,27 @@ contract DeployLagoonVault is Script {
 
     // ─── Steps ────────────────────────────────────────────────────────────────
 
-    /// @dev The advisory is only useful as a check. A mastercopy with no code would silently
+    /// @dev Everything the script depends on existing, checked before it spends anything.
+    ///
+    ///      The advisory is only useful as a check: a mastercopy with no code would silently
     ///      produce a module proxy that delegatecalls into nothing.
-    function _assertPatchedMastercopy() internal view {
+    ///
+    ///      The Safe and Zodiac addresses are CREATE2-deterministic and identical on every
+    ///      chain those deployments exist on, so they travel. **Lagoon's factory and logic do
+    ///      not** — they are per-chain, and the ones above are Ethereum mainnet's. Running on
+    ///      another chain without updating them would revert somewhere inside
+    ///      `createVaultProxy` with nothing naming the cause, so they are checked here
+    ///      instead.
+    function _assertChainPrerequisites() internal view {
         require(ROLES_MASTERCOPY != ROLES_MASTERCOPY_PRE_PATCH, "Roles mastercopy is the pre-patch one");
         require(ROLES_MASTERCOPY.code.length > 0, "Roles mastercopy has no code on this chain");
+        require(SAFE_PROXY_FACTORY.code.length > 0, "Safe proxy factory has no code on this chain");
+        require(MODULE_PROXY_FACTORY.code.length > 0, "module proxy factory has no code on this chain");
+        require(LAGOON_FACTORY.code.length > 0, "Lagoon factory has no code on this chain; update it for this network");
+        require(
+            LAGOON_LOGIC_V0_6_0.code.length > 0,
+            "Lagoon v0.6.0 logic has no code on this chain; update it for this network"
+        );
     }
 
     /// @dev Deployed at the operator's own quorum. The Roles modifier is NOT enabled here:

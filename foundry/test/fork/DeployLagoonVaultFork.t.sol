@@ -140,6 +140,17 @@ contract DeployLagoonVaultForkTest is Test {
         assertFalse(ok, "the admin was able to grant superOperator after the lock");
     }
 
+    /// DF-6 — the chain prerequisites are checked, and the Lagoon pair is the reason. The Safe
+    ///        and Zodiac addresses are CREATE2-deterministic and travel between chains; the
+    ///        Lagoon factory and logic are per-chain and compiled in for mainnet. Without this
+    ///        the wrong chain reverts somewhere inside `createVaultProxy` with nothing naming
+    ///        the cause. Simulated by removing the factory's code.
+    function test_DF6_WrongChainFailsByName() public {
+        vm.etch(LAGOON_FACTORY, "");
+        vm.expectRevert(bytes("Lagoon factory has no code on this chain; update it for this network"));
+        script_.run();
+    }
+
     /// DF-3 — the default is the wrong one. If the registry ever makes v0.6.0 the default this
     ///        test starts failing, which is the moment to simplify the script; until then it
     ///        records why the logic is named explicitly.

@@ -8,6 +8,15 @@ It is a script rather than a checklist because the defaults are wrong. Deploying
 vault through the obvious path gives a v0.5.0 vault with an open synchronous deposit path and
 a mutable super-operator role — a vault Railnet's `ERC7540Vehicle` cannot legitimately wrap.
 
+## Which chain
+
+The Safe and Zodiac addresses the script uses are CREATE2-deterministic and identical on
+every chain those deployments exist on. **Lagoon's factory and logic are not** — they are
+per-chain, and the ones compiled in are Ethereum mainnet's. Deploying anywhere else means
+updating `LAGOON_FACTORY` and `LAGOON_LOGIC_V0_6_0` from Lagoon's networks-and-addresses
+page first. The script checks both have code before it uses them, so a wrong chain fails by
+name rather than on an opaque revert.
+
 ## Parameters
 
 `DEPLOYER` is the broadcasting key. It is the vault's admin for the duration of the run and
@@ -41,8 +50,9 @@ opening the vault would open a claim on the strategy's capital.
 
 ## Get these right the first time
 
-**`VAULT_UNDERLYING`** is baked in at `__ERC4626_init`. It also has to match the base asset of
-the MultiVehicle this vehicle will register on, or registration is rejected.
+**`VAULT_UNDERLYING`** is baked in at `__ERC4626_init`. If the vehicle will be registered on
+a MultiVehicle, it also has to match that MultiVehicle's base asset, or registration is
+rejected.
 
 **The two locks the script applies** cannot be undone. `activateAsyncOnly()` makes the
 synchronous entrypoints permanently unreachable, which is the property that lets an
@@ -65,11 +75,11 @@ included.
 
 ```
 forge script script/DeployLagoonVault.s.sol:DeployLagoonVault \
-  --rpc-url "$MAINNET_RPC_URL" --broadcast --verify
+  --rpc-url "$RPC_URL" --broadcast --verify
 ```
 
 Run it without `--broadcast` first. The simulation exercises the real factories against a
-fork of current mainnet, so a bad parameter fails before anything exists.
+fork of the live chain, so a bad parameter fails before anything exists.
 
 It prints the Safe, the modifier, the vault, `syncMode`, `isAsyncOnly`, the vault owner and
 the pending admin nomination — then the two follow-ups below, with their calldata.
@@ -94,7 +104,8 @@ say the salt moved. Record it and reuse it if anything has to be retried.
 
 **4. Write your policy configs**, one directory per Safe under
 `config/<network>/<safe-address>/`. That is the scaffold's territory, not this script's — see
-the repo README for the layout and the constraints. Railnet reviews them before you apply.
+the repo README for the layout and the constraints. Whether Railnet reviews them before you
+apply is per-engagement; check what was agreed.
 
 ## Verify
 
