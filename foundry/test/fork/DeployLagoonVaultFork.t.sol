@@ -37,6 +37,10 @@ contract DeployLagoonVaultForkTest is Test {
 
     DeployLagoonVault script_;
 
+    address deployedSafe;
+    address deployedModifier;
+    address deployedVault;
+
     function setUp() public {
         vm.createSelectFork(vm.envString("MAINNET_RPC_URL"));
         script_ = new DeployLagoonVault();
@@ -54,15 +58,22 @@ contract DeployLagoonVaultForkTest is Test {
         vm.setEnv("DEPLOY_SALT", vm.toString(bytes32(uint256(0xDEF1))));
         // Deliberately NOT the broadcaster, so the handover path is the one under test.
         vm.setEnv("VAULT_ADMIN", vm.toString(FINAL_ADMIN));
+
+        // The deployment is the fixture. Foundry calls `setUp` once and restores the
+        // post-setUp snapshot for each test, so this is one run rather than one per test —
+        // which matters against a live RPC: each `run()` deploys a Safe, a modifier and a
+        // Lagoon vault, and the fork suite has already hit provider rate limits on request
+        // volume alone (a 429 surfaces in one test as a database error and in its siblings
+        // as a bare `EvmError: Revert` at the first state access).
+        script_.run();
+        (deployedSafe, deployedModifier, deployedVault) = script_.deployed();
     }
 
     /// DF-1 — the whole run. Every invariant the script asserts internally is re-asserted
     ///        here against the deployed addresses, so a `require` quietly removed from the
     ///        script fails this test rather than shipping.
     function test_DF1_DeploysAnAsyncOnlyV060VaultCuratedByTheSafe() public {
-        script_.run();
-
-        (address safe, address modifier_, address vault) = script_.deployed();
+        (address safe, address modifier_, address vault) = (deployedSafe, deployedModifier, deployedVault);
         assertTrue(safe != address(0) && modifier_ != address(0) && vault != address(0), "nothing deployed");
 
         assertEq(ILagoonVault(vault).version(), "v0.6.0", "vault is not on the v0.6.0 logic");
@@ -95,8 +106,7 @@ contract DeployLagoonVaultForkTest is Test {
     ///        separating a patched modifier from a vulnerable one is which address the module
     ///        proxy points at. Read out of the proxy's own runtime rather than trusted.
     function test_DF2_ModifierPointsAtThePatchedMastercopy() public {
-        script_.run();
-        (, address modifier_,) = script_.deployed();
+        address modifier_ = deployedModifier;
 
         assertTrue(_delegatesTo(modifier_, ROLES_MASTERCOPY_PATCHED), "modifier is not on the patched mastercopy");
         assertFalse(_delegatesTo(modifier_, ROLES_MASTERCOPY_PRE_PATCH), "modifier is on the pre-patch mastercopy");
@@ -107,8 +117,7 @@ contract DeployLagoonVaultForkTest is Test {
     ///        survives the Safe's own owners, not just the Roles policy. Driven as the Safe,
     ///        which is the authority `setSyncMode` answers to.
     function test_DF4_SyncModeCannotBeReopenedAfterActivation() public {
-        script_.run();
-        (address safe,, address vault) = script_.deployed();
+        (address safe, address vault) = (deployedSafe, deployedVault);
 
         vm.prank(safe);
         (bool ok,) = vault.call(abi.encodeWithSignature("setSyncMode(uint8)", uint8(0)));
@@ -124,8 +133,7 @@ contract DeployLagoonVaultForkTest is Test {
     ///        current value rather than a property. Probed as the admin, the authority that
     ///        setter answers to.
     function test_DF5_SuperOperatorIsLockedAtZero() public {
-        script_.run();
-        (,, address vault) = script_.deployed();
+        address vault = deployedVault;
 
         vm.prank(DEPLOYER);
         (bool ok,) = vault.call(abi.encodeWithSignature("updateSuperOperator(address)", DEPLOYER));
