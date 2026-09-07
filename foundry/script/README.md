@@ -24,35 +24,82 @@ in our factory — and so is registering it on the MultiVehicle.
 
 ## Before you run
 
-Four decisions, and the first one blocks everything else.
+Most of what this script writes is a parameter you can change afterwards. Three things are
+not, and those are the ones to get right.
 
-**The NAV provider (`valuationManager`).** Settlement is a two-step flow: the valuation
-manager proposes a NAV with `updateNewTotalAssets(x)`, then the Safe confirms it with
-`settleDeposit(x)` / `settleRedeem(x)` at the same value. The vault reverts on a mismatch, or
-when no proposal is pending. Without a working valuation manager the vault cannot settle at
-all, so a vault deployed before this is decided is a vault nobody can use.
+**Irreversible.** The Lagoon logic version, which the script fixes at v0.6.0, and the two
+locks it then applies — `activateAsyncOnly()` and `lockSuperOperator()`. None can be undone
+on a deployed vault.
 
-**The admin, which must not be the strategy Safe.** The script refuses to run otherwise. The
-vault's `onlyOwner` authority can rotate every role, including `securityCouncil` — and that
-role can propose a NAV that skips the guardrail check. The check is bounded by `settleDeposit`
-being `onlySafe` and reverting on a value mismatch, so a falsified NAV needs the proposer
-**and** the Safe. That only holds while they are two different entities. `updateSecurityCouncil`
-has no lock, so this is a property of your key layout, not something the deployment can close.
+**Effectively immutable.** `VAULT_UNDERLYING`, which is baked in at `__ERC4626_init`. It also
+has to match the base asset of the MultiVehicle the vehicle will register on, or registration
+is rejected.
+
+**Set at proxy construction.** `VAULT_PROXY_ADMIN_OWNER` and `VAULT_UPGRADE_DELAY`. Changing
+them afterwards is outside what this runbook covers, so treat them as decisions rather than
+defaults. The delay floor is 86400 seconds; below it the ProxyAdmin rejects the deployment
+with `DelayTooLow(86400)`.
+
+**Everything else is `onlyOwner`-mutable** — `valuationManager`, `whitelistManager`,
+`feeReceiver`, `securityCouncil`, `safe`, the fee rates, `accessMode`. A placeholder is a
+legitimate answer for any of them, and the sections below say where one is actually a good
+idea.
+
+### The admin, which must not be the strategy Safe
+
+The script refuses to run otherwise. The vault's `onlyOwner` authority can rotate every role,
+including `securityCouncil` — and that role can propose a NAV that skips the guardrail check.
+What bounds it is `settleDeposit` being `onlySafe` and reverting on a value mismatch, so a
+falsified NAV needs the proposer **and** the Safe. That only holds while they are two
+different entities. `updateSecurityCouncil` has no lock, so this is a property of your key
+layout rather than something the deployment can close.
 
 A governance Safe distinct from the strategy Safe is the shape to aim for, and a timelock in
 front of it is the only lever left: it cannot remove the authority, only make its exercise
 visible and delayed.
 
-**Do not set the admin to `address(0)`.** `onlyOwner` also gates `updateValuationManager` — if
-your provider migrates or rotates keys and you cannot repoint it, the vault is permanently
-unsettleable — plus `updateSafe`, `updateWhitelistManager` (needed at every future vehicle
-spawn), `pause()` and `initiateClosing()`.
+Both `updateSafe` and `transferOwnership` exist, so this is a property to keep rather than a
+value to get right once. The script only guarantees the vault does not start out violating
+it.
 
-**The upgrade authority over the vault proxy**, and its timelock. The floor is 86400 seconds;
-below that the vault's ProxyAdmin rejects the deployment with `DelayTooLow(86400)`.
+### Do not set the admin to `address(0)`
 
-You also need a funded EOA to broadcast with. It is the vault's admin for the duration of the
-run and nothing after that.
+Mutable is not the same as disposable. `onlyOwner` is what makes every parameter in the last
+group changeable, so giving it up freezes all of them: `updateValuationManager` above all — if
+your provider migrates or rotates keys and you cannot repoint it, the vault becomes
+permanently unsettleable — plus `updateSafe`, `updateWhitelistManager` (needed at every future
+vehicle spawn), `pause()` and `initiateClosing()`.
+
+### The NAV provider, and why a placeholder is fine here
+
+Settlement is a two-step flow: the valuation manager proposes a NAV with
+`updateNewTotalAssets(x)`, then the Safe confirms it with `settleDeposit(x)` /
+`settleRedeem(x)` at the same value. The vault reverts on a mismatch, or when no proposal is
+pending.
+
+That makes a working valuation manager necessary to *operate* the vault, not to deploy it.
+`updateValuationManager` is `onlyOwner`, so the real provider can land whenever it is ready.
+
+Where it does become a gate is one step later: Railnet cannot `finalize()` the vehicle until
+the spawn's initial deposit has settled, and settling it needs someone who can propose a NAV.
+Two placeholders both work, for different reasons:
+
+- **An address you control.** You settle the first epoch yourself, then hand the role over.
+  This is often the better choice: the first `updateNewTotalAssets` skips the guardrail check
+  (`lastFeeTime == 0`), and the initial NAV is a known quantity — the initial deposit — so no
+  oracle is involved.
+- **`address(0)`.** Fails closed. The check is a plain equality against the stored address and
+  `msg.sender` is never zero, so nobody can propose a NAV until the admin sets a real one.
+  Use this if you would rather the vault be unable to settle than settle under a temporary
+  authority.
+
+`VAULT_VALUATION_MANAGER` is required by the script even so. An unset valuation manager should
+be a decision you typed, not a variable you forgot.
+
+### And a funded key
+
+The broadcasting EOA is the vault's admin for the duration of the run and nothing after
+that.
 
 ## Parameters
 
