@@ -74,6 +74,8 @@ interface ILagoonVault {
     function owner() external view returns (address);
     function pendingOwner() external view returns (address);
     function activateAsyncOnly() external;
+    function lockSuperOperator() external;
+    function updateSuperOperator(address superOperator) external;
     function transferOwnership(address newOwner) external;
     function acceptOwnership() external;
 }
@@ -132,10 +134,15 @@ struct InitStruct {
 ///         post-patch address, and `_assertPatchedMastercopy` refuses to run against the
 ///         superseded one rather than leaving that as a comment nobody re-reads.
 ///
-///         **The admin handover is deliberately incomplete.** The vault is `Ownable2Step`, so
-///         the run ends with the deployer still admin and `VAULT_ADMIN` nominated. Whoever
-///         that is has to call `acceptOwnership()`. That is the last manual step, and it is
-///         safe to leave outstanding: the irreversible part is already done.
+///         **Two steps are deliberately left outstanding**, because each needs an authority
+///         this script does not hold: `enableModule` on the Safe needs its quorum, and
+///         `acceptOwnership` on the vault needs the nominated admin. Both are printed at the
+///         end with their calldata. Neither is load-bearing for what the run makes
+///         irreversible, which is done and asserted by the time they are printed.
+///
+///         The Safe is created at the operator's own quorum (`SAFE_OWNERS`, `SAFE_THRESHOLD`),
+///         or reused by passing `SAFE_ADDRESS`. `DEPLOYER` is the broadcasting key, and is the
+///         vault's admin only for the duration of the run.
 ///
 ///         **What this script does NOT do.** Spawning the `ERC7540Vehicle` over the vault is
 ///         a separate step in `hangar`, and its whitelisting is interleaved with the spawn
@@ -178,14 +185,16 @@ contract DeployLagoonVault is Script {
     // ─── Inputs ───────────────────────────────────────────────────────────────
 
     struct Params {
-        address owner; // Safe owner (1/1) and the broadcasting key.
+        address deployer; // The broadcasting key. Vault admin for the duration of the run.
+        address[] safeOwners; // The Safe's owner set. Ignored when reusing a Safe.
+        uint256 safeThreshold; // The Safe's quorum. Ignored when reusing a Safe.
         address existingSafe; // Reuse a Safe instead of deploying one; 0 to deploy.
         address underlying; // The vault's asset, e.g. WETH.
         string name;
         string symbol;
         address valuationManager; // The external NAV provider.
         address whitelistManager; // Must be ours: the spawn needs to whitelist mid-flight.
-        address admin; // Vault owner (Lagoon-side admin).
+        address admin; // Who the vault's `onlyOwner` authority is nominated to, after the run.
         address feeReceiver;
         address securityCouncil;
         address proxyAdminOwner; // Upgrade authority over the vault proxy.
@@ -209,18 +218,20 @@ contract DeployLagoonVault is Script {
         Params memory p = _readParams();
         _assertPatchedMastercopy();
 
-        vm.startBroadcast(p.owner);
+        vm.startBroadcast(p.deployer);
 
-        address safe = p.existingSafe == address(0) ? _deploySafe(p.owner, p.salt) : p.existingSafe;
-        require(ISafe(safe).isOwner(p.owner), "owner is not an owner of the Safe");
-        require(ISafe(safe).getThreshold() == 1, "Safe threshold is not 1");
+        address safe = p.existingSafe == address(0) ? _deploySafe(p, p.salt) : p.existingSafe;
+        // The Safe carries the strategy's capital and settles the vault's epochs. The vault's
+        // `onlyOwner` authority must not be the same entity: `updateSecurityCouncil` has no
+        // lock, so an admin can always grant a role that proposes a NAV bypassing the
+        // guardrails — and `settleDeposit` is `onlySafe` and reverts on a value mismatch. Two
+        // separate authorities make that collusion-only instead of unilateral.
+        require(p.admin != safe, "vault admin must not be the strategy Safe");
 
         address modifier_ = _deployRolesModifier(safe, p.salt);
-        _safeExec(safe, p.owner, safe, abi.encodeCall(ISafe.enableModule, (modifier_)));
-        require(ISafe(safe).isModuleEnabled(modifier_), "modifier was not enabled on the Safe");
-
         address vault = _deployVault(p, safe);
-        _activateAsyncOnly(p, vault);
+        _closeTheOneWayDoors(p, vault);
+        _nominateAdmin(p, vault);
 
         vm.stopBroadcast();
 
@@ -232,7 +243,14 @@ contract DeployLagoonVault is Script {
         console.log("syncMode  ", ILagoonVault(vault).syncMode());
         console.log("asyncOnly ", ILagoonVault(vault).isAsyncOnly());
         console.log("vaultOwner", ILagoonVault(vault).owner());
-        console.log("vaultAdminPending", ILagoonVault(vault).pendingOwner());
+        console.log("adminPending", ILagoonVault(vault).pendingOwner());
+
+        // The two steps this script cannot take, in the order they have to happen.
+        console.log("--- follow-ups, both through their own authority ---");
+        console.log("1. enableModule on the Safe (needs its quorum). to:", safe);
+        console.logBytes(abi.encodeCall(ISafe.enableModule, (modifier_)));
+        console.log("2. acceptOwnership on the vault, as the nominated admin. to:", vault);
+        console.logBytes(abi.encodeCall(ILagoonVault.acceptOwnership, ()));
     }
 
     // ─── Steps ────────────────────────────────────────────────────────────────
@@ -244,11 +262,23 @@ contract DeployLagoonVault is Script {
         require(ROLES_MASTERCOPY.code.length > 0, "Roles mastercopy has no code on this chain");
     }
 
-    function _deploySafe(address owner, bytes32 salt) internal returns (address) {
-        address[] memory owners = new address[](1);
-        owners[0] = owner;
+    /// @dev Deployed at the operator's own quorum. The Roles modifier is NOT enabled here:
+    ///      enabling it is a Safe transaction, and above a threshold of one this script cannot
+    ///      produce the signatures. Safe's `setup` can enable a module through its `to`/`data`
+    ///      delegatecall, but not this module — a Roles V2 modifier is initialised with the
+    ///      Safe as owner/avatar/target, so its address depends on the Safe's and the Safe's
+    ///      would depend on its. The circle has to be cut somewhere, and `enableModule` is the
+    ///      cheapest place: it grants no authority by itself, and nothing else in this run
+    ///      needs it.
+    function _deploySafe(Params memory p, bytes32 salt) internal returns (address) {
+        require(p.safeOwners.length > 0, "SAFE_OWNERS is empty");
+        require(
+            p.safeThreshold > 0 && p.safeThreshold <= p.safeOwners.length,
+            "SAFE_THRESHOLD must be between 1 and the number of owners"
+        );
         bytes memory init = abi.encodeCall(
-            ISafe.setup, (owners, 1, address(0), bytes(""), address(0), address(0), 0, payable(address(0)))
+            ISafe.setup,
+            (p.safeOwners, p.safeThreshold, address(0), bytes(""), address(0), address(0), 0, payable(address(0)))
         );
         return ISafeProxyFactory(SAFE_PROXY_FACTORY).createProxyWithNonce(SAFE_SINGLETON, init, uint256(salt));
     }
@@ -262,7 +292,7 @@ contract DeployLagoonVault is Script {
 
     function _deployVault(Params memory p, address safe) internal returns (address) {
         require(
-            ILagoonRegistry(ILagoonFactory(LAGOON_FACTORY).registry()).canUseLogic(p.owner, LAGOON_LOGIC_V0_6_0),
+            ILagoonRegistry(ILagoonFactory(LAGOON_FACTORY).registry()).canUseLogic(p.deployer, LAGOON_LOGIC_V0_6_0),
             "the registry does not permit this deployer to use the v0.6.0 logic"
         );
 
@@ -297,10 +327,11 @@ contract DeployLagoonVault is Script {
             safe: safe,
             whitelistManager: p.whitelistManager,
             valuationManager: p.valuationManager,
-            // The broadcaster, not `p.admin`: `activateAsyncOnly` is `onlyOwner` and has to
-            // run before the vault can take a deposit. Ownership moves to `p.admin` right
-            // after, in `_activateAsyncOnly`.
-            admin: p.owner,
+            // The broadcaster, not `p.admin`. `activateAsyncOnly` and `lockSuperOperator` are
+            // both `onlyOwner` and both have to run before the vault can take a deposit;
+            // initialising with the final admin would leave them to a multisig transaction
+            // nobody is forced to send. `p.admin` is nominated straight after.
+            admin: p.deployer,
             feeReceiver: p.feeReceiver,
             managementRate: p.managementRate,
             performanceRate: p.performanceRate,
@@ -337,54 +368,53 @@ contract DeployLagoonVault is Script {
     ///      `requestDeposit` carries `onlyAsyncDeposit`, which reverts when it is valid — and
     ///      zeroing the lifespan is what keeps it permanently so. It is the sync entrypoints
     ///      that need a valid `totalAssets`, which is what this call takes away for good.
-    function _activateAsyncOnly(Params memory p, address vault) internal {
-        require(ILagoonVault(vault).owner() == p.owner, "vault admin is not the broadcaster; cannot activate");
+    function _closeTheOneWayDoors(Params memory p, address vault) internal {
+        require(ILagoonVault(vault).owner() == p.deployer, "vault admin is not the deployer; cannot activate");
 
         ILagoonVault(vault).activateAsyncOnly();
-
         require(ILagoonVault(vault).isAsyncOnly(), "async-only was not activated");
         require(ILagoonVault(vault).syncMode() == SYNC_MODE_NONE, "activation did not close the sync mode");
 
-        // Offer the vault's admin role to its intended holder, now that the irreversible part
-        // is done. Ordering matters: an admin that is not us cannot be made to run the step
-        // above, and nothing downstream forces them to.
-        //
-        // The vault is `Ownable2Step`, so this only nominates — `p.admin` has to call
-        // `acceptOwnership()` to take it. That is the safer shape and not a shortcoming: a
-        // mistyped `VAULT_ADMIN` leaves the role with us rather than stranding the vault. The
-        // run therefore ends with us still owner and a pending nomination outstanding.
-        if (p.admin != p.owner) {
-            ILagoonVault(vault).transferOwnership(p.admin);
-            require(ILagoonVault(vault).pendingOwner() == p.admin, "vault admin nomination failed");
-        }
+        ILagoonVault(vault).lockSuperOperator();
+        // The lock is only worth anything if the setter is actually shut. Probed rather than
+        // trusted, since `address(0)` would otherwise look identical before and after.
+        (bool stillMutable,) = vault.call(abi.encodeCall(ILagoonVault.updateSuperOperator, (address(0))));
+        require(!stillMutable, "superOperator is still mutable after lockSuperOperator");
     }
 
-    // ─── Safe execution ───────────────────────────────────────────────────────
-
-    /// @dev Execute `data` as the Safe on a 1/1 whose sole owner is the broadcaster, using
-    ///      Safe's pre-validated signature form (`v=1`, `r=owner`, `s=0`), which Safe accepts
-    ///      without an ECDSA signature when `msg.sender` is that owner. That keeps the script
-    ///      free of any key handling beyond the one forge is already broadcasting with.
-    function _safeExec(address safe, address owner, address to, bytes memory data) internal {
-        bytes memory sig = abi.encodePacked(bytes32(uint256(uint160(owner))), bytes32(0), uint8(1));
-        bool ok = ISafe(safe).execTransaction(to, 0, data, OP_CALL, 0, 0, 0, address(0), payable(address(0)), sig);
-        require(ok, "Safe transaction failed");
+    /// @dev Hand the vault's `onlyOwner` authority to its intended holder, now that the
+    ///      irreversible part is done and asserted.
+    ///
+    ///      The vault is `Ownable2Step`, so this only nominates: `p.admin` has to call
+    ///      `acceptOwnership()`. That is the safer shape rather than a loose end — a mistyped
+    ///      `VAULT_ADMIN` leaves the authority with the deployer instead of stranding the
+    ///      vault, and the vault is already in its final irreversible configuration either
+    ///      way. The run therefore ends with the deployer still owner and a nomination
+    ///      outstanding.
+    function _nominateAdmin(Params memory p, address vault) internal {
+        if (p.admin == p.deployer) return;
+        ILagoonVault(vault).transferOwnership(p.admin);
+        require(ILagoonVault(vault).pendingOwner() == p.admin, "vault admin nomination failed");
     }
 
     // ─── Inputs ───────────────────────────────────────────────────────────────
 
     function _readParams() internal view returns (Params memory p) {
-        p.owner = vm.envAddress("SAFE_OWNER");
+        p.deployer = vm.envAddress("DEPLOYER");
         p.existingSafe = vm.envOr("SAFE_ADDRESS", address(0));
+        if (p.existingSafe == address(0)) {
+            p.safeOwners = vm.envAddress("SAFE_OWNERS", ",");
+            p.safeThreshold = vm.envUint("SAFE_THRESHOLD");
+        }
         p.underlying = vm.envAddress("VAULT_UNDERLYING");
         p.name = vm.envString("VAULT_NAME");
         p.symbol = vm.envString("VAULT_SYMBOL");
         p.valuationManager = vm.envAddress("VAULT_VALUATION_MANAGER");
-        p.whitelistManager = vm.envOr("VAULT_WHITELIST_MANAGER", p.owner);
-        p.admin = vm.envOr("VAULT_ADMIN", p.owner);
-        p.feeReceiver = vm.envOr("VAULT_FEE_RECEIVER", p.owner);
+        p.whitelistManager = vm.envOr("VAULT_WHITELIST_MANAGER", p.deployer);
+        p.admin = vm.envOr("VAULT_ADMIN", p.deployer);
+        p.feeReceiver = vm.envOr("VAULT_FEE_RECEIVER", p.deployer);
         p.securityCouncil = vm.envOr("VAULT_SECURITY_COUNCIL", address(0));
-        p.proxyAdminOwner = vm.envOr("VAULT_PROXY_ADMIN_OWNER", p.owner);
+        p.proxyAdminOwner = vm.envOr("VAULT_PROXY_ADMIN_OWNER", p.deployer);
         p.upgradeDelay = vm.envOr("VAULT_UPGRADE_DELAY", MIN_UPGRADE_DELAY);
         require(p.upgradeDelay >= MIN_UPGRADE_DELAY, "VAULT_UPGRADE_DELAY is below the ProxyAdmin floor");
         p.managementRate = uint16(vm.envOr("VAULT_MANAGEMENT_RATE", uint256(0)));

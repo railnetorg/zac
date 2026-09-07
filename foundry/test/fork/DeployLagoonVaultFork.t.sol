@@ -21,7 +21,9 @@ import {DeployLagoonVault, ILagoonVault, ISafe, ILagoonFactory, ILagoonRegistry}
 ///         `MAINNET_RPC_URL` must be set.
 contract DeployLagoonVaultForkTest is Test {
     address constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
-    address constant OWNER = 0x1111111111111111111111111111111111111111;
+    address constant DEPLOYER = 0x1111111111111111111111111111111111111111;
+    address constant OWNER_B = 0x4444444444444444444444444444444444444444;
+    address constant OWNER_C = 0x5555555555555555555555555555555555555555;
     address constant VALUATION_MANAGER = 0x2222222222222222222222222222222222222222;
 
     address constant LAGOON_FACTORY = 0x8D6f5479B14348186faE9BC7E636e947c260f9B1;
@@ -39,7 +41,12 @@ contract DeployLagoonVaultForkTest is Test {
         vm.createSelectFork(vm.envString("MAINNET_RPC_URL"));
         script_ = new DeployLagoonVault();
 
-        vm.setEnv("SAFE_OWNER", vm.toString(OWNER));
+        vm.setEnv("DEPLOYER", vm.toString(DEPLOYER));
+        // A real quorum, not 1/1 — the shape they actually deploy.
+        vm.setEnv(
+            "SAFE_OWNERS", string.concat(vm.toString(DEPLOYER), ",", vm.toString(OWNER_B), ",", vm.toString(OWNER_C))
+        );
+        vm.setEnv("SAFE_THRESHOLD", "2");
         vm.setEnv("VAULT_UNDERLYING", vm.toString(WETH));
         vm.setEnv("VAULT_NAME", "Railnet Test WETH");
         vm.setEnv("VAULT_SYMBOL", "rnTWETH");
@@ -64,7 +71,7 @@ contract DeployLagoonVaultForkTest is Test {
         // `Ownable2Step`: the run nominates, the admin accepts. Ending with the deployer
         // still owner is the intended state, not an incomplete one — the irreversible part is
         // already done, and a mistyped admin cannot strand the vault.
-        assertEq(ILagoonVault(vault).owner(), OWNER, "deployer should still be admin until accepted");
+        assertEq(ILagoonVault(vault).owner(), DEPLOYER, "deployer should still be admin until accepted");
         assertEq(ILagoonVault(vault).pendingOwner(), FINAL_ADMIN, "intended admin was not nominated");
 
         vm.prank(FINAL_ADMIN);
@@ -74,9 +81,12 @@ contract DeployLagoonVaultForkTest is Test {
         assertEq(ILagoonVault(vault).safe(), safe, "vault is not curated by the deployed Safe");
         assertTrue(ILagoonFactory(LAGOON_FACTORY).isInstance(vault), "vault is not a factory instance");
 
-        assertTrue(ISafe(safe).isOwner(OWNER), "owner is not an owner");
-        assertEq(ISafe(safe).getThreshold(), 1, "threshold is not 1");
-        assertTrue(ISafe(safe).isModuleEnabled(modifier_), "modifier is not enabled on the Safe");
+        assertTrue(ISafe(safe).isOwner(DEPLOYER), "deployer is not an owner");
+        assertTrue(ISafe(safe).isOwner(OWNER_B) && ISafe(safe).isOwner(OWNER_C), "co-owners missing");
+        assertEq(ISafe(safe).getThreshold(), 2, "Safe was not deployed at the configured quorum");
+        // The modifier is deployed but NOT enabled: that is a Safe transaction and the script
+        // cannot produce a 2-of-3 signature. It is one of the two printed follow-ups.
+        assertFalse(ISafe(safe).isModuleEnabled(modifier_), "script should not have enabled the module");
     }
 
     /// DF-2 — the modifier runs the post-advisory mastercopy. The June 2026 Zodiac advisory
@@ -108,6 +118,20 @@ contract DeployLagoonVaultForkTest is Test {
         assertTrue(ILagoonVault(vault).isAsyncOnly(), "async-only flag was cleared");
     }
 
+    /// DF-5 — `superOperator` is not merely zero, it is locked at zero. Zero disables the
+    ///        role (`isSuperOperator` compares it against `msg.sender`, never zero), but
+    ///        `updateSuperOperator` is open to the admin, so without the lock the zero is a
+    ///        current value rather than a property. Probed as the admin, the authority that
+    ///        setter answers to.
+    function test_DF5_SuperOperatorIsLockedAtZero() public {
+        script_.run();
+        (,, address vault) = script_.deployed();
+
+        vm.prank(DEPLOYER);
+        (bool ok,) = vault.call(abi.encodeWithSignature("updateSuperOperator(address)", DEPLOYER));
+        assertFalse(ok, "the admin was able to grant superOperator after the lock");
+    }
+
     /// DF-3 — the default is the wrong one. If the registry ever makes v0.6.0 the default this
     ///        test starts failing, which is the moment to simplify the script; until then it
     ///        records why the logic is named explicitly.
@@ -115,7 +139,7 @@ contract DeployLagoonVaultForkTest is Test {
         address registry = ILagoonFactory(LAGOON_FACTORY).registry();
         assertEq(ILagoonRegistry(registry).defaultLogic(), LAGOON_LOGIC_V0_5_0, "registry default changed");
         assertTrue(
-            ILagoonRegistry(registry).canUseLogic(OWNER, LAGOON_LOGIC_V0_6_0), "v0.6.0 is no longer freely usable"
+            ILagoonRegistry(registry).canUseLogic(DEPLOYER, LAGOON_LOGIC_V0_6_0), "v0.6.0 is no longer freely usable"
         );
     }
 
