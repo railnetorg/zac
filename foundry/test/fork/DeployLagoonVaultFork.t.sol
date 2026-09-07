@@ -13,9 +13,10 @@ import {DeployLagoonVault, ILagoonVault, ISafe, ILagoonFactory, ILagoonRegistry}
 ///
 ///         What it pins is the set of defaults that are wrong. A vault deployed without
 ///         naming the logic comes out v0.5.0; a v0.6.0 vault initializes to `SyncMode.Both`
-///         with both sync entrypoints open; the legacy struct overload on the factory cannot
-///         encode a v0.6.0 initializer at all. Each is a live default, and each would produce
-///         a vault the `ERC7540Vehicle` cannot legitimately wrap.
+///         with both sync entrypoints open; closing that mode without making it permanent
+///         leaves it one `onlySafe` call from being reopened; the legacy struct overload on the
+///         factory cannot encode a v0.6.0 initializer at all. Each is a live default, and each
+///         would produce a vault the `ERC7540Vehicle` cannot legitimately wrap.
 ///
 ///         `MAINNET_RPC_URL` must be set.
 contract DeployLagoonVaultForkTest is Test {
@@ -30,6 +31,7 @@ contract DeployLagoonVaultForkTest is Test {
     address constant ROLES_MASTERCOPY_PRE_PATCH = 0x9646fDAD06d3e24444381f44362a3B0eB343D337;
 
     uint8 constant SYNC_MODE_NONE = 3;
+    address constant FINAL_ADMIN = 0x3333333333333333333333333333333333333333;
 
     DeployLagoonVault script_;
 
@@ -43,6 +45,8 @@ contract DeployLagoonVaultForkTest is Test {
         vm.setEnv("VAULT_SYMBOL", "rnTWETH");
         vm.setEnv("VAULT_VALUATION_MANAGER", vm.toString(VALUATION_MANAGER));
         vm.setEnv("DEPLOY_SALT", vm.toString(bytes32(uint256(0xDEF1))));
+        // Deliberately NOT the broadcaster, so the handover path is the one under test.
+        vm.setEnv("VAULT_ADMIN", vm.toString(FINAL_ADMIN));
     }
 
     /// DF-1 — the whole run. Every invariant the script asserts internally is re-asserted
@@ -55,7 +59,17 @@ contract DeployLagoonVaultForkTest is Test {
         assertTrue(safe != address(0) && modifier_ != address(0) && vault != address(0), "nothing deployed");
 
         assertEq(ILagoonVault(vault).version(), "v0.6.0", "vault is not on the v0.6.0 logic");
-        assertEq(ILagoonVault(vault).syncMode(), SYNC_MODE_NONE, "vault is not pinned async-only");
+        assertEq(ILagoonVault(vault).syncMode(), SYNC_MODE_NONE, "sync mode is not None");
+        assertTrue(ILagoonVault(vault).isAsyncOnly(), "async-only was not made permanent");
+        // `Ownable2Step`: the run nominates, the admin accepts. Ending with the deployer
+        // still owner is the intended state, not an incomplete one — the irreversible part is
+        // already done, and a mistyped admin cannot strand the vault.
+        assertEq(ILagoonVault(vault).owner(), OWNER, "deployer should still be admin until accepted");
+        assertEq(ILagoonVault(vault).pendingOwner(), FINAL_ADMIN, "intended admin was not nominated");
+
+        vm.prank(FINAL_ADMIN);
+        ILagoonVault(vault).acceptOwnership();
+        assertEq(ILagoonVault(vault).owner(), FINAL_ADMIN, "admin could not accept the nomination");
         assertEq(ILagoonVault(vault).asset(), WETH, "vault underlying is wrong");
         assertEq(ILagoonVault(vault).safe(), safe, "vault is not curated by the deployed Safe");
         assertTrue(ILagoonFactory(LAGOON_FACTORY).isInstance(vault), "vault is not a factory instance");
@@ -76,6 +90,22 @@ contract DeployLagoonVaultForkTest is Test {
 
         assertTrue(_delegatesTo(modifier_, ROLES_MASTERCOPY_PATCHED), "modifier is not on the patched mastercopy");
         assertFalse(_delegatesTo(modifier_, ROLES_MASTERCOPY_PRE_PATCH), "modifier is on the pre-patch mastercopy");
+    }
+
+    /// DF-4 — the activation is irreversible, which is the only reason it is worth doing. Once
+    ///        `isAsyncOnly` is set, `setSyncMode` cannot reopen the sync path — so the property
+    ///        survives the Safe's own owners, not just the Roles policy. Driven as the Safe,
+    ///        which is the authority `setSyncMode` answers to.
+    function test_DF4_SyncModeCannotBeReopenedAfterActivation() public {
+        script_.run();
+        (address safe,, address vault) = script_.deployed();
+
+        vm.prank(safe);
+        (bool ok,) = vault.call(abi.encodeWithSignature("setSyncMode(uint8)", uint8(0)));
+
+        assertFalse(ok, "the Safe was able to call setSyncMode on an async-only vault");
+        assertEq(ILagoonVault(vault).syncMode(), SYNC_MODE_NONE, "sync mode was reopened");
+        assertTrue(ILagoonVault(vault).isAsyncOnly(), "async-only flag was cleared");
     }
 
     /// DF-3 — the default is the wrong one. If the registry ever makes v0.6.0 the default this

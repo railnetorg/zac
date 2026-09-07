@@ -68,9 +68,14 @@ interface ILagoonRegistry {
 interface ILagoonVault {
     function version() external view returns (string memory);
     function syncMode() external view returns (uint8);
+    function isAsyncOnly() external view returns (bool);
     function asset() external view returns (address);
     function safe() external view returns (address);
-    function setSyncMode(uint8 mode) external;
+    function owner() external view returns (address);
+    function pendingOwner() external view returns (address);
+    function activateAsyncOnly() external;
+    function transferOwnership(address newOwner) external;
+    function acceptOwnership() external;
 }
 
 /// @dev Lagoon v0.6.0 `InitStruct`, field for field. Encoded here rather than taken from the
@@ -109,9 +114,15 @@ struct InitStruct {
 ///         which has no `setSyncMode` at all and so cannot be pinned async-only — the
 ///         configuration `hangar`'s `ERC7540Vehicle` requires (see its `VEHICLE.md`).
 ///
-///         **The sync mode.** A fresh v0.6.0 vault initializes to `SyncMode.Both`: both sync
-///         entrypoints open. `setSyncMode(None)` is `onlySafe` and is not optional — it is
-///         what makes the vault a valid substrate. It runs here, before the vault has taken
+///         **The sync mode, permanently.** A fresh v0.6.0 vault initializes to
+///         `SyncMode.Both`: both sync entrypoints open. `setSyncMode(None)` closes them but is
+///         `onlySafe` and **reversible** — the Safe's owners can call it again at any time,
+///         directly, without passing through the Roles modifier. So withholding `setSyncMode`
+///         from role members in the policy does not make the property durable.
+///         `activateAsyncOnly()` does: it is `onlyOwner`, irreversible, and strictly stronger.
+///         `ERC7540Lib.setAsyncOnly` sets `isAsyncOnly`, zeroes `totalAssetsExpiration` and
+///         `totalAssetsLifespan`, and sets `syncMode` to `None` itself — so it replaces the
+///         mode-setting rather than complementing it. It runs here, before the vault has taken
 ///         a single deposit.
 ///
 ///         **The Roles mastercopy.** The June 2026 Zodiac advisory (Roles Modifier v2 and
@@ -120,6 +131,11 @@ struct InitStruct {
 ///         succeeded. Gnosis Guild redeployed the mastercopy. `ROLES_MASTERCOPY` below is the
 ///         post-patch address, and `_assertPatchedMastercopy` refuses to run against the
 ///         superseded one rather than leaving that as a comment nobody re-reads.
+///
+///         **The admin handover is deliberately incomplete.** The vault is `Ownable2Step`, so
+///         the run ends with the deployer still admin and `VAULT_ADMIN` nominated. Whoever
+///         that is has to call `acceptOwnership()`. That is the last manual step, and it is
+///         safe to leave outstanding: the irreversible part is already done.
 ///
 ///         **What this script does NOT do.** Spawning the `ERC7540Vehicle` over the vault is
 ///         a separate step in `hangar`, and its whitelisting is interleaved with the spawn
@@ -204,7 +220,7 @@ contract DeployLagoonVault is Script {
         require(ISafe(safe).isModuleEnabled(modifier_), "modifier was not enabled on the Safe");
 
         address vault = _deployVault(p, safe);
-        _pinAsyncOnly(safe, p.owner, vault);
+        _activateAsyncOnly(p, vault);
 
         vm.stopBroadcast();
 
@@ -214,6 +230,9 @@ contract DeployLagoonVault is Script {
         console.log("modifier  ", modifier_);
         console.log("vault     ", vault);
         console.log("syncMode  ", ILagoonVault(vault).syncMode());
+        console.log("asyncOnly ", ILagoonVault(vault).isAsyncOnly());
+        console.log("vaultOwner", ILagoonVault(vault).owner());
+        console.log("vaultAdminPending", ILagoonVault(vault).pendingOwner());
     }
 
     // ─── Steps ────────────────────────────────────────────────────────────────
@@ -278,7 +297,10 @@ contract DeployLagoonVault is Script {
             safe: safe,
             whitelistManager: p.whitelistManager,
             valuationManager: p.valuationManager,
-            admin: p.admin,
+            // The broadcaster, not `p.admin`: `activateAsyncOnly` is `onlyOwner` and has to
+            // run before the vault can take a deposit. Ownership moves to `p.admin` right
+            // after, in `_activateAsyncOnly`.
+            admin: p.owner,
             feeReceiver: p.feeReceiver,
             managementRate: p.managementRate,
             performanceRate: p.performanceRate,
@@ -300,12 +322,41 @@ contract DeployLagoonVault is Script {
         );
     }
 
-    /// @dev The step the whole post-audit design rests on. A fresh v0.6.0 vault is
-    ///      `SyncMode.Both` — both sync entrypoints open — and `ERC7540Vehicle` assumes
-    ///      neither ever is. Runs before the vault can have taken a deposit.
-    function _pinAsyncOnly(address safe, address owner, address vault) internal {
-        _safeExec(safe, owner, vault, abi.encodeCall(ILagoonVault.setSyncMode, (SYNC_MODE_NONE)));
-        require(ILagoonVault(vault).syncMode() == SYNC_MODE_NONE, "vault is not pinned to async-only");
+    /// @dev The step the whole post-audit design rests on, and the reason it is
+    ///      `activateAsyncOnly()` and not `setSyncMode(None)`: the latter is reversible by the
+    ///      Safe's owners at any time, the former is permanent and sets the mode as part of its
+    ///      own work.
+    ///
+    ///      `onlyOwner`, and the owner is `init.admin`. The vault is therefore initialized with
+    ///      the broadcaster as admin and ownership handed over afterwards, rather than
+    ///      initialized with the final admin and the activation left to them. Deferring it is
+    ///      not hypothetical: the live CoinShares vault is `syncMode = None` with
+    ///      `isAsyncOnly = false`.
+    ///
+    ///      Settlement is unaffected. The async path requires `totalAssets` to be INVALID —
+    ///      `requestDeposit` carries `onlyAsyncDeposit`, which reverts when it is valid — and
+    ///      zeroing the lifespan is what keeps it permanently so. It is the sync entrypoints
+    ///      that need a valid `totalAssets`, which is what this call takes away for good.
+    function _activateAsyncOnly(Params memory p, address vault) internal {
+        require(ILagoonVault(vault).owner() == p.owner, "vault admin is not the broadcaster; cannot activate");
+
+        ILagoonVault(vault).activateAsyncOnly();
+
+        require(ILagoonVault(vault).isAsyncOnly(), "async-only was not activated");
+        require(ILagoonVault(vault).syncMode() == SYNC_MODE_NONE, "activation did not close the sync mode");
+
+        // Offer the vault's admin role to its intended holder, now that the irreversible part
+        // is done. Ordering matters: an admin that is not us cannot be made to run the step
+        // above, and nothing downstream forces them to.
+        //
+        // The vault is `Ownable2Step`, so this only nominates — `p.admin` has to call
+        // `acceptOwnership()` to take it. That is the safer shape and not a shortcoming: a
+        // mistyped `VAULT_ADMIN` leaves the role with us rather than stranding the vault. The
+        // run therefore ends with us still owner and a pending nomination outstanding.
+        if (p.admin != p.owner) {
+            ILagoonVault(vault).transferOwnership(p.admin);
+            require(ILagoonVault(vault).pendingOwner() == p.admin, "vault admin nomination failed");
+        }
     }
 
     // ─── Safe execution ───────────────────────────────────────────────────────
