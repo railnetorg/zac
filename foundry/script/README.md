@@ -76,11 +76,21 @@ included.
 
 ```
 forge script script/DeployLagoonVault.s.sol:DeployLagoonVault \
-  --rpc-url "$RPC_URL" --broadcast --verify
+  --rpc-url "$RPC_URL" --broadcast --account <keystore> --sender <deployer>
 ```
 
-Run it without `--broadcast` first. The simulation exercises the real factories against a
-fork of the live chain, so a bad parameter fails before anything exists.
+Import the key once with `cast wallet import <keystore> --interactive` rather than passing
+`--private-key`, which puts it in your shell history.
+
+Run it without `--broadcast` first. The simulation exercises the real factories against the
+live chain, so a bad parameter fails before anything exists.
+
+No `--verify`: the script creates no contracts. All five of its transactions are calls — three
+factories and two `onlyOwner` setters — so Foundry has nothing to attribute to the script and
+nothing to submit to a verifier. `--verify` also requires `--broadcast`, which makes it the
+one flag you cannot rehearse: without `ETHERSCAN_API_KEY` it fails the run after the money is
+spent. The three proxies are standard implementations behind well-known factories and are
+already verified on-chain.
 
 It prints the Safe, the modifier, the vault, `syncMode`, `isAsyncOnly`, the vault owner and
 the pending admin nomination — then the two follow-ups below, with their calldata.
