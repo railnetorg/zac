@@ -236,6 +236,12 @@ contract DeployLagoonVault is Script {
 
         vm.stopBroadcast();
 
+        // After the broadcast, deliberately: this one probes by making a call that has to
+        // revert, and `vm.startBroadcast` records every non-static call as a transaction to
+        // send. Inside the block it would be queued for broadcast, and Foundry's on-chain
+        // simulation of the queued transactions would fail the whole run.
+        _assertSuperOperatorLocked(vault);
+
         (deployedSafe, deployedModifier, deployedVault) = (safe, modifier_, vault);
         _writeArtifact(p, safe, modifier_, vault);
 
@@ -394,8 +400,17 @@ contract DeployLagoonVault is Script {
         require(ILagoonVault(vault).syncMode() == SYNC_MODE_NONE, "activation did not close the sync mode");
 
         ILagoonVault(vault).lockSuperOperator();
-        // The lock is only worth anything if the setter is actually shut. Probed rather than
-        // trusted, since `address(0)` would otherwise look identical before and after.
+    }
+
+    /// @dev The lock is only worth anything if the setter is actually shut, and `address(0)`
+    ///      looks identical before and after — so it is probed rather than trusted.
+    ///
+    ///      Called after `stopBroadcast`. A reverting call is the whole mechanism here, and a
+    ///      non-static call inside the broadcast block becomes a queued transaction: Foundry
+    ///      simulates the queue before sending anything, so a probe placed there fails the run
+    ///      instead of checking it. Outside the block it is a local call against the same
+    ///      state, which is all the check needs.
+    function _assertSuperOperatorLocked(address vault) internal {
         (bool stillMutable,) = vault.call(abi.encodeCall(ILagoonVault.updateSuperOperator, (address(0))));
         require(!stillMutable, "superOperator is still mutable after lockSuperOperator");
     }

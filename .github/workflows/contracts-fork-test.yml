@@ -46,3 +46,16 @@ jobs:
           # the condition that would catch a regression of that kind. Local runs
           # stay parallel and keep exercising it.
           just forge-test-fork "$MAINNET_RPC_URL" 1
+
+      # The deployment script, run AS A SCRIPT. `DeployLagoonVaultFork` calls
+      # `run()` directly, which skips the phase where Foundry simulates the
+      # transactions the script would broadcast — and that phase is the only thing
+      # that catches a non-static call sitting inside the broadcast block, because
+      # such a call becomes a queued transaction. The script probes the
+      # `superOperator` lock by making a call that HAS to revert, so with the probe
+      # in the wrong place the whole run fails and no test notices. Broadcasts
+      # nothing.
+      - name: just forge-simulate-deploy
+        env:
+          MAINNET_RPC_URL: ${{ secrets.MAINNET_RPC_URL }}
+        run: just forge-simulate-deploy "$MAINNET_RPC_URL"
