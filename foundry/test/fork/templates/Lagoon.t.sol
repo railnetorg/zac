@@ -165,18 +165,6 @@ contract LagoonRoleMainnetTest is ZacForkTest {
         _assertPolicyAllows(VAULT, abi.encodeCall(ILagoonVault.expireTotalAssets, ()));
     }
 
-    /// TL-8 — how long a posted NAV stays valid.
-    ///
-    ///        Worth reading alongside the vault's `syncMode`: the lifespan is exactly the
-    ///        window during which `isTotalAssetsValid()` is true, and on a vault NOT pinned to
-    ///        the fully-async mode that window is also when the sync entrypoints are open. The
-    ///        policy grants this and does NOT grant `setSyncMode` (TL-11), so a role member can
-    ///        widen the window but cannot open the sync path. The grant is safe because the
-    ///        vault is pinned async-only at deployment, not because of anything in this policy.
-    function test_TL8_UpdateTotalAssetsLifespanAllowed() public {
-        _assertPolicyAllows(VAULT, abi.encodeCall(ILagoonVault.updateTotalAssetsLifespan, (uint128(1 days))));
-    }
-
     /// TL-9 — push minted shares to depositors after settlement.
     function test_TL9_ClaimSharesOnBehalfAllowed() public {
         _assertPolicyAllows(VAULT, abi.encodeCall(ILagoonVault.claimSharesOnBehalf, (_controllers())));
@@ -195,6 +183,21 @@ contract LagoonRoleMainnetTest is ZacForkTest {
     ///        outside the vehicle entirely. The curator policy must not carry it.
     function test_TL11_SetSyncModeRejected() public {
         expectPolicyReject(modAddr, ALICE, VAULT, abi.encodeCall(ILagoonVault.setSyncMode, (0)), CALL, ROLE_KEY);
+    }
+
+    /// TL-11b — `updateTotalAssetsLifespan` is unreachable on an async-only vault: activating
+    ///        that mode zeroes the lifespan and shuts the setter, so the call reverts
+    ///        `AsyncOnly()` from any caller for the life of the vault. Granting it would be
+    ///        authority nobody can exercise, so the policy leaves it out and this pins that.
+    function test_TL11b_UpdateTotalAssetsLifespanRejected() public {
+        expectPolicyReject(
+            modAddr,
+            ALICE,
+            VAULT,
+            abi.encodeCall(ILagoonVault.updateTotalAssetsLifespan, (uint128(1 days))),
+            CALL,
+            ROLE_KEY
+        );
     }
 
     /// TL-12 — the deposit cap is a mandate parameter, not a settlement operation.
