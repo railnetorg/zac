@@ -8,6 +8,20 @@ It is a script rather than a checklist because the defaults are wrong. Deploying
 vault through the obvious path gives a v0.5.0 vault with an open synchronous deposit path and
 a mutable super-operator role — a vault Railnet's `ERC7540Vehicle` cannot legitimately wrap.
 
+## Before you start
+
+When this repository is a submodule of yours, its own Foundry libraries have to be present:
+`forge script` compiles the whole project, not just the script, so a non-recursive submodule
+checkout fails at compile time on `forge-std`, `safe-smart-account`, `aave-v3-origin`,
+`morpho-blue` and `openzeppelin-contracts`.
+
+```
+git -C zac submodule update --init --recursive --depth 1
+```
+
+Around a minute and a few hundred megabytes, and only needed to run this script — managing
+policies afterwards does not touch Foundry at all.
+
 ## Which chain
 
 The Safe and Zodiac addresses the script uses are CREATE2-deterministic and identical on
