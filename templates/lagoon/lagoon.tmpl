@@ -29,14 +29,18 @@
       explicitly (zac's validator requires every signature param to be
       covered); the all-pass optimization in `toSdkTargets` then
       collapses this to `allowFunction` on-chain.
-    - Seven functions covered (see Lagoon docs §Smart-Contract Reference):
+    - Six functions covered (see Lagoon docs §Smart-Contract Reference):
       • updateNewTotalAssets(uint256)     — propose a new NAV value
       • settleDeposit(uint256)            — confirm NAV + settle pending deposits
       • settleRedeem(uint256)             — confirm NAV + settle pending redemptions
       • expireTotalAssets()               — force the current NAV value to expire
-      • updateTotalAssetsLifespan(uint128)— adjust how long a posted NAV stays valid
       • claimSharesOnBehalf(address[])    — push minted shares to depositors post-settlement
       • claimAssetsOnBehalf(address[])    — push redeemed assets to redeemers post-settlement
+
+    `updateTotalAssetsLifespan(uint128)` is NOT granted. A vault in scope here is
+    async-only, and activating that mode zeroes the lifespan and shuts the setter:
+    the call reverts `AsyncOnly()` for the life of the vault, from any caller.
+    Granting it would be authority that can never be exercised.
 
   Settlement on the vault (v0.6.0) is a two-step flow: the vault's
   valuationManager proposes a NAV via updateNewTotalAssets(x), then the
@@ -75,13 +79,6 @@ roles:
 
       - signature: "function expireTotalAssets()"
         execution_options: "none"
-
-      - signature: "function updateTotalAssetsLifespan(uint128 lifespan)"
-        execution_options: "none"
-        params:
-          - name: lifespan
-            param_type: "static"
-            operator: "pass"
 
       - signature: "function claimSharesOnBehalf(address[] controllers)"
         execution_options: "none"
