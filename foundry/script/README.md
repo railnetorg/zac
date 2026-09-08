@@ -119,6 +119,12 @@ to step 4 — hand it to the scaffold rather than copying addresses out of the l
 not do it. Through your normal signing flow, or via `approveHash`: each owner calls
 `approveHash(safeTxHash)` independently, then anyone executes.
 
+Independent of the policy, and easy to defer by mistake. Applying a role is a call from the
+Safe *to* the modifier, so it succeeds whether or not the module is enabled — the whole
+policy can be planned, proposed and executed, and every call routed through the modifier will
+still revert `GS104` until this lands. A role that looks installed and does nothing is what
+that gap produces.
+
 **2. `acceptOwnership` on the vault**, as `VAULT_ADMIN`. The vault is `Ownable2Step`, so the
 run only nominates; until this lands the authority stays with `DEPLOYER`.
 
@@ -167,6 +173,9 @@ identical before and after a lock, and a closed sync mode looks identical to a r
 | `superOperator is still mutable after lockSuperOperator` | the lock did not take — abandon the vault |
 | `AddressNotAllowed(<addr>)` at spawn | not whitelisted, or the salt changed |
 | `EvmError: Revert` at low gas across a whole suite | the RPC rate-limited; not a logic failure |
+| `GS104` on any call through the modifier | the module is not enabled on the Safe (follow-up 1) |
+| `OnlySafe(<safe>)` from your own EOA | that setter is the Safe's to call, not the admin's |
+| `plan` shows a change you already executed | the Zodiac indexer lags; check the modifier on-chain rather than re-executing |
 
 The two "abandon the vault" rows are the only ones worth that: both concern one-way doors, and
 the run stops before the vault can take a deposit, so nothing is at stake in starting over.
