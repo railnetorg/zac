@@ -16,6 +16,7 @@ aliases:
     lagoon: ../aliases/mainnet/lagoon.yaml
     helper: ../aliases/mainnet/helper.yaml
     curator: ../aliases/mainnet/curator.yaml
+    cctp: ../aliases/mainnet/cctp.yaml
     safes: ./aliases/mainnet/safes.yaml
     modifiers: ./aliases/mainnet/modifiers.yaml
   sepolia:
@@ -27,5 +28,6 @@ aliases:
   base:
     tokens: ../aliases/base/tokens.yaml
     morpho_blue: ../aliases/base/morpho_blue.yaml
+    cctp: ../aliases/base/cctp.yaml
     safes: ./aliases/base/safes.yaml
     modifiers: ./aliases/base/modifiers.yaml

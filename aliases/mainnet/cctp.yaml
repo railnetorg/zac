@@ -1,0 +1,21 @@
+# Circle CCTP v2 — Cross-Chain Transfer Protocol contracts on Ethereum mainnet.
+#
+# The cctp.tmpl policy lets the strategy manager burn USDC here to bridge it to a
+# destination-chain Safe (Model A: direct per-chain control, no cross-chain
+# messaging). It pins:
+#   token_messenger_v2 — the burn entrypoint; pinned as the approve spender AND
+#                        the depositForBurn call target.
+#   usdc               — the burn token; pinned as the approve token AND the
+#                        depositForBurn `burnToken`.
+#
+# message_transmitter_v2 is the destination-side mint entrypoint (receiveMessage).
+# It is NOT scoped by this policy — the mint is permissionless and handled by a
+# keeper/relayer, so the destination Safe receives passively. Listed here for
+# reference / destination-side tooling.
+#
+# v2 addresses are identical across EVM chains. Verified against Circle docs
+# (developers.circle.com/cctp/evm-smart-contracts) on 2026-06-23. CCTP v1
+# phase-out begins 2026-07-31; this template targets v2 only.
+token_messenger_v2: "0x28b5a0e9C621a5BadaA536219b3a228C8168cf5d"
+message_transmitter_v2: "0x81D40F21F12A8F0E3252Bccb954D722d4c464B64"
+usdc: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
