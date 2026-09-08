@@ -56,6 +56,13 @@ jobs:
       # in the wrong place the whole run fails and no test notices. Broadcasts
       # nothing.
       - name: just forge-simulate-deploy
+        # Independent of the suite above, so it must not be gated on it. The fork
+        # suite fails transiently when the provider rate-limits (a handful of tests
+        # reverting at tiny, near-identical gas), and chaining this behind it means
+        # the only check that runs the script AS A SCRIPT is skipped exactly when
+        # something else is flaky. `success() || failure()` runs it either way, but
+        # still not on cancellation.
+        if: success() || failure()
         env:
           MAINNET_RPC_URL: ${{ secrets.MAINNET_RPC_URL }}
         run: just forge-simulate-deploy "$MAINNET_RPC_URL"
