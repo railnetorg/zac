@@ -35,9 +35,12 @@ describe('lagoon/lagoon.tmpl', () => {
     expect(out).toContain('function settleDeposit(uint256 _newTotalAssets)');
     expect(out).toContain('function settleRedeem(uint256 _newTotalAssets)');
     expect(out).toContain('function expireTotalAssets()');
-    expect(out).toContain('function updateTotalAssetsLifespan(uint128 lifespan)');
     expect(out).toContain('function claimSharesOnBehalf(address[] controllers)');
     expect(out).toContain('function claimAssetsOnBehalf(address[] controllers)');
+    // Not granted: activating async-only zeroes the totalAssets lifespan and shuts
+    // the setter, so the call reverts `AsyncOnly()` from any caller for the life of
+    // the vault. Asserted absent so it cannot come back as unexercisable authority.
+    expect(out).not.toContain('updateTotalAssetsLifespan');
   });
 
   it('TL-3: approve targets the asset with spender pinned to the vault', () => {
@@ -70,9 +73,9 @@ describe('lagoon/lagoon.tmpl', () => {
     const amount = approveFn.params!.find((p) => p.name === 'amount')!;
     expect(amount.operator).toBe('pass');
 
-    // The NAV role lives on the vault and carries the seven settlement functions.
+    // The NAV role lives on the vault and carries the six settlement functions.
     const vaultRole = doc.roles.find((r) => r.address.toLowerCase() === VAULT.toLowerCase())!;
-    expect(vaultRole.functions).toHaveLength(7);
+    expect(vaultRole.functions).toHaveLength(6);
   });
 
   it('TL-4: a missing asset throws (fail-fast — asset is required)', () => {
