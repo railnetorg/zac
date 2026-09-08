@@ -202,6 +202,7 @@ contract DeployLagoonVault is Script {
         uint16 managementRate;
         uint16 performanceRate;
         bytes32 salt;
+        string deploymentKey; // Names the deployment artifact. Empty skips writing it.
     }
 
     /// @notice The three addresses the run produced. Recorded on the contract as well as
@@ -236,6 +237,7 @@ contract DeployLagoonVault is Script {
         vm.stopBroadcast();
 
         (deployedSafe, deployedModifier, deployedVault) = (safe, modifier_, vault);
+        _writeArtifact(p, safe, modifier_, vault);
 
         console.log("safe      ", safe);
         console.log("modifier  ", modifier_);
@@ -413,6 +415,79 @@ contract DeployLagoonVault is Script {
         require(ILagoonVault(vault).pendingOwner() == p.admin, "vault admin nomination failed");
     }
 
+    // ─── Output ───────────────────────────────────────────────────────────────
+
+    /// @dev Records the run as JSON under the Foundry root, at
+    ///      `deployments/<network>/<DEPLOYMENT_KEY>.json`.
+    ///
+    ///      The path is relative to this Foundry project, not to whatever repository vendors
+    ///      it as a submodule, so the same `fs_permissions` entry holds wherever the script
+    ///      runs. Consumers copy the file out; nothing here assumes a layout above `foundry/`.
+    ///
+    ///      The salt is the load-bearing field. Every address in the file derives from it, so
+    ///      a later run that reuses the salt reproduces them and a run that does not produces
+    ///      a different vault — which is why the value has to be recorded rather than
+    ///      remembered.
+    ///
+    ///      Only addresses are written. The asset is deliberately its address and not a token
+    ///      symbol: the script never resolves symbols, and inventing one here would make the
+    ///      file disagree with the chain the first time two tokens share a ticker.
+    function _writeArtifact(Params memory p, address safe, address modifier_, address vault) internal {
+        if (bytes(p.deploymentKey).length == 0) {
+            console.log("DEPLOYMENT_KEY unset; no artifact written");
+            return;
+        }
+
+        string memory dir = string.concat("deployments/", _networkName());
+        vm.createDir(dir, true);
+
+        string memory json = string.concat(
+            "{\n",
+            '  "chainId": ',
+            vm.toString(block.chainid),
+            ",\n",
+            '  "salt": "',
+            vm.toString(p.salt),
+            '",\n',
+            '  "safe": "',
+            vm.toString(safe),
+            '",\n',
+            '  "modifier": "',
+            vm.toString(modifier_),
+            '",\n',
+            '  "vault": "',
+            vm.toString(vault),
+            '",\n',
+            '  "asset": "',
+            vm.toString(p.underlying),
+            '",\n',
+            '  "admin": "',
+            vm.toString(p.admin),
+            '",\n',
+            '  "valuationManager": "',
+            vm.toString(p.valuationManager),
+            '",\n',
+            '  "whitelistManager": "',
+            vm.toString(p.whitelistManager),
+            '"\n',
+            "}\n"
+        );
+
+        string memory path = string.concat(dir, "/", p.deploymentKey, ".json");
+        vm.writeFile(path, json);
+        console.log("artifact  ", path);
+    }
+
+    /// @dev The zac network directory name for this chain. Named rather than numeric because
+    ///      that is what a zac repository's `config/<network>/` and `aliases/<network>/`
+    ///      directories are keyed on, and an unknown chain has no such name to guess.
+    function _networkName() internal view returns (string memory) {
+        if (block.chainid == 1) return "mainnet";
+        if (block.chainid == 8453) return "base";
+        if (block.chainid == 11155111) return "sepolia";
+        revert("no zac network name for this chain id; add it before writing an artifact");
+    }
+
     // ─── Inputs ───────────────────────────────────────────────────────────────
 
     function _readParams() internal view returns (Params memory p) {
@@ -436,5 +511,6 @@ contract DeployLagoonVault is Script {
         p.managementRate = uint16(vm.envOr("VAULT_MANAGEMENT_RATE", uint256(0)));
         p.performanceRate = uint16(vm.envOr("VAULT_PERFORMANCE_RATE", uint256(0)));
         p.salt = vm.envOr("DEPLOY_SALT", bytes32(0));
+        p.deploymentKey = vm.envOr("DEPLOYMENT_KEY", string(""));
     }
 }

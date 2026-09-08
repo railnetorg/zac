@@ -34,6 +34,7 @@ contract DeployLagoonVaultForkTest is Test {
 
     uint8 constant SYNC_MODE_NONE = 3;
     address constant FINAL_ADMIN = 0x3333333333333333333333333333333333333333;
+    string constant ARTIFACT_KEY = "fork_test";
 
     DeployLagoonVault script_;
 
@@ -58,6 +59,7 @@ contract DeployLagoonVaultForkTest is Test {
         vm.setEnv("DEPLOY_SALT", vm.toString(bytes32(uint256(0xDEF1))));
         // Deliberately NOT the broadcaster, so the handover path is the one under test.
         vm.setEnv("VAULT_ADMIN", vm.toString(FINAL_ADMIN));
+        vm.setEnv("DEPLOYMENT_KEY", ARTIFACT_KEY);
 
         // The deployment is the fixture. Foundry calls `setUp` once and restores the
         // post-setUp snapshot for each test, so this is one run rather than one per test —
@@ -160,6 +162,23 @@ contract DeployLagoonVaultForkTest is Test {
         assertTrue(
             ILagoonRegistry(registry).canUseLogic(DEPLOYER, LAGOON_LOGIC_V0_6_0), "v0.6.0 is no longer freely usable"
         );
+    }
+
+    /// DF-7 — the deployment artifact. The addresses the script produced are only useful to
+    ///        the repository that consumes them if they leave the process, and the salt is
+    ///        the one field that cannot be recovered from the chain afterwards: it is what
+    ///        ties a whitelist entry made before the deployment to the vault that comes out
+    ///        of it. Parsed back rather than string-matched, so a malformed file fails here.
+    function test_DF7_WritesADeploymentArtifactCarryingTheSalt() public view {
+        string memory raw = vm.readFile(string.concat("deployments/mainnet/", ARTIFACT_KEY, ".json"));
+
+        assertEq(vm.parseJsonUint(raw, ".chainId"), 1, "wrong chain id");
+        assertEq(vm.parseJsonBytes32(raw, ".salt"), bytes32(uint256(0xDEF1)), "salt not recorded");
+        assertEq(vm.parseJsonAddress(raw, ".safe"), deployedSafe, "safe not recorded");
+        assertEq(vm.parseJsonAddress(raw, ".modifier"), deployedModifier, "modifier not recorded");
+        assertEq(vm.parseJsonAddress(raw, ".vault"), deployedVault, "vault not recorded");
+        assertEq(vm.parseJsonAddress(raw, ".asset"), WETH, "asset not recorded");
+        assertEq(vm.parseJsonAddress(raw, ".admin"), FINAL_ADMIN, "admin not recorded");
     }
 
     /// @dev A Zodiac module proxy is a minimal proxy: the mastercopy address sits in its

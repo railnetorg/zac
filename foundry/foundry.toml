@@ -26,6 +26,9 @@ no_match_path = "__never_match__"
 ffi = true
 fs_permissions = [
   { access = "read-write", path = "../examples" },
+  # DeployLagoonVault writes its deployment artifact here. Scoped to this Foundry root so
+  # the entry holds wherever the repository is vendored as a submodule.
+  { access = "read-write", path = "./deployments" },
   { access = "read", path = "../action" },
   { access = "read", path = "../templates" },
   { access = "read", path = "../aliases" },

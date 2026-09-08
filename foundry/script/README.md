@@ -38,6 +38,7 @@ nothing after that, so it needs gas and nothing else.
 | `VAULT_UPGRADE_DELAY` | no, defaults to 86400 | **not covered here** |
 | `VAULT_MANAGEMENT_RATE`, `VAULT_PERFORMANCE_RATE` | no, default 0 | yes |
 | `DEPLOY_SALT` | yes in practice | see below |
+| `DEPLOYMENT_KEY` | yes in practice | names the artifact; see below |
 
 Anything marked changeable is `onlyOwner` on the vault, so a placeholder is a legitimate
 answer — including `VAULT_VALUATION_MANAGER`, which the vault needs to settle but not to
@@ -84,6 +85,10 @@ fork of the live chain, so a bad parameter fails before anything exists.
 It prints the Safe, the modifier, the vault, `syncMode`, `isAsyncOnly`, the vault owner and
 the pending admin nomination — then the two follow-ups below, with their calldata.
 
+With `DEPLOYMENT_KEY` set it also writes `deployments/<network>/<key>.json`, holding those
+three addresses, the salt, and the parameters that name an authority. That file is the input
+to step 4 — hand it to the scaffold rather than copying addresses out of the log.
+
 ## Then, in this order
 
 **1. `enableModule` on the Safe.** Needs the Safe's own quorum, which is why the script does
@@ -102,10 +107,12 @@ That makes the salt a commitment. Change it after this step and the three addres
 your whitelist entries go dead, and the spawn fails with `AddressNotAllowed` — which does not
 say the salt moved. Record it and reuse it if anything has to be retried.
 
-**4. Write your policy configs**, one directory per Safe under
-`config/<network>/<safe-address>/`. That is the scaffold's territory, not this script's — see
-the repo README for the layout and the constraints. Whether Railnet reviews them before you
-apply is per-engagement; check what was agreed.
+**4. Record the deployment, then write your policy configs.** The artifact from the run is
+the record: it carries the salt, which no later read of the chain recovers. The scaffold
+derives its alias files and its `config/<network>/<safe-address>/` directory from it, so the
+Safe address is never retyped. Then one config per venue — the scaffold's README has the
+layout. Whether Railnet reviews them before you apply is per-engagement; check what was
+agreed.
 
 ## Verify
 
