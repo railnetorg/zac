@@ -176,6 +176,10 @@ contract DeployLagoonVault is Script {
 
     uint8 constant OP_CALL = 0;
 
+    /// @dev `SuperOperatorUpdateLocked()` on the Lagoon vault. The probe below has to
+    ///      distinguish this from any other revert, or it stops checking anything.
+    bytes4 constant SUPER_OPERATOR_UPDATE_LOCKED = 0x691f9390;
+
     /// @dev The vault proxy's ProxyAdmin rejects a shorter upgrade timelock with
     ///      `DelayTooLow(86400)`. It is the floor, not a recommendation — pick the delay the
     ///      mandate wants and set `VAULT_UPGRADE_DELAY`; this is only what stops a run from
@@ -240,7 +244,7 @@ contract DeployLagoonVault is Script {
         // revert, and `vm.startBroadcast` records every non-static call as a transaction to
         // send. Inside the block it would be queued for broadcast, and Foundry's on-chain
         // simulation of the queued transactions would fail the whole run.
-        _assertSuperOperatorLocked(vault);
+        _assertSuperOperatorLocked(vault, p.deployer);
 
         (deployedSafe, deployedModifier, deployedVault) = (safe, modifier_, vault);
         _writeArtifact(p, safe, modifier_, vault);
@@ -410,9 +414,19 @@ contract DeployLagoonVault is Script {
     ///      simulates the queue before sending anything, so a probe placed there fails the run
     ///      instead of checking it. Outside the block it is a local call against the same
     ///      state, which is all the check needs.
-    function _assertSuperOperatorLocked(address vault) internal {
-        (bool stillMutable,) = vault.call(abi.encodeCall(ILagoonVault.updateSuperOperator, (address(0))));
+    ///
+    ///      Two things make the check mean what it says. The caller is pranked to the owner,
+    ///      because outside the broadcast block the caller is this script rather than the
+    ///      broadcaster. And the revert reason is compared, not just the failure: an
+    ///      unauthorised caller reverts too, so "it reverted" alone would pass on a vault
+    ///      whose setter is wide open.
+    function _assertSuperOperatorLocked(address vault, address owner_) internal {
+        vm.prank(owner_);
+        (bool stillMutable, bytes memory reason) =
+            vault.call(abi.encodeCall(ILagoonVault.updateSuperOperator, (address(0))));
         require(!stillMutable, "superOperator is still mutable after lockSuperOperator");
+        require(reason.length >= 4, "updateSuperOperator reverted without a reason");
+        require(bytes4(reason) == SUPER_OPERATOR_UPDATE_LOCKED, "updateSuperOperator reverted for another reason");
     }
 
     /// @dev Hand the vault's `onlyOwner` authority to its intended holder, now that the

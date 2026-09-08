@@ -8,6 +8,10 @@ solc_version = "0.8.34"
 # harness in test/zac/). They require MAINNET_RPC_URL — excluded from the default profile so
 # `forge test` (no profile) skips them; run them via `FOUNDRY_PROFILE=contracts-fork`.
 no_match_path = "test/{zac,fork}/**"
+# `script/DeployLagoonVault.s.sol` records its run here, and it is run under this profile —
+# a profile's array value replaces the inherited one rather than merging, so the fork
+# profile's larger list below repeats this entry instead of relying on it.
+fs_permissions = [{ access = "read-write", path = "./deployments" }]
 
 [profile.contracts-fork]
 src = "src"

@@ -47,8 +47,10 @@ forge-test-fork upstream threads="0":
 # The script is therefore exercised AS A SCRIPT here, not only as a test.
 #
 # The parameters are placeholders and the salt is distinctive: nothing is
-# broadcast, so no state accumulates across runs. `DEPLOYMENT_KEY` is deliberately
-# unset, which is what stops the run writing a deployment artifact in CI.
+# broadcast, so no state accumulates across runs. `DEPLOYMENT_KEY` IS set, so the
+# artifact write is covered too — leaving it unset skipped that path, which is how
+# an `fs_permissions` entry scoped to the wrong profile went unnoticed. The file
+# lands in the ignored `foundry/deployments/`.
 forge-simulate-deploy upstream:
     @cd foundry && \
       DEPLOYER=0x1111111111111111111111111111111111111111 \
@@ -59,6 +61,7 @@ forge-simulate-deploy upstream:
       VAULT_SYMBOL=zacsim \
       VAULT_VALUATION_MANAGER=0x1111111111111111111111111111111111111111 \
       DEPLOY_SALT=0x7a61632d63692d73696d756c6174696f6e000000000000000000000000000000 \
+      DEPLOYMENT_KEY=ci_simulation \
       forge script script/DeployLagoonVault.s.sol:DeployLagoonVault --rpc-url "{{upstream}}"
 
 # run action ts tests
