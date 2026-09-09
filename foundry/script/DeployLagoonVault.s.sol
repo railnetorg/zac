@@ -65,6 +65,15 @@ interface ILagoonRegistry {
     function defaultLogic() external view returns (address);
 }
 
+/// @dev The vault's fee rates, in the order `feeRates()` returns them.
+struct Rates {
+    uint16 managementRate;
+    uint16 performanceRate;
+    uint16 entryRate;
+    uint16 exitRate;
+    uint16 haircutRate;
+}
+
 interface ILagoonVault {
     function version() external view returns (string memory);
     function syncMode() external view returns (uint8);
@@ -73,6 +82,9 @@ interface ILagoonVault {
     function safe() external view returns (address);
     function owner() external view returns (address);
     function pendingOwner() external view returns (address);
+    function isAllowed(address account) external view returns (bool);
+    function feeRates() external view returns (Rates memory);
+    function updateNewTotalAssets(uint256 newTotalAssets) external;
     function activateAsyncOnly() external;
     function lockSuperOperator() external;
     function updateSuperOperator(address superOperator) external;
@@ -145,9 +157,10 @@ struct InitStruct {
 ///         vault's admin only for the duration of the run.
 ///
 ///         **What this script does NOT do.** Spawning the `ERC7540Vehicle` over the vault is
-///         a separate step in `hangar`, and its whitelisting is interleaved with the spawn
-///         (predict the vehicle address, whitelist it, spawn, whitelist both queues). This
-///         script stops at a vault that is ready to be wrapped.
+///         a separate step in `hangar`. Its whitelisting is NOT interleaved with the spawn:
+///         the vehicle and both queue addresses derive from the deployment salt alone, so all
+///         three can be published and whitelisted in a single `addToWhitelist` before any of
+///         them exists. This script stops at a vault that is ready to be wrapped.
 ///
 ///         Run:
 ///           forge script script/DeployLagoonVault.s.sol:DeployLagoonVault \
@@ -179,6 +192,16 @@ contract DeployLagoonVault is Script {
     /// @dev `SuperOperatorUpdateLocked()` on the Lagoon vault. The probe below has to
     ///      distinguish this from any other revert, or it stops checking anything.
     bytes4 constant SUPER_OPERATOR_UPDATE_LOCKED = 0x691f9390;
+
+    /// @dev `OnlyWhitelistManager(address)` and `OnlyValuationManager(address)`. Neither role
+    ///      has a getter on the vault, but both errors carry the configured address — which is
+    ///      how the run reads them back.
+    bytes4 constant ONLY_WHITELIST_MANAGER = 0x583a4fd6;
+    bytes4 constant ONLY_VALUATION_MANAGER = 0x14c9222d;
+
+    /// @dev An address this run never whitelists. Used to confirm `accessMode` is `Whitelist`:
+    ///      in that mode nobody is allowed until someone is whitelisted.
+    address constant ACCESS_MODE_PROBE = 0x000000000000000000000000000000000000dEaD;
 
     /// @dev The vault proxy's ProxyAdmin rejects a shorter upgrade timelock with
     ///      `DelayTooLow(86400)`. It is the floor, not a recommendation — pick the delay the
@@ -221,7 +244,7 @@ contract DeployLagoonVault is Script {
 
     function run() external {
         Params memory p = _readParams();
-        _assertChainPrerequisites();
+        _assertChainPrerequisites(p);
 
         vm.startBroadcast(p.deployer);
 
@@ -240,11 +263,12 @@ contract DeployLagoonVault is Script {
 
         vm.stopBroadcast();
 
-        // After the broadcast, deliberately: this one probes by making a call that has to
+        // After the broadcast, deliberately: these probe by making calls that have to
         // revert, and `vm.startBroadcast` records every non-static call as a transaction to
-        // send. Inside the block it would be queued for broadcast, and Foundry's on-chain
+        // send. Inside the block they would be queued for broadcast, and Foundry's on-chain
         // simulation of the queued transactions would fail the whole run.
         _assertSuperOperatorLocked(vault, p.deployer);
+        _assertConfiguredRoles(p, vault);
 
         (deployedSafe, deployedModifier, deployedVault) = (safe, modifier_, vault);
         _writeArtifact(p, safe, modifier_, vault);
@@ -278,7 +302,7 @@ contract DeployLagoonVault is Script {
     ///      another chain without updating them would revert somewhere inside
     ///      `createVaultProxy` with nothing naming the cause, so they are checked here
     ///      instead.
-    function _assertChainPrerequisites() internal view {
+    function _assertChainPrerequisites(Params memory p) internal view {
         require(ROLES_MASTERCOPY != ROLES_MASTERCOPY_PRE_PATCH, "Roles mastercopy is the pre-patch one");
         require(ROLES_MASTERCOPY.code.length > 0, "Roles mastercopy has no code on this chain");
         require(SAFE_PROXY_FACTORY.code.length > 0, "Safe proxy factory has no code on this chain");
@@ -288,6 +312,10 @@ contract DeployLagoonVault is Script {
             LAGOON_LOGIC_V0_6_0.code.length > 0,
             "Lagoon v0.6.0 logic has no code on this chain; update it for this network"
         );
+        // The other chain-dependent failure, resolved here rather than where it is used: the
+        // artifact write happens after all three contracts exist, so an unknown chain would
+        // otherwise abort a run that had already done its work.
+        if (bytes(p.deploymentKey).length != 0) _networkName();
     }
 
     /// @dev Deployed at the operator's own quorum. The Roles modifier is NOT enabled here:
@@ -403,7 +431,78 @@ contract DeployLagoonVault is Script {
         require(ILagoonVault(vault).isAsyncOnly(), "async-only was not activated");
         require(ILagoonVault(vault).syncMode() == SYNC_MODE_NONE, "activation did not close the sync mode");
 
+        // Zero the role before freezing it. The initializer already passes `address(0)`, but
+        // `lockSuperOperator` freezes whatever is in the slot and the vault exposes no getter
+        // to read it back — so on its own the zero is inherited from a hand-built calldata
+        // blob rather than established by the run. One call, and "locked a live super
+        // operator, permanently" stops depending on the transcription being right.
+        ILagoonVault(vault).updateSuperOperator(address(0));
         ILagoonVault(vault).lockSuperOperator();
+    }
+
+    /// @dev The initializer fields a mistake would NOT revert on.
+    ///
+    ///      `_deployVault` checks `version`, `asset`, `safe` and `isInstance`: every field
+    ///      where a wrong value fails loudly. The rest of the 19-field struct is transcribed
+    ///      from Lagoon's `InitStruct` by hand, and the two manager roles are both plain
+    ///      addresses — swap them and the vault deploys, the run reports success, the NAV
+    ///      provider holds the whitelist authority, and the spawn's mid-flight
+    ///      `addToWhitelist` reverts. The reason this calldata is built here at all is that
+    ///      the factory's own overload encodes a different shape, so the transcription is
+    ///      exactly the thing worth asserting.
+    ///
+    ///      Neither manager has a getter, so both are read out of a revert that names them.
+    ///      Called after `stopBroadcast`, like the `superOperator` probe and for the same
+    ///      reason: a non-static call inside the broadcast block becomes a queued
+    ///      transaction, and Foundry simulates the queue before sending.
+    function _assertConfiguredRoles(Params memory p, address vault) internal {
+        (bool ok, bytes memory reason) =
+            vault.call(abi.encodeWithSignature("addToWhitelist(address[])", new address[](0)));
+        require(!ok, "this script should not be the vault's whitelistManager");
+        require(_selector(reason) == ONLY_WHITELIST_MANAGER, "addToWhitelist reverted for another reason");
+        require(_addressArg(reason) == p.whitelistManager, "whitelistManager is not the configured address");
+
+        (ok, reason) = vault.call(abi.encodeCall(ILagoonVault.updateNewTotalAssets, (1)));
+        require(!ok, "this script should not be the vault's valuationManager");
+        require(_selector(reason) == ONLY_VALUATION_MANAGER, "updateNewTotalAssets reverted for another reason");
+        require(_addressArg(reason) == p.valuationManager, "valuationManager is not the configured address");
+
+        // `accessMode`, which nothing else pins. In an open vault any third party can
+        // `requestRedeem`, and `settleRedeem` pulls the assets from the strategy Safe.
+        // `isAllowed` is `isWhitelisted[a]` plus the `protocolFeeReceiver` and `superOperator`
+        // exceptions; nothing is whitelisted yet, so `false` covers the access mode and
+        // confirms the probe is neither exception.
+        require(!ILagoonVault(vault).isAllowed(ACCESS_MODE_PROBE), "vault admits an unwhitelisted address");
+
+        Rates memory rates = ILagoonVault(vault).feeRates();
+        require(rates.managementRate == p.managementRate, "managementRate is not the configured value");
+        require(rates.performanceRate == p.performanceRate, "performanceRate is not the configured value");
+        require(
+            rates.entryRate == 0 && rates.exitRate == 0 && rates.haircutRate == 0,
+            "entry, exit and haircut rates should be zero"
+        );
+    }
+
+    /// @dev The 4-byte selector at the head of revert data. Assembled byte by byte rather
+    ///      than cast from `bytes memory`, which is a truncating conversion — the same reason
+    ///      `_addressArg` copies its word out.
+    function _selector(bytes memory data) internal pure returns (bytes4 out) {
+        require(data.length >= 4, "revert data carries no selector");
+        for (uint256 i = 0; i < 4; i++) {
+            out |= bytes4(data[i]) >> (i * 8);
+        }
+    }
+
+    /// @dev The address argument of a single-address custom error: the 32-byte word after the
+    ///      selector. Copied out rather than read with assembly, which is what the rest of
+    ///      this project does with revert and code bytes.
+    function _addressArg(bytes memory data) internal pure returns (address) {
+        require(data.length >= 36, "revert data carries no address argument");
+        bytes memory word = new bytes(32);
+        for (uint256 i = 0; i < 32; i++) {
+            word[i] = data[4 + i];
+        }
+        return abi.decode(word, (address));
     }
 
     /// @dev The lock is only worth anything if the setter is actually shut, and `address(0)`
@@ -425,8 +524,7 @@ contract DeployLagoonVault is Script {
         (bool stillMutable, bytes memory reason) =
             vault.call(abi.encodeCall(ILagoonVault.updateSuperOperator, (address(0))));
         require(!stillMutable, "superOperator is still mutable after lockSuperOperator");
-        require(reason.length >= 4, "updateSuperOperator reverted without a reason");
-        require(bytes4(reason) == SUPER_OPERATOR_UPDATE_LOCKED, "updateSuperOperator reverted for another reason");
+        require(_selector(reason) == SUPER_OPERATOR_UPDATE_LOCKED, "updateSuperOperator reverted for another reason");
     }
 
     /// @dev Hand the vault's `onlyOwner` authority to its intended holder, now that the
@@ -525,6 +623,11 @@ contract DeployLagoonVault is Script {
         if (p.existingSafe == address(0)) {
             p.safeOwners = vm.envAddress("SAFE_OWNERS", ",");
             p.safeThreshold = vm.envUint("SAFE_THRESHOLD");
+        } else {
+            // Reusing a Safe skips `_deploySafe` and every check in it. A mistyped address
+            // would otherwise yield a vault curated by something that cannot sign —
+            // recoverable through `updateSafe`, but only by someone noticing.
+            require(p.existingSafe.code.length > 0, "SAFE_ADDRESS has no code on this chain");
         }
         p.underlying = vm.envAddress("VAULT_UNDERLYING");
         p.name = vm.envString("VAULT_NAME");
@@ -537,9 +640,24 @@ contract DeployLagoonVault is Script {
         p.proxyAdminOwner = vm.envOr("VAULT_PROXY_ADMIN_OWNER", p.deployer);
         p.upgradeDelay = vm.envOr("VAULT_UPGRADE_DELAY", MIN_UPGRADE_DELAY);
         require(p.upgradeDelay >= MIN_UPGRADE_DELAY, "VAULT_UPGRADE_DELAY is below the ProxyAdmin floor");
-        p.managementRate = uint16(vm.envOr("VAULT_MANAGEMENT_RATE", uint256(0)));
-        p.performanceRate = uint16(vm.envOr("VAULT_PERFORMANCE_RATE", uint256(0)));
+        // Read wide and bounded, then narrowed: the initializer field is `uint16`, so a
+        // larger value used to wrap rather than fail — 70000 arriving as 4464.
+        uint256 managementRate = vm.envOr("VAULT_MANAGEMENT_RATE", uint256(0));
+        uint256 performanceRate = vm.envOr("VAULT_PERFORMANCE_RATE", uint256(0));
+        require(managementRate <= type(uint16).max, "VAULT_MANAGEMENT_RATE does not fit in uint16");
+        require(performanceRate <= type(uint16).max, "VAULT_PERFORMANCE_RATE does not fit in uint16");
+        // forge-lint: disable-next-line(unsafe-typecast) — bounded on the line above
+        p.managementRate = uint16(managementRate);
+        // forge-lint: disable-next-line(unsafe-typecast) — bounded on the line above
+        p.performanceRate = uint16(performanceRate);
         p.salt = vm.envOr("DEPLOY_SALT", bytes32(0));
         p.deploymentKey = vm.envOr("DEPLOYMENT_KEY", string(""));
+        // All three spawn addresses derive from the salt, and no later read of the chain
+        // recovers it — it is what ties a whitelist entry made before the deployment to the
+        // vault that comes out of it. A run worth recording is a run whose salt was chosen.
+        require(
+            p.salt != bytes32(0) || bytes(p.deploymentKey).length == 0,
+            "set DEPLOY_SALT explicitly when writing a deployment artifact"
+        );
     }
 }

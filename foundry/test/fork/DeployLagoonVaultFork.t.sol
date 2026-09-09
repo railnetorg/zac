@@ -2,7 +2,14 @@
 pragma solidity 0.8.34;
 
 import {Test} from "forge-std/Test.sol";
-import {DeployLagoonVault, ILagoonVault, ISafe, ILagoonFactory, ILagoonRegistry} from "script/DeployLagoonVault.s.sol";
+import {
+    DeployLagoonVault,
+    ILagoonVault,
+    ISafe,
+    ILagoonFactory,
+    ILagoonRegistry,
+    Rates
+} from "script/DeployLagoonVault.s.sol";
 
 /// @title  DeployLagoonVaultForkTest
 /// @notice Runs `DeployLagoonVault` end to end against mainnet.
@@ -35,6 +42,13 @@ contract DeployLagoonVaultForkTest is Test {
     uint8 constant SYNC_MODE_NONE = 3;
     address constant FINAL_ADMIN = 0x3333333333333333333333333333333333333333;
     string constant ARTIFACT_KEY = "fork_test";
+
+    /// @dev The errors the probes below distinguish. `SuperOperatorUpdateLocked()` is the lock
+    ///      itself; the two `Only…Manager(address)` errors carry the configured address, which
+    ///      is the only way to read those roles back — the vault has no getter for either.
+    bytes4 constant SUPER_OPERATOR_UPDATE_LOCKED = 0x691f9390;
+    bytes4 constant ONLY_WHITELIST_MANAGER = 0x583a4fd6;
+    bytes4 constant ONLY_VALUATION_MANAGER = 0x14c9222d;
 
     DeployLagoonVault script_;
 
@@ -134,12 +148,70 @@ contract DeployLagoonVaultForkTest is Test {
     ///        `updateSuperOperator` is open to the admin, so without the lock the zero is a
     ///        current value rather than a property. Probed as the admin, the authority that
     ///        setter answers to.
+    ///
+    ///        The revert reason is compared, not just the failure: an unauthorised caller
+    ///        reverts too, so "it reverted" alone passes on a vault whose setter was never
+    ///        locked at all. Same reasoning as the script's own probe.
     function test_DF5_SuperOperatorIsLockedAtZero() public {
         address vault = deployedVault;
 
         vm.prank(DEPLOYER);
-        (bool ok,) = vault.call(abi.encodeWithSignature("updateSuperOperator(address)", DEPLOYER));
+        (bool ok, bytes memory reason) = vault.call(abi.encodeWithSignature("updateSuperOperator(address)", DEPLOYER));
         assertFalse(ok, "the admin was able to grant superOperator after the lock");
+        assertEq(_selector(reason), SUPER_OPERATOR_UPDATE_LOCKED, "reverted for a reason other than the lock");
+    }
+
+    /// DF-8 — locked at ZERO, and `accessMode` is `Whitelist`. Two properties from one read,
+    ///        because `lockSuperOperator` freezes whatever is in the slot and the vault has no
+    ///        getter for it: a super operator is always `isAllowed`, so an address that is not
+    ///        allowed is not the super operator. Nothing is whitelisted at this point, so
+    ///        every address the run touched has to come back `false` — and if `accessMode` had
+    ///        landed as open they would all come back `true`.
+    ///
+    ///        Without this, a non-zero `superOperator` in the hand-built initializer passes
+    ///        the whole suite, DF-5 included, and locks a live role permanently.
+    function test_DF8_NoAddressIsAllowedYet() public view {
+        ILagoonVault vault = ILagoonVault(deployedVault);
+
+        assertFalse(vault.isAllowed(DEPLOYER), "deployer is allowed; superOperator may be non-zero");
+        assertFalse(vault.isAllowed(FINAL_ADMIN), "the nominated admin is allowed");
+        assertFalse(vault.isAllowed(VALUATION_MANAGER), "the valuation manager is allowed");
+        assertFalse(vault.isAllowed(OWNER_B), "a Safe owner is allowed");
+        assertFalse(vault.isAllowed(deployedSafe), "the Safe itself is allowed");
+    }
+
+    /// DF-9 — the two manager roles landed where they were configured. Both are plain
+    ///        addresses in a 19-field struct transcribed by hand, so swapping them deploys
+    ///        cleanly and reports success: the NAV provider would hold the whitelist
+    ///        authority, and the spawn's mid-flight `addToWhitelist` would revert on a vault
+    ///        that is already live. Read out of the reverts that name them.
+    function test_DF9_ManagerRolesLandedAsConfigured() public {
+        address vault = deployedVault;
+
+        (bool ok, bytes memory reason) =
+            vault.call(abi.encodeWithSignature("addToWhitelist(address[])", new address[](0)));
+        assertFalse(ok, "this test should not be the whitelistManager");
+        assertEq(_selector(reason), ONLY_WHITELIST_MANAGER, "not the OnlyWhitelistManager error");
+        // Unset in `setUp`, so it defaults to the deployer.
+        assertEq(_addressArg(reason), DEPLOYER, "whitelistManager is not the configured address");
+
+        (ok, reason) = vault.call(abi.encodeWithSignature("updateNewTotalAssets(uint256)", uint256(1)));
+        assertFalse(ok, "this test should not be the valuationManager");
+        assertEq(_selector(reason), ONLY_VALUATION_MANAGER, "not the OnlyValuationManager error");
+        assertEq(_addressArg(reason), VALUATION_MANAGER, "valuationManager is not the configured address");
+    }
+
+    /// DF-10 — the fee rates survive the trip through the initializer. They are `uint16`
+    ///         fields read from `uint256` environment variables, and the entry, exit and
+    ///         haircut rates are pinned to zero by the script rather than configurable.
+    function test_DF10_FeeRatesAreZeroAsConfigured() public view {
+        Rates memory rates = ILagoonVault(deployedVault).feeRates();
+
+        assertEq(rates.managementRate, 0, "managementRate");
+        assertEq(rates.performanceRate, 0, "performanceRate");
+        assertEq(rates.entryRate, 0, "entryRate");
+        assertEq(rates.exitRate, 0, "exitRate");
+        assertEq(rates.haircutRate, 0, "haircutRate");
     }
 
     /// DF-6 — the chain prerequisites are checked, and the Lagoon pair is the reason. The Safe
@@ -179,6 +251,25 @@ contract DeployLagoonVaultForkTest is Test {
         assertEq(vm.parseJsonAddress(raw, ".vault"), deployedVault, "vault not recorded");
         assertEq(vm.parseJsonAddress(raw, ".asset"), WETH, "asset not recorded");
         assertEq(vm.parseJsonAddress(raw, ".admin"), FINAL_ADMIN, "admin not recorded");
+    }
+
+    /// @dev The 4-byte selector at the head of revert data, assembled rather than cast.
+    function _selector(bytes memory data) internal pure returns (bytes4 out) {
+        require(data.length >= 4, "revert data carries no selector");
+        for (uint256 i = 0; i < 4; i++) {
+            out |= bytes4(data[i]) >> (i * 8);
+        }
+    }
+
+    /// @dev The address argument of a single-address custom error: the 32-byte word after
+    ///      the selector.
+    function _addressArg(bytes memory data) internal pure returns (address) {
+        require(data.length >= 36, "revert data carries no address argument");
+        bytes memory word = new bytes(32);
+        for (uint256 i = 0; i < 32; i++) {
+            word[i] = data[4 + i];
+        }
+        return abi.decode(word, (address));
     }
 
     /// @dev A Zodiac module proxy is a minimal proxy: the mastercopy address sits in its

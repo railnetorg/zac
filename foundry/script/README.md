@@ -42,7 +42,7 @@ nothing after that, so it needs gas and nothing else.
 | `SAFE_OWNERS`, `SAFE_THRESHOLD` | unless `SAFE_ADDRESS` | yes, through the Safe |
 | `SAFE_ADDRESS` | no | reuse a Safe you made yourself |
 | `VAULT_UNDERLYING` | yes | **no** |
-| `VAULT_NAME`, `VAULT_SYMBOL` | yes | no |
+| `VAULT_NAME`, `VAULT_SYMBOL` | yes | yes, `updateName` / `updateSymbol` |
 | `VAULT_VALUATION_MANAGER` | yes | yes |
 | `VAULT_ADMIN` | no, defaults to `DEPLOYER` | yes |
 | `VAULT_WHITELIST_MANAGER` | no, defaults to `DEPLOYER` | yes |
@@ -58,10 +58,15 @@ Anything marked changeable is `onlyOwner` on the vault, so a placeholder is a le
 answer — including `VAULT_VALUATION_MANAGER`, which the vault needs to settle but not to
 exist. `VAULT_UPGRADE_DELAY` has a floor of 86400 seconds.
 
-Two values are not configurable. The Lagoon logic is fixed at v0.6.0, because v0.5.0 has no
-way to close its synchronous path. And `accessMode` is `Whitelist`, because in open mode any
-third party can `requestRedeem` and `settleRedeem` pulls the assets from **your Safe** —
-opening the vault would open a claim on the strategy's capital.
+Two values are not yours to pass. The Lagoon logic is fixed at v0.6.0, because v0.5.0 has no
+way to close its synchronous path — and that one really is permanent. And `accessMode` is set
+to `Whitelist`, because in open mode any third party can `requestRedeem` and `settleRedeem`
+pulls the assets from **your Safe** — opening the vault would open a claim on the strategy's
+capital.
+
+`accessMode` is **not** permanent, though: `switchAccessMode` is `onlyOwner`, so whoever holds
+`VAULT_ADMIN` can open the vault again at any time. The run asserts it deployed closed; keeping
+it closed is a property of your admin key, and worth a monitor rather than an assumption.
 
 ## Get these right the first time
 
@@ -82,6 +87,13 @@ falsified NAV needs two authorities. `updateSecurityCouncil` has no lock, so thi
 property of your key layout — a governance Safe distinct from the strategy Safe, ideally
 behind a timelock.
 
+Be clear about how far that goes. `updateSafe` is also `onlyOwner` and this script does not
+lock it, so the admin can repoint the vault at a Safe it controls and hold both authorities
+itself. The separation the check enforces is therefore a property of the admin key, not a
+structural one. Lagoon ships `lockUpdateSafe()` to close it permanently; the script leaves that
+to you, because locking it also forecloses ever rotating the strategy Safe. Decide which of the
+two you want, and monitor `updateSafe` either way.
+
 Do not set `VAULT_ADMIN` to `address(0)`. `onlyOwner` is what makes everything in the
 changeable column changeable, so giving it up freezes all of it, `updateValuationManager`
 included.
@@ -99,9 +111,9 @@ Import the key once with `cast wallet import <keystore> --interactive` rather th
 Run it without `--broadcast` first. The simulation exercises the real factories against the
 live chain, so a bad parameter fails before anything exists.
 
-No `--verify`: the script creates no contracts. All five of its transactions are calls — three
-factories and two `onlyOwner` setters — so Foundry has nothing to attribute to the script and
-nothing to submit to a verifier. `--verify` also requires `--broadcast`, which makes it the
+No `--verify`: the script creates no contracts. Every transaction it sends is a call — the
+three factories, then the vault's own `onlyOwner` setters — so Foundry has nothing to attribute
+to the script and nothing to submit to a verifier. `--verify` also requires `--broadcast`, which makes it the
 one flag you cannot rehearse: without `ETHERSCAN_API_KEY` it fails the run after the money is
 spent. The three proxies are standard implementations behind well-known factories and are
 already verified on-chain.
@@ -156,11 +168,19 @@ everything downstream depends on, so they are worth reading off the vault yourse
 | `syncMode()` | `3` (`None`) | the script |
 | `asset()` | your `VAULT_UNDERLYING` | the script |
 | `safe()` | the deployed Safe | the script |
-| `updateSuperOperator(…)` | reverts | the script |
+| `feeRates()` | your rates, then three zeros | the script |
+| `isAllowed(<any address>)` | `false` — nothing is whitelisted yet | the script |
+| `addToWhitelist(…)` | `OnlyWhitelistManager(<your whitelistManager>)` | the script |
+| `updateNewTotalAssets(…)` | `OnlyValuationManager(<your valuationManager>)` | the script |
+| `updateSuperOperator(…)` | reverts `SuperOperatorUpdateLocked()` | the script |
 | `setSyncMode(…)` | reverts | `DeployLagoonVaultFork.t.sol` |
 
-The last two are checked by probing rather than by reading a value: `address(0)` looks
-identical before and after a lock, and a closed sync mode looks identical to a reopenable one.
+The bottom five are checked by probing rather than by reading a value, because the vault has no
+getter for any of them. `address(0)` looks identical before and after a lock; a closed sync mode
+looks identical to a reopenable one; and the two manager roles can only be read back out of the
+error that names them. `isAllowed` covers two things at once — that `accessMode` came out
+`Whitelist`, and that `superOperator` is zero rather than merely frozen, since a super operator
+is always allowed.
 
 ## If something fails
 
@@ -171,11 +191,18 @@ identical before and after a lock, and a closed sync mode looks identical to a r
 | `SAFE_THRESHOLD must be between 1 and the number of owners` | as it says |
 | `vault did not deploy on the v0.6.0 logic` | the logic argument was not honoured — abandon the vault |
 | `superOperator is still mutable after lockSuperOperator` | the lock did not take — abandon the vault |
+| `whitelistManager is not the configured address` | the initializer fields do not match what you passed — abandon the vault |
+| `vault admits an unwhitelisted address` | `accessMode` did not come out `Whitelist` — abandon the vault |
+| `set DEPLOY_SALT explicitly when writing a deployment artifact` | `DEPLOYMENT_KEY` is set but `DEPLOY_SALT` is not |
+| `VAULT_MANAGEMENT_RATE does not fit in uint16` | rate above 65535; check the units |
+| `SAFE_ADDRESS has no code on this chain` | reusing a Safe that is not there |
 | `AddressNotAllowed(<addr>)` at spawn | not whitelisted, or the salt changed |
 | `EvmError: Revert` at low gas across a whole suite | the RPC rate-limited; not a logic failure |
 | `GS104` on any call through the modifier | the module is not enabled on the Safe (follow-up 1) |
 | `OnlySafe(<safe>)` from your own EOA | that setter is the Safe's to call, not the admin's |
 | `plan` shows a change you already executed | the Zodiac indexer lags; check the modifier on-chain rather than re-executing |
 
-The two "abandon the vault" rows are the only ones worth that: both concern one-way doors, and
-the run stops before the vault can take a deposit, so nothing is at stake in starting over.
+The "abandon the vault" rows are the only ones worth that, and they are cheap: each concerns a
+value that is either behind a one-way door or baked into the initializer, and the run stops
+before the vault can take a deposit or whitelist anybody, so nothing is at stake in starting
+over with a fresh salt.
