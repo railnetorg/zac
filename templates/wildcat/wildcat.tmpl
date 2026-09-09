@@ -94,13 +94,38 @@
       market, so any address can call them and the Safe gains nothing from
       holding the grant. `repay` would additionally send the Safe's underlying
       to the market as an unrecoverable gift.
-    - borrow, closeMarket, setMaxTotalSupply,
-      setAnnualInterestAndReserveRatioBips — `onlyBorrower`. All four are
-      present in the deployed market's runtime and each has a negative test.
+    - borrow, closeMarket, rescueTokens, setMaxTotalSupply,
+      setAnnualInterestAndReserveRatioBips — `onlyBorrower`. All five are
+      present on the deployed market and each has a negative test.
+    - nukeFromOrbit(address), repayAndProcessUnpaidWithdrawalBatches(uint256,
+      uint256) — permissionless, like `updateState`. Named here because both
+      sit on the claim path and a reader will wonder: after a batch expires
+      UNPAID, funding it is anyone's call to make, so the keeper does not need
+      the Safe to hold either grant. `executeWithdrawal` then claims the old
+      batch — its `expiry` is `pass`, so no extra grant is needed for that
+      either.
+    - setProtocolFeeBips(uint16), changeSphereXEngine(address) — protocol-level,
+      gated to the factory and the SphereX operator respectively.
     - approve / transfer / transferFrom on the MARKET token. The market token
       is the position; moving it off the Safe is precisely what this policy
       exists to prevent. Note the underlying `approve` role below targets the
       UNDERLYING, never the market token.
+
+  On deriving this list:
+    The granted and not-granted sets above are taken from the market's VERIFIED
+    ABI, cross-checked behaviourally against the deployed contract (a function
+    that is present reverts with its own error selector — `rescueTokens` from a
+    non-borrower gives `NotApprovedBorrower()` `0x02171e6a` — while an absent
+    selector reverts with no data at all).
+
+    A PUSH4 scan of the runtime bytecode is NOT a sound way to do this and an
+    earlier revision of this docstring was wrong because of one: solc emits a
+    selector whose leading byte is 0x00 as PUSH3, so such a function is
+    invisible to that scan. `rescueTokens(address)` is exactly that case —
+    `0x00ae3bf8`, emitted here as `62ae3bf8` (`PUSH3 0xae3bf8`) in the first
+    branch of the dispatch table. It was briefly dropped from this list as
+    "not present on this market". It is present. Scan PUSH1..PUSH4 if you scan
+    at all, and prefer the ABI.
 -#}
 {%- from "_macros/common.tmpl" import approve -%}
 {#- Pass 0: collapse duplicate market keys. A repeated key would emit the

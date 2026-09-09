@@ -49,9 +49,13 @@ interface IWildcatMarket {
     function closeMarket() external;
     function updateState() external;
     function collectFees() external;
+    function rescueTokens(address token) external;
+    function setMaxTotalSupply(uint256 _maxTotalSupply) external;
+    function setAnnualInterestAndReserveRatioBips(uint16 _annualInterestBips, uint16 _reserveRatioBips) external;
     // Views used by the lifecycle test.
     function currentState() external view returns (MarketState memory);
     function getAvailableWithdrawalAmount(address accountAddress, uint32 expiry) external view returns (uint256);
+    function getUnpaidBatchExpiries() external view returns (uint32[] memory);
     function maximumDeposit() external view returns (uint256);
     function isClosed() external view returns (bool);
     function balanceOf(address account) external view returns (uint256);
@@ -240,6 +244,40 @@ contract WildcatRoleMainnetTest is ZacForkTest {
         expectPolicyReject(modAddr, ALICE, MARKET, abi.encodeCall(IWildcatMarket.closeMarket, ()), CALL, ROLE_KEY);
     }
 
+    /// The two borrower-only setters. Neither is reachable under a lender policy, and both
+    /// are asserted rather than left to be inferred from default-deny: they are the pair
+    /// that would let a market's economics be rewritten from inside the Safe.
+    function test_nonAllowed_setMaxTotalSupply_rejected() public {
+        expectPolicyReject(
+            modAddr,
+            ALICE,
+            MARKET,
+            abi.encodeCall(IWildcatMarket.setMaxTotalSupply, (type(uint128).max)),
+            CALL,
+            ROLE_KEY
+        );
+    }
+
+    function test_nonAllowed_setAnnualInterestAndReserveRatioBips_rejected() public {
+        expectPolicyReject(
+            modAddr,
+            ALICE,
+            MARKET,
+            abi.encodeCall(IWildcatMarket.setAnnualInterestAndReserveRatioBips, (uint16(0), uint16(0))),
+            CALL,
+            ROLE_KEY
+        );
+    }
+
+    /// `rescueTokens` IS present on this market (`onlyBorrower`, and it refuses the market's
+    /// own underlying with `BadRescueAsset`). An earlier revision of the template docstring
+    /// claimed it was absent, on the strength of a PUSH4 scan of the runtime that could not
+    /// see it: the selector is `0x00ae3bf8` and solc emits a leading-zero selector as PUSH3.
+    /// Asserted here so the list in the docstring is backed by a test rather than by a scan.
+    function test_nonAllowed_rescueTokens_rejected() public {
+        expectPolicyReject(modAddr, ALICE, MARKET, abi.encodeCall(IWildcatMarket.rescueTokens, (USDC)), CALL, ROLE_KEY);
+    }
+
     /// `updateState` and `collectFees` are permissionless — any address can call them, so the
     /// Safe gains nothing from holding the grant and the policy stays minimal.
     function test_nonAllowed_updateState_rejected() public {
@@ -259,6 +297,14 @@ contract WildcatRoleMainnetTest is ZacForkTest {
 
     function test_nonAllowed_marketTokenApprove_rejected() public {
         expectPolicyReject(modAddr, ALICE, MARKET, abi.encodeCall(IERC20.approve, (BOGUS, AMOUNT)), CALL, ROLE_KEY);
+    }
+
+    /// And `transferFrom`: the market token is transfer-restricted by the borrower, not by
+    /// this policy, so the third leg of the ERC-20 surface is pinned too.
+    function test_nonAllowed_marketTokenTransferFrom_rejected() public {
+        expectPolicyReject(
+            modAddr, ALICE, MARKET, abi.encodeCall(IERC20.transferFrom, (safeAddr, BOGUS, AMOUNT)), CALL, ROLE_KEY
+        );
     }
 
     /// On WETH only `approve` is granted — `transfer` (a different selector) is rejected.
@@ -378,6 +424,18 @@ contract WildcatRoleMainnetTest is ZacForkTest {
         vm.skip(
             IWildcatMarket(MARKET).maximumDeposit() < depositAmount,
             "market has less remaining capacity than the test's deposit"
+        );
+        // The third precondition, and the least obvious. Step 5 asserts the Safe's batch was
+        // paid something, which holds because the Safe's own deposit lands in the market
+        // before it queues. But expired UNPAID batches take priority: `_getUpdatedState`
+        // funds the FIFO queue of them before the pending batch, so with a backlog present
+        // the deposit is routed to older lenders' batches and the Safe's own can pay zero.
+        // That would turn this test red for protocol drift rather than for a policy defect —
+        // the same failure mode as depositing exactly `minimumDeposit` did. The queue is
+        // empty today; skip loudly if it ever is not.
+        vm.skip(
+            IWildcatMarket(MARKET).getUnpaidBatchExpiries().length > 0,
+            "market has an unpaid withdrawal backlog, which takes priority over the test's batch"
         );
 
         // --- setup outside the policy ---
