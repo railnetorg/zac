@@ -350,7 +350,7 @@ contract WildcatRoleMainnetTest is ZacForkTest {
     // ExecutionOptions (allowed target AND selector, wrong execution mode)
     // ============================================================
     //
-    // Every grant in this template sets `execution_options: "none"`, and the two cases below
+    // Every grant in this template sets `execution_options: "none"`, and the three cases below
     // are the only thing in the repo that would notice if one of them became `send`,
     // `delegatecall` or `both`. Every other test in this suite passes `value=0` and
     // `operation=Call`, so all of them stay green under that edit.
@@ -378,15 +378,10 @@ contract WildcatRoleMainnetTest is ZacForkTest {
     /// `execution_options: "none"` — the role may not attach the Safe's ETH. Rejected at the
     /// gate rather than by the market, so the Safe needs no balance for this to hold; the
     /// assertion is on the Modifier's own `ConditionViolation`, not on a downstream revert.
-    ///
-    /// Written out rather than routed through `expectPolicyReject`, which pins `value` to 0.
     function test_executionOptions_valueAttached_rejected() public {
-        vm.prank(ALICE);
-        vm.expectPartialRevert(ROLES_CONDITION_VIOLATION);
-        IRoles(modAddr)
-            .execTransactionWithRole(
-                MARKET, 1 wei, abi.encodeCall(IWildcatMarket.deposit, (AMOUNT)), CALL, ROLE_KEY, false
-            );
+        expectPolicyRejectWithValue(
+            modAddr, ALICE, MARKET, 1 wei, abi.encodeCall(IWildcatMarket.deposit, (AMOUNT)), CALL, ROLE_KEY
+        );
     }
 
     // ============================================================
