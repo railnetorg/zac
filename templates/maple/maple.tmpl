@@ -33,10 +33,29 @@
     - One deposit / requestRedeem / redeem role per resolved pool, with
       every address parameter pinned to the avatar so shares and assets
       can never be routed off the Safe.
+    - Entries repeating a `pool_alias` are collapsed, so a repeat is a
+      no-op rather than a `generate` failure naming a function.
 -#}
 {%- from "_macros/common.tmpl" import approve -%}
-{%- set assets = [] -%}
+{#- Pass 0: collapse entries that name the same pool. A repeated `pool_alias`
+    emits the pool's role block twice, and the emit-phase merger rejects a
+    duplicate (address, signature) pair within a role key — so the repeat fails
+    `generate` with a message naming a FUNCTION rather than the pool the author
+    actually repeated. It would also push the same address into `spenders`
+    twice, producing a `oneOf` with a repeated value. Dedup is on `pool_alias`
+    rather than on the whole entry: a pool has exactly one underlying, so two
+    entries naming one pool are the same grant however `asset` is spelled, and
+    nunjucks compares objects by identity anyway. -#}
+{%- set seen_pools = [] -%}
+{%- set entries = [] -%}
 {%- for entry in deposit_assets -%}
+  {%- if entry.pool_alias not in seen_pools -%}
+    {%- set _ = seen_pools.push(entry.pool_alias) -%}
+    {%- set _ = entries.push(entry) -%}
+  {%- endif -%}
+{%- endfor -%}
+{%- set assets = [] -%}
+{%- for entry in entries -%}
   {%- if entry.asset not in assets -%}
     {%- set _ = assets.push(entry.asset) -%}
   {%- endif -%}
@@ -44,14 +63,14 @@
 roles:
 {%- for asset in assets %}
   {%- set spenders = [] -%}
-  {%- for entry in deposit_assets -%}
+  {%- for entry in entries -%}
     {%- if entry.asset == asset -%}
       {%- set _ = spenders.push(aliases.maple[entry.pool_alias]) -%}
     {%- endif -%}
   {%- endfor %}
   {{ approve(aliases.tokens[asset], spenders) | indent(2) }}
 {%- endfor %}
-{%- for entry in deposit_assets %}
+{%- for entry in entries %}
 {%- set pool = aliases.maple[entry.pool_alias] %}
 
   - address: "{{ pool }}"
