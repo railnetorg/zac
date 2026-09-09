@@ -2,10 +2,12 @@
 cache/
 out/
 
-# Ignores development broadcast logs
-!/broadcast
-/broadcast/*/31337/
-/broadcast/**/dry-run/
+# Ignores development broadcast logs. The Foundry project is `foundry/`, not the
+# repository root, so these are anchored there — the unanchored `/broadcast`
+# forms matched nothing and let simulation output be committed.
+!/foundry/broadcast
+/foundry/broadcast/*/31337/
+/foundry/broadcast/**/dry-run/
 
 # Docs
 docs/
@@ -27,6 +29,10 @@ action/tests/.tmp-*
 .legion/
 **/.legion/
 .plans/
+
+# Deployment artifacts written by foundry/script/DeployLagoonVault.s.sol. The record that
+# matters is the copy committed in the repository that consumes this one as a submodule.
+foundry/deployments/
 
 # Private deployment safe-dir (real Safe + signer; not for the public examples)
 examples/mainnet/0x14147ffC6595D1DB7C1797FF0F6AE4455df89BE2/
