@@ -75,6 +75,10 @@ interface IOpenTermHooks {
     ///      already registered on the live hooks instance.
     function grantRole(address account, uint32 roleGrantedTimestamp) external;
     function getHookedMarket(address market) external view returns (HookedMarket memory);
+    /// @dev A packed `RoleProvider`; zero when the address is not a registered provider.
+    ///      The borrower can `removeRoleProvider` at any time, so the lifecycle test checks
+    ///      this rather than assuming the provider is still there.
+    function getRoleProvider(address providerAddress) external view returns (uint256);
 }
 
 /// @title  WildcatRoleMainnetTest
@@ -299,8 +303,12 @@ contract WildcatRoleMainnetTest is ZacForkTest {
         expectPolicyReject(modAddr, ALICE, MARKET, abi.encodeCall(IERC20.approve, (BOGUS, AMOUNT)), CALL, ROLE_KEY);
     }
 
-    /// And `transferFrom`: the market token is transfer-restricted by the borrower, not by
-    /// this policy, so the third leg of the ERC-20 surface is pinned too.
+    /// And `transferFrom`, the third leg of the ERC-20 surface. Worth stating why this
+    /// matters more than it looks: wmtWETH is NOT transfer-restricted. The hooks report
+    /// `transferRequiresAccess` = false and `transfersDisabled` = false, and a transfer from
+    /// an unauthorised address gets past `onTransfer` and fails on the balance check
+    /// (`Panic(0x11)`) rather than on `NotApprovedLender()` or `TransfersDisabled()`. So
+    /// these three omissions are the only thing keeping the position in the Safe.
     function test_nonAllowed_marketTokenTransferFrom_rejected() public {
         expectPolicyReject(
             modAddr, ALICE, MARKET, abi.encodeCall(IERC20.transferFrom, (safeAddr, BOGUS, AMOUNT)), CALL, ROLE_KEY
@@ -350,10 +358,17 @@ contract WildcatRoleMainnetTest is ZacForkTest {
     // ExecutionOptions (allowed target AND selector, wrong execution mode)
     // ============================================================
     //
-    // Every grant in this template sets `execution_options: "none"`, and the three cases below
-    // are the only thing in the repo that would notice if one of them became `send`,
-    // `delegatecall` or `both`. Every other test in this suite passes `value=0` and
-    // `operation=Call`, so all of them stay green under that edit.
+    // Every grant in this template sets `execution_options: "none"`. The three cases below
+    // assert that behaviourally, at the Modifier, but only for TWO of the six grants:
+    // `deposit` on the market and `approve` on WETH. Widening any of the other four to
+    // `delegatecall` or `both` leaves this whole suite green — every other test here passes
+    // `value=0` and `operation=Call`. An earlier version of this comment claimed these cases
+    // covered the axis; they do not.
+    //
+    // `TW-7` in action/tests/test-templates/wildcat.test.ts is what actually covers it: it
+    // asserts the mode on EVERY emitted function, so it also catches a grant added later.
+    // Keep both — that test reads the rendered YAML, these three prove the Modifier really
+    // enforces what the YAML says.
     //
     // The delegatecall axis is the one that matters here. The market is a 22kB contract
     // carrying `borrow`, `closeMarket` and the interest-rate setters; a `delegatecall` grant
@@ -431,6 +446,14 @@ contract WildcatRoleMainnetTest is ZacForkTest {
         vm.skip(
             IWildcatMarket(MARKET).getUnpaidBatchExpiries().length > 0,
             "market has an unpaid withdrawal backlog, which takes priority over the test's batch"
+        );
+        // Fourth precondition: the lender authorisation below pranks a role provider
+        // registered on the live hooks instance, and `grantRole` reverts `ProviderNotFound`
+        // for anything else. Provider registration is the borrower's to revoke
+        // (`removeRoleProvider`), so this is live state like the three above, not a constant.
+        vm.skip(
+            IOpenTermHooks(HOOKS).getRoleProvider(ROLE_PROVIDER) == 0,
+            "ROLE_PROVIDER is no longer registered on the hooks instance"
         );
 
         // --- setup outside the policy ---

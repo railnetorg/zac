@@ -127,7 +127,34 @@ describe('wildcat/wildcat.tmpl', () => {
     ]);
   });
 
-  it('TW-7: an unresolvable market key or asset throws rather than falling through', () => {
+  it('TW-7: every emitted grant is execution_options "none"', () => {
+    // The execution-mode axis, covered here rather than only on the fork side. The fork
+    // suite asserts it behaviourally, but only for two of the six grants (deposit on the
+    // market, approve on WETH), so widening any of the other four to `delegatecall` or
+    // `both` left all 30 fork tests green. A delegatecall grant on the market is a total
+    // compromise — it runs a 22kB contract carrying `borrow`, `closeMarket` and the rate
+    // setters against the Safe's own storage — so this is asserted over EVERY emitted
+    // function, and over any grant added later, instead of per hand-written case.
+    // [markets, unique underlyings] — one approve grant per underlying, five per market.
+    for (const [markets, assets] of [
+      [['weth_a'], 1],
+      [['weth_a', 'usdc_a', 'weth_b'], 2],
+    ] as Array<[string[], number]>) {
+      const emitted = roles(render(markets)) as unknown as Array<{
+        address: string;
+        functions: Array<{ signature: string; execution_options?: string }>;
+      }>;
+      const modes = emitted.flatMap((r) =>
+        r.functions.map((f) => [`${r.address} ${f.signature}`, f.execution_options] as const),
+      );
+      expect(modes.length).toBe(assets + markets.length * 5);
+      for (const [where, mode] of modes) {
+        expect(mode, `${where} must be execution_options "none"`).toBe('none');
+      }
+    }
+  });
+
+  it('TW-8: an unresolvable market key or asset throws rather than falling through', () => {
     // The docstring's promise. `throwOnUndefined` is what delivers it.
     expect(() => render(['nope'])).toThrow();
     const envBadAsset = makeConfigEnv({

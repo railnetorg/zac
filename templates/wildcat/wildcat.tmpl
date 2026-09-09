@@ -67,8 +67,9 @@
       approve(spender = oneOf(market_addresses)) role. This is required —
       the emit-phase merger rejects duplicate (address, signature) pairs
       within a role key.
-    - One role per market. The only address parameter on the whole lender
-      surface is `executeWithdrawal`'s `accountAddress`, pinned to the avatar
+    - One role per market. On the MARKET's surface the only address parameter
+      is `executeWithdrawal`'s `accountAddress` (the approve role above has
+      one too — `spender`, pinned to the market), and it is pinned to the avatar
       so a claim can only ever settle the Safe's OWN batch. That is narrower
       than "can only pay the Safe" and it is the property the pin actually
       buys: where the settled funds land is the market's decision, not the
@@ -76,12 +77,41 @@
       selector is left open.
 
   Composing with other templates:
-    The approve role targets the UNDERLYING, so a sibling config in the same
-    safe-dir that also approves that token — `lagoon.tmpl` emits
-    approve(spender = vault) on the vault's `asset` — must use a DIFFERENT
-    role key. The emit-phase merger aggregates per role key and throws on a
-    duplicate (address, signature) pair within one key, so two templates
-    approving the same token under one key fail `generate`.
+    A sibling `.zac.yaml` in the same safe-dir must use a DIFFERENT role key.
+    That is unconditional and has nothing to do with which tokens the two
+    policies touch: `plan` rejects the safe-dir at the validate phase with
+
+      duplicate role key '<KEY>' across safe-dir sources — each role key must
+      appear in at most one .zac.yaml per safe-dir
+
+    even when the two sources approve entirely different tokens. (`generate`
+    is per-file and succeeds either way, so the failure only shows up at
+    `plan`.)
+
+    Do not confuse this with the emit-phase merger, which is a different and
+    narrower check: it rejects a duplicate (address, signature) pair within
+    ONE role key in ONE file — two `configs` entries under the same key that
+    both approve the same token. That one IS token-dependent. The rule to
+    follow is the first: one role key per file per safe-dir. `lagoon.tmpl`
+    also emits approve(spender = vault) on the vault's `asset`, so a
+    wildcat + lagoon pair is a natural way to meet this.
+
+  What this policy does NOT protect against:
+    A Wildcat market is an UNSECURED credit line, and the policy bounds where
+    the Safe's assets can go, not whether they come back. `approve`'s
+    `amount` is `pass` (the shared macro's behaviour, as in maple, pareto and
+    metamorpho), so a role member can approve the market for any amount and
+    deposit the Safe's whole balance of the underlying. What that buys is an
+    unsecured claim on the borrower: at the time of writing the wmtWETH market
+    holds 2.98 WETH against 1976 WETH of `totalDebts`, with
+    `reserveRatioBips` = 0, so there is no reserve requirement and the exit is
+    a 24h batch that pays out only what the borrower has repaid.
+
+    None of that is a defect in the grants — it is the vehicle — and Roles V2
+    could express a ceiling (`less_than` on `amount`, as `milkman.tmpl` does)
+    if the team ever wants one. It is written down here because sizing this
+    exposure is a mandate decision, not a policy one, and the policy cannot
+    make it.
 
   Deliberately NOT granted:
     - executeWithdrawals(address[], uint32[]) — the batch-claim variant. Its
@@ -107,9 +137,17 @@
     - setProtocolFeeBips(uint16), changeSphereXEngine(address) — protocol-level,
       gated to the factory and the SphereX operator respectively.
     - approve / transfer / transferFrom on the MARKET token. The market token
-      is the position; moving it off the Safe is precisely what this policy
-      exists to prevent. Note the underlying `approve` role below targets the
-      UNDERLYING, never the market token.
+      IS the position, so moving it off the Safe is precisely what this policy
+      exists to prevent — and on this market that omission is the only thing
+      preventing it. wmtWETH is freely transferable: the hooks report
+      `transferRequiresAccess` = false and `transfersDisabled` = false, and a
+      transfer from an unauthorised address gets past `onTransfer` to fail on
+      the balance check instead. So do not read the omission as belt-and-braces
+      over a protocol-level restriction; there is no protocol-level restriction
+      here. A borrower CAN restrict or disable transfers per market, which is
+      why this must not be assumed either way for a market added later.
+      Note the `approve` role above targets the UNDERLYING, never the market
+      token.
 
   On deriving this list:
     The granted and not-granted sets above are taken from the market's VERIFIED
