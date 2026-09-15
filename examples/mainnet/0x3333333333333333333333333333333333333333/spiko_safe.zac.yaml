@@ -1,0 +1,18 @@
+roles_modifier_address: "{{ aliases.modifiers.my_modifier }}"
+safe_address: "{{ aliases.safes.my_safe }}"
+chain_id: 1
+name: My Safe Spiko Manager
+description: Send USDC to the Spiko deposit address for investment at next NAV
+configs:
+  - template: "../../../templates/spiko/spiko.tmpl"
+    key: SPIKO
+    members:
+      - "{{ aliases.signers.alice }}"
+    params:
+      # Token alias key. The role can `transfer` it to the addresses below only.
+      payment_asset: "USDC"
+      # Deposit addresses Spiko assigned to this account. Each entry is a
+      # destination the payment asset can leave the Safe to without further
+      # approval. Replace with the address Spiko gave you.
+      subscription_addresses:
+        - "0x2222222222222222222222222222222222222222"

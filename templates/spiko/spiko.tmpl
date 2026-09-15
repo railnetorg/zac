@@ -1,0 +1,43 @@
+{#-
+  Spiko: push the payment stablecoin to a Spiko deposit address.
+
+  Spiko assigns each account a deposit address. Stablecoins sent there are
+  invested in the fund at the next NAV. Redemptions are requested through
+  Spiko's API and paid back as stablecoins from the same address. Neither leg
+  needs a contract call from the Safe: sending is a plain ERC-20 `transfer`,
+  receiving needs no permission.
+
+  The role gets exactly one thing: `transfer` on the payment asset, recipient
+  limited to the listed deposit addresses. No approve, no other token, no ETH,
+  no delegatecall.
+
+  Params
+    payment_asset          Token alias key, e.g. "USDC". Resolved via
+                           aliases.tokens[<key>]; unknown key fails at render.
+    subscription_addresses Deposit addresses Spiko assigned to this account,
+                           usually one. Each entry is a place the payment asset
+                           can leave the Safe with no further approval, so list
+                           only addresses Spiko actually assigned. Literals or
+                           deployment-local aliases, not curated ones.
+
+  Output
+    payment asset: transfer(to in subscription_addresses, value: any),
+    execution_options "none".
+-#}
+roles:
+  - address: "{{ aliases.tokens[payment_asset] }}"
+    functions:
+      - signature: "function transfer(address to, uint256 value)"
+        execution_options: "none"
+        params:
+          - name: to
+            param_type: "static"
+            operator: "oneOf"
+            values:
+              {%- for addr in subscription_addresses %}
+              - "{{ addr }}"
+              {%- endfor %}
+            value_type: "address"
+          - name: value
+            param_type: "static"
+            operator: "pass"
