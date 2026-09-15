@@ -1,12 +1,26 @@
 {#-
-  Aave V3 — supply / withdraw / borrow / repay / setUserEMode on the
-  canonical chain pool.
+  Aave V3 — supply / withdraw on the canonical chain pool, and optionally the
+  borrow side: borrow / repay / setUserEMode.
 
   Required template params:
     deposit_assets — list of token alias keys (e.g. ["USDC", "DAI"]) the
-                     Safe is permitted to supply / withdraw / borrow / repay.
+                     Safe is permitted to supply / withdraw (and, with
+                     `borrow: true`, borrow / repay).
+    borrow         — bool. `false` scopes lending only: supply / withdraw,
+                     always exitable by the Safe alone. `true` additionally
+                     scopes borrow / repay / setUserEMode.
     emode_category — E-Mode category id (uint8) the Safe is pinned to via
-                     setUserEMode. 0 = no E-Mode (the same-asset default).
+                     setUserEMode. 0 = no E-Mode. Read only when `borrow`
+                     is true; lending-only configs need not declare it.
+
+  `borrow` is required rather than defaulted, deliberately, for the same
+  reason as on the Morpho template: it gates the authority to create debt
+  against the Safe's position. A default would let every existing config
+  inherit that on the next apply with nobody deciding. Required means each
+  config fails to render until a human answers the question. It is emitted
+  as a comment in the generated output so `throwOnUndefined` fires when it
+  is missing (that check is on emitted values, not on `{% if %}`), and so
+  the decision is legible in the artifact a reviewer reads.
 
   Resolved from aliases (NOT params):
     aliases.tokens[<key>] — token address for each entry in deposit_assets
@@ -21,6 +35,12 @@
   so the Safe can only borrow against / repay its own position.
 -#}
 {%- from "_macros/common.tmpl" import approve -%}
+{#- Assert `borrow` is a real boolean before anything reads it. YAML quoting picks
+    the type and nunjucks picks truthiness, and together they fail open: `false` is
+    the boolean, but `"false"` is a non-empty string, which is truthy, so a bare
+    `{% if borrow %}` would open the gate on the value an author wrote to close it. -#}
+{%- set borrow = borrow | bool("borrow") -%}
+# borrow: {{ borrow }}
 roles:
 {%- for token in deposit_assets %}
   {{ approve(aliases.tokens[token], aliases.aave.pool) | indent(2) }}
@@ -66,6 +86,7 @@ roles:
           - name: onBehalfOf
             param_type: "static"
             operator: "equal_to_avatar"
+{%- if borrow %}
 
       - signature: "function borrow(address asset, uint256 amount, uint256 interestRateMode, uint16 referralCode, address onBehalfOf)"
         execution_options: "none"
@@ -124,3 +145,4 @@ roles:
             operator: "equal_to"
             value: "{{ emode_category }}"
             value_type: "uint8"
+{%- endif %}

@@ -3,35 +3,39 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseDocument } from 'yaml';
 import nunjucks from 'nunjucks';
-import { keccak } from '../../render/keccakFilter';
+import { makeConfigEnv } from '../../render/configEnv';
 
 const __dirname = resolve(fileURLToPath(import.meta.url), '..');
 const REPO_ROOT = resolve(__dirname, '../../..');
 const TEMPLATES_DIR = resolve(REPO_ROOT, 'templates');
 
 describe('aave_v3/aave_v3.tmpl', () => {
-  const env = new nunjucks.Environment(new nunjucks.FileSystemLoader([TEMPLATES_DIR]), {
-    throwOnUndefined: true,
-  });
-  env.addFilter('keccak', keccak);
-  env.addGlobal('aliases', {
-    aave: { pool: '0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2' },
-    tokens: {
-      USDC: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
-      DAI: '0x6B175474E89094C44Da98b954EedeAC495271d0F',
+  // The production environment builder, so the `bool` filter the template relies
+  // on is the one the CLI registers.
+  const env = makeConfigEnv({
+    searchPaths: [TEMPLATES_DIR],
+    aliases: {
+      aave: { pool: '0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2' },
+      tokens: {
+        USDC: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+        DAI: '0x6B175474E89094C44Da98b954EedeAC495271d0F',
+      },
     },
   });
 
   const params = {
     deposit_assets: ['USDC', 'DAI'],
+    borrow: true,
     emode_category: 0,
   };
+  const signatures = (out: string) =>
+    [...out.matchAll(/signature: "function (\w+)\(/g)].map((m) => m[1]);
 
   it('T9-1: renders without error', () => {
     expect(() => env.render('aave_v3/aave_v3.tmpl', params)).not.toThrow();
   });
 
-  it('T9-2: rendered output parses + has expected rules', () => {
+  it('T9-2: borrow=true renders the full surface', () => {
     const out = env.render('aave_v3/aave_v3.tmpl', params);
     const doc = parseDocument(out);
     expect(doc.errors).toEqual([]);
@@ -47,6 +51,7 @@ describe('aave_v3/aave_v3.tmpl', () => {
       'function repay(address asset, uint256 amount, uint256 interestRateMode, address onBehalfOf)',
     );
     expect(out).toContain('function setUserEMode(uint8 categoryId)');
+    expect(out).toContain('# borrow: true');
   });
 
   it('T9-2b: borrow/repay pin interestRateMode to 2 and setUserEMode to emode_category', () => {
@@ -57,6 +62,37 @@ describe('aave_v3/aave_v3.tmpl', () => {
     // setUserEMode categoryId pinned to the configured emode_category.
     expect(out).toContain('name: categoryId');
     expect(out).toContain('value: "1"');
+  });
+
+  it('T9-2c: borrow=false scopes lending only and does not read emode_category', () => {
+    const out = env.render('aave_v3/aave_v3.tmpl', { deposit_assets: ['USDC'], borrow: false });
+    expect(parseDocument(out).errors).toEqual([]);
+    expect(signatures(out)).toEqual(['approve', 'supply', 'withdraw']);
+    expect(out).toContain('# borrow: false');
+  });
+
+  it('T9-2d: omitting borrow throws rather than defaulting to lending only', () => {
+    expect(() =>
+      env.render('aave_v3/aave_v3.tmpl', { deposit_assets: ['USDC'], emode_category: 0 }),
+    ).toThrow();
+  });
+
+  it('T9-2e: a quoted borrow value is rejected rather than widening the policy', () => {
+    for (const v of ['false', 'true', '0', 'no']) {
+      expect(() =>
+        env.render('aave_v3/aave_v3.tmpl', {
+          deposit_assets: ['USDC'],
+          borrow: v,
+          emode_category: 0,
+        }),
+      ).toThrow(/must be a YAML boolean/);
+    }
+  });
+
+  it('T9-2f: borrow=true without emode_category fails at render time', () => {
+    expect(() =>
+      env.render('aave_v3/aave_v3.tmpl', { deposit_assets: ['USDC'], borrow: true }),
+    ).toThrow();
   });
 
   it('T9-3: _macros/common.tmpl exposes approve(spender) for equal_to single spender', () => {
