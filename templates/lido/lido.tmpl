@@ -1,33 +1,46 @@
 {#-
-  Lido — mint wstETH from ETH.
+  Lido — mint wstETH from ETH, and optionally exit through Lido's withdrawal
+  queue.
 
-  Scopes the one-way conversion WETH → ETH → stETH → wstETH. This is the
-  collateral-acquisition leg of a leveraged wstETH/WETH position: `submit`
-  mints stETH at Lido's exchange rate with no market involved, so the leg
-  carries no slippage and needs no price checker.
+  The mint leg scopes the one-way conversion WETH → ETH → stETH → wstETH. This
+  is the collateral-acquisition leg of a leveraged wstETH/WETH position:
+  `submit` mints stETH at Lido's exchange rate with no market involved, so the
+  leg carries no slippage and needs no price checker.
+
+  The exit leg (`exit: true`) scopes the protocol's own redemption path:
+  wstETH → withdrawal queue → ETH → WETH. It is the alternative to selling the
+  collateral on a swap venue — no slippage and no price checker either, paid at
+  Lido's rate, in exchange for a multi-day wait.
 
   Required template params:
     (none)
 
   Optional params:
+    exit         — bool, default false. `false` scopes the mint leg only, which
+                   is what this template has always done. `true` additionally
+                   scopes the wstETH approve to the queue,
+                   `requestWithdrawalsWstETH`, `claimWithdrawals` and
+                   `WETH.deposit`.
     max_approval — exclusive upper bound (in wei) for the stETH `approve`
                    amount, emitted as `less_than max_approval`. Defaults to
                    uint256.max, which only rules out the literal
                    infinite-approval sentinel and does NOT bound exposure.
                    Set it to a realistic operational ceiling.
+    max_exit_approval — the same, for the wstETH `approve` to the withdrawal
+                   queue. Read only when `exit` is true; mint-only configs need
+                   not declare it.
 
   Resolved from aliases (NOT params):
-    aliases.tokens.WETH   — WETH, unwrapped to ETH
-    aliases.tokens.stETH  — Lido's stETH; also the staking entrypoint
-    aliases.tokens.wstETH — the wstETH wrapper
-    aliases.ZERO          — auto-injected, used to pin the referral
+    aliases.tokens.WETH           — WETH, unwrapped to ETH and re-wrapped on exit
+    aliases.tokens.stETH          — Lido's stETH; also the staking entrypoint
+    aliases.tokens.wstETH         — the wstETH wrapper
+    aliases.lido.withdrawal_queue — unstETH, read only when `exit` is true
+    aliases.ZERO                  — auto-injected, used to pin the referral
 
-  The three addresses are fixed by the protocol, so none of them is a param:
-  there is nothing for a deployment to choose. The reverse direction
-  (`unwrap`, or Lido's withdrawal queue) is deliberately absent — exits go
-  through a swap venue, which is scoped by its own template.
+  The addresses are fixed by the protocol, so none of them is a param: there is
+  nothing for a deployment to choose.
 
-  Policy enforced:
+  Policy enforced (mint leg):
     WETH.withdraw(amount)          amount pass
     stETH.submit(referral)         referral == aliases.ZERO,
                                    execution_options: "send"
@@ -35,46 +48,120 @@
                                    amount < max_approval
     wstETH.wrap(amount)            amount pass
 
-  Four things worth knowing about this policy:
+  Policy enforced (exit leg, `exit: true` only):
+    wstETH.approve(queue, amount)  spender pinned to the queue,
+                                   amount < max_exit_approval
+    queue.requestWithdrawalsWstETH(amounts, owner)
+                                   amounts pass, owner == avatar
+    queue.claimWithdrawals(ids, hints)
+                                   both pass
+    WETH.deposit()                 execution_options: "send"
 
-  `submit` is the only value-bearing call in the repo, hence the `send`
-  execution option. Send permits attaching ETH and says nothing about how
-  much. The amount is unbounded here because of a ZAC gap, not a platform
-  limitation: Roles V2 does have an ether allowance, surfaced by the pinned
-  SDK as `etherWithinAllowance` in the very options object where zac writes
-  `send`, but the DSL has no allowance operator and `executionFlags` maps
+  ── Why `exit` defaults to false rather than being required ──────────────────
+
+  The Morpho and Aave templates make their `borrow` gate REQUIRED, and this one
+  deliberately does not. The difference is what a default would do to configs
+  that already exist. There, the borrow surface was already reachable and the
+  gate was placed around it after the fact: any default would decide an open
+  question on a live config's behalf, so those templates refuse to render until
+  an author answers. Here the exit surface is new, and `false` reproduces, call
+  for call, the policy this template emitted before the leg existed. Nothing is
+  inherited and no existing config changes on its next apply.
+
+  The other half of the `borrow` rationale still applies and is still honoured:
+  the resolved value is emitted as a comment in the generated output, so the
+  decision is legible in the artifact a reviewer reads, and `throwOnUndefined`
+  fires on a misspelled param name rather than silently leaving the leg closed.
+
+  ── Things worth knowing before enabling the exit leg ────────────────────────
+
+  A pending withdrawal is an NFT, not a balance. `requestWithdrawalsWstETH`
+  burns the wstETH immediately and mints an unstETH ERC-721 to the owner; the
+  ETH only appears at `claimWithdrawals`, after an oracle report finalises the
+  request. Any valuation that reads token balances will therefore see the
+  position disappear at request and reappear at claim, understating NAV by the
+  in-flight amount for days. Decide how the NFT is valued BEFORE granting this,
+  not after the first request.
+
+  The queue is slowest exactly when it is most needed. Finalisation lengthens
+  with the size of the exit queue, so this is a cost-optimisation path — it
+  avoids swap fees and slippage on unwinds that can wait — and not a stress
+  path. Keep a swap venue scoped for exits that have to close now.
+
+  `_owner` is pinned to the avatar, so the claim NFT is minted to the Safe and
+  nowhere else. `claimWithdrawalsTo` takes a `_recipient` and is deliberately
+  NOT scoped: `claimWithdrawals` pays the owner, which the previous constraint
+  has already pinned, so the pair leaves no way to direct the proceeds off the
+  Safe. Adding `claimWithdrawalsTo` later would undo that in one line.
+
+  `requestWithdrawals` (the stETH-denominated variant) is also not scoped. The
+  queue accepts wstETH directly, so a position held in wstETH needs no unwrap,
+  and leaving both `unwrap` and the stETH variant out keeps the exit path
+  single-file: wstETH in, ETH out. A config whose Safe holds raw stETH needs a
+  deliberate extension here rather than an unwrap grant.
+
+  The unstETH mint does NOT call `onERC721Received`. Lido implements ERC-721 by
+  hand and mints by emitting `Transfer(0, owner, id)` directly; the receiver
+  check is only reachable from `safeTransferFrom`. So a Safe whose fallback
+  handler has been zeroed — a common hardening step, and one that removes
+  `onERC721Received` — can still hold the claim. The converse is worth
+  remembering: with no fallback handler, nobody can `safeTransferFrom` an
+  unstETH NFT INTO such a Safe, only `transferFrom`.
+
+  ── Value-bearing calls ──────────────────────────────────────────────────────
+
+  `submit` and, on the exit leg, `WETH.deposit` are the value-bearing calls in
+  this repo, hence their `send` execution option. Send permits attaching ETH and
+  says nothing about how much. Both amounts are unbounded because of a ZAC gap,
+  not a platform limitation: Roles V2 does have an ether allowance, surfaced by
+  the pinned SDK as `etherWithinAllowance` in the very options object where zac
+  writes `send`, but the DSL has no allowance operator and `executionFlags` maps
   only `send` and `delegatecall`. So the value is bounded by the Safe's ETH
-  balance alone. That is the mechanism to reach for if a future policy needs
-  a real ceiling — do not conclude from this template that none exists.
+  balance alone. That is the mechanism to reach for if a future policy needs a
+  real ceiling — do not conclude from this template that none exists.
 
-  The unbounded amount is acceptable here because the destination is pinned
-  to stETH, which mints to `msg.sender`: the Safe converts its own ETH into
-  its own stETH, so a compromised role member can change the Safe's asset
-  mix but cannot move value to an address it does not control. The
-  conversion is one-way under this policy — nothing here routes back to
-  WETH — so the exit belongs to a swap venue's own template. Do not reuse
-  `send` against a target that can forward funds elsewhere without
+  The unbounded amounts are acceptable here because both destinations are pinned
+  and both credit `msg.sender`: the Safe converts its own ETH into its own
+  stETH, or its own ETH into its own WETH. A compromised role member can change
+  the Safe's asset mix but cannot move value to an address it does not control.
+  Do not reuse `send` against a target that can forward funds elsewhere without
   re-examining all of this.
 
+  `WETH.withdraw` pays out with a 2300-gas `transfer`, which is not enough for a
+  Safe proxy's fallback on a COLD access (a 2100-gas SLOAD of the singleton slot
+  plus a 2600-gas cold DELEGATECALL). It works here regardless, because the call
+  arrives through the Roles modifier: `execTransactionFromModule` has already
+  touched the proxy and the singleton in the same transaction, so both are warm
+  and the fallback costs ~200 gas. Do not infer from an isolated failing probe
+  that WETH cannot unwrap to a Safe — it cannot only when nothing has touched
+  the Safe yet in that transaction, which is never the case on this path.
+
   The referral is pinned to the zero address rather than left to the caller.
-  Lido pays referral rewards to whoever is named, so an unpinned parameter
-  would let a role member redirect a benefit away from the vault on every
-  mint, without ever failing the gate.
+  Lido pays referral rewards to whoever is named, so an unpinned parameter would
+  let a role member redirect a benefit away from the vault on every mint,
+  without ever failing the gate.
 
-  `max_approval` bounds the STANDING allowance, not cumulative volume.
-  `approve` overwrites rather than increments and `increaseAllowance` is not
-  scoped, so the allowance itself can never exceed the ceiling. But `wrap`
-  takes any amount and nothing rate-limits the approve-then-wrap loop, so
-  total wrapped volume is unbounded whatever the ceiling is set to. Bounding
-  the loop would need `callWithinAllowance`, which the DSL cannot express
-  either. If `increaseAllowance` is ever added here, the ceiling becomes
-  bypassable by repeated increments.
+  `max_approval` / `max_exit_approval` bound the STANDING allowance, not
+  cumulative volume. `approve` overwrites rather than increments and
+  `increaseAllowance` is not scoped, so the allowance itself can never exceed
+  the ceiling. But `wrap` and `requestWithdrawalsWstETH` take any amount and
+  nothing rate-limits the approve-then-act loop, so total volume is unbounded
+  whatever the ceiling is set to. Bounding the loop would need
+  `callWithinAllowance`, which the DSL cannot express either. If
+  `increaseAllowance` is ever added here, the ceilings become bypassable by
+  repeated increments.
 
-  One rendering note: `withdraw` and `wrap` have `pass` on their only
-  parameter, so the plan emits them as selector-only (wildcarded) grants.
-  Their `params:` blocks constrain nothing beyond the selector — which is
-  what `pass` means, but it reads like a constraint.
+  One rendering note: `withdraw`, `wrap` and the withdrawal-queue array params
+  have `pass`, so the plan emits those calls as selector-only (wildcarded)
+  grants. Their `params:` blocks constrain nothing beyond the selector — which
+  is what `pass` means, but it reads like a constraint.
 -#}
+{#- Assert `exit` is a real boolean before anything reads it. YAML quoting picks
+    the type and nunjucks picks truthiness, and together they fail open: `false` is
+    the boolean, but `"false"` is a non-empty string, which is truthy, so a bare
+    `{% if exit %}` would open the gate on the value an author wrote to close it. -#}
+{%- set exit = exit | default(false) | bool("exit") -%}
+# exit: {{ exit }}
 roles:
   - address: "{{ aliases.tokens.WETH }}"
     functions:
@@ -84,6 +171,11 @@ roles:
           - name: amount
             param_type: "static"
             operator: "pass"
+{%- if exit %}
+
+      - signature: "function deposit()"
+        execution_options: "send"
+{%- endif %}
 
   - address: "{{ aliases.tokens.stETH }}"
     functions:
@@ -118,3 +210,41 @@ roles:
           - name: amount
             param_type: "static"
             operator: "pass"
+{%- if exit %}
+
+      - signature: "function approve(address spender, uint256 amount)"
+        execution_options: "none"
+        params:
+          - name: spender
+            param_type: "static"
+            operator: "equal_to"
+            value: "{{ aliases.lido.withdrawal_queue }}"
+            value_type: "address"
+          - name: amount
+            param_type: "static"
+            operator: "less_than"
+            value: "{{ max_exit_approval | default('115792089237316195423570985008687907853269984665640564039457584007913129639935') }}"
+            value_type: "uint256"
+
+  - address: "{{ aliases.lido.withdrawal_queue }}"
+    functions:
+      - signature: "function requestWithdrawalsWstETH(uint256[] _amounts, address _owner)"
+        execution_options: "none"
+        params:
+          - name: _amounts
+            param_type: "dynamic"
+            operator: "pass"
+          - name: _owner
+            param_type: "static"
+            operator: "equal_to_avatar"
+
+      - signature: "function claimWithdrawals(uint256[] _requestIds, uint256[] _hints)"
+        execution_options: "none"
+        params:
+          - name: _requestIds
+            param_type: "dynamic"
+            operator: "pass"
+          - name: _hints
+            param_type: "dynamic"
+            operator: "pass"
+{%- endif %}

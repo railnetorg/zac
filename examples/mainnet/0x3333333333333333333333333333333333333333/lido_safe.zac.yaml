@@ -10,6 +10,18 @@ configs:
       - "{{ aliases.signers.alice }}"
       - "{{ aliases.signers.bob }}"
     params:
+      # Scope Lido's own withdrawal queue as an exit path: wstETH → queue → ETH → WETH,
+      # at Lido's rate with no slippage, in exchange for a multi-day wait. Left off here
+      # because the default position of this template is that exits go through a swap
+      # venue, scoped by its own template.
+      #
+      # Two things to settle before flipping it. Between request and claim the position
+      # is an ERC-721 and not a balance, so any NAV that reads token balances will
+      # understate by the in-flight amount for days. And the queue lengthens exactly when
+      # everyone is exiting, so it is a cost-optimisation path rather than a stress path —
+      # keep a swap venue scoped for exits that have to close now.
+      exit: false
+
       # Exclusive ceiling on the stETH approve to the wrapper, in wei. Omit to fall back
       # to uint256.max, which only rules out the infinite-approval sentinel and does not
       # bound exposure.
@@ -19,3 +31,7 @@ configs:
       # bounds how much the wrapper may pull at any instant, not how much is wrapped over
       # the life of the position.
       max_approval: "100000000000000000000"
+
+      # The same, for the wstETH approve to the withdrawal queue. Read only when `exit`
+      # is true, so it is inert as written here.
+      max_exit_approval: "100000000000000000000"

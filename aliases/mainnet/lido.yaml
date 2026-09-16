@@ -1,0 +1,10 @@
+# Lido — the contracts the Roles template scopes beyond the tokens themselves.
+#
+# stETH and wstETH are NOT here: they are plain tokens and already live in
+# tokens.yaml, which the template resolves as aliases.tokens.stETH / .wstETH.
+# This file carries the protocol contracts that are not tokens.
+#
+# withdrawal_queue is `unstETH` (WithdrawalQueueERC721), the exit side of Lido:
+# it burns stETH/wstETH, mints an ERC-721 claim, and pays ETH once the request
+# is finalised by an oracle report. Only read when a config sets `exit: true`.
+withdrawal_queue: "0x889edC2eDab5f40e902b864aD4d7AdE8E412F9B1"
