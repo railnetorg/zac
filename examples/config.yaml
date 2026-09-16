@@ -6,6 +6,7 @@ aliases:
     compound: ../aliases/mainnet/compound.yaml
     ethena: ../aliases/mainnet/ethena.yaml
     maple: ../aliases/mainnet/maple.yaml
+    merkl: ../aliases/mainnet/merkl.yaml
     pareto: ../aliases/mainnet/pareto.yaml
     wildcat: ../aliases/mainnet/wildcat.yaml
     tokens: ../aliases/mainnet/tokens.yaml
