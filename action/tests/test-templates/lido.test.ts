@@ -116,9 +116,10 @@ describe('lido/lido.tmpl', () => {
   });
 
   it('T11-8: the exit decision is emitted as a comment, defaulting to false', () => {
-    // `throwOnUndefined` only fires on emitted values, so this comment is what
-    // turns a misspelled param name into a render error rather than a silently
-    // closed gate — and what makes the decision legible in the plan.
+    // The comment is legible when rendering the template directly, and only
+    // there: `runGenerate` re-emits via `toJSON()` + `serializeRoleStates`,
+    // neither of which carries comments through to the generated artifact. It
+    // does not catch a misspelled param name either — see T11-16.
     expect(env.render('lido/lido.tmpl', {})).toContain('# exit: false');
     expect(env.render('lido/lido.tmpl', { exit: true })).toContain('# exit: true');
   });
@@ -216,6 +217,23 @@ describe('lido/lido.tmpl', () => {
     // the gate would open on the value an author wrote to close it.
     for (const v of ['false', 'true', 1, 0, null]) {
       expect(() => env.render('lido/lido.tmpl', { exit: v })).toThrow();
+    }
+  });
+
+  it('T11-16: a misspelled exit key is silently fail-closed, not an error', () => {
+    // The cost of defaulting the gate instead of requiring it. `default(false)`
+    // substitutes before anything can object, so `throwOnUndefined` never sees an
+    // undefined lookup and `bool` is handed a real boolean. Every typo below
+    // renders the mint-only policy with no signal to the author.
+    //
+    // This is fail-closed, so it is not a soundness hole — but it is the reason
+    // `borrow` is required on aave_v3/morpho_blue, where `bool(undefined)` throws
+    // because no default runs first. Pinned so the gap stays visible: if the
+    // template ever drops the default, this test should be deleted, not updated.
+    for (const key of ['exti', 'Exit', 'exit_leg', 'EXIT']) {
+      const out = env.render('lido/lido.tmpl', { [key]: true });
+      expect(out, key).toContain('# exit: false');
+      expect(out, key).not.toContain(QUEUE);
     }
   });
 });

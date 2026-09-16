@@ -60,18 +60,29 @@
   ── Why `exit` defaults to false rather than being required ──────────────────
 
   The Morpho and Aave templates make their `borrow` gate REQUIRED, and this one
-  deliberately does not. The difference is what a default would do to configs
-  that already exist. There, the borrow surface was already reachable and the
-  gate was placed around it after the fact: any default would decide an open
-  question on a live config's behalf, so those templates refuse to render until
-  an author answers. Here the exit surface is new, and `false` reproduces, call
-  for call, the policy this template emitted before the leg existed. Nothing is
-  inherited and no existing config changes on its next apply.
+  deliberately does not. That is a different tradeoff, not a different
+  situation. `morpho_blue.tmpl` already existed when #44 added its borrow
+  surface, and the required gate landed in the same change (ddc00f1) precisely
+  because existing configs pointed at it — the position this template is in now.
+  Morpho chose to refuse to render until an author answers, accepting that every
+  existing config breaks until it is edited. Here `false` reproduces, call for
+  call, the policy this template emitted before the leg existed, so no existing
+  config changes on its next apply and none has to be touched.
 
-  The other half of the `borrow` rationale still applies and is still honoured:
-  the resolved value is emitted as a comment in the generated output, so the
-  decision is legible in the artifact a reviewer reads, and `throwOnUndefined`
-  fires on a misspelled param name rather than silently leaving the leg closed.
+  What that costs, and it is worth knowing before copying the pattern: a
+  defaulted gate records no decision. `exit | default(false)` substitutes a
+  value before anything can object, so a misspelled key — `exti`, `Exit`,
+  `exit_leg` — silently renders the mint-only policy. `throwOnUndefined` cannot
+  catch it: it fires on emitting an undefined value, and the default means there
+  never is one. The `borrow` templates get that protection only because
+  `bool(undefined)` throws when no default supplies a value first. T11-16 pins
+  this behaviour so it stays a known gap rather than a surprise.
+
+  The `# exit:` line below is not the safety net it may look like either. It is
+  visible when rendering the template directly, and nowhere downstream:
+  `runGenerate` parses the rendered YAML with `toJSON()` and re-emits it through
+  `serializeRoleStates`, so no comment survives into the generated artifact.
+  The same is true of `# borrow:` in `aave_v3.tmpl` and `morpho_blue.tmpl`.
 
   ── Things worth knowing before enabling the exit leg ────────────────────────
 
