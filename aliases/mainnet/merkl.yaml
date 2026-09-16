@@ -1,0 +1,4 @@
+# Merkl (by Angle Labs) reward distribution. `distributor` is the canonical
+# Distributor proxy the merkl.tmpl policy pins as its only target — one per
+# chain, all campaigns pay through it.
+distributor: "0x3Ef3D8bA38EBe18DB133cEc108f4D14CE00Dd9Ae"
