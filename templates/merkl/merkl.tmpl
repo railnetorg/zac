@@ -1,0 +1,79 @@
+{#-
+  Merkl Distributor — claim accumulated campaign rewards.
+
+  Grants exactly ONE function on the canonical per-chain Merkl Distributor:
+
+    claim(address[] users, address[] tokens, uint256[] amounts, bytes32[][] proofs)
+
+  Required template params:
+    (none)
+
+  Resolved from aliases (NOT params):
+    aliases.merkl.distributor — the canonical Merkl Distributor for the
+    active chain. One distributor per chain, fixed by the protocol, so
+    there is nothing for a deployment to choose.
+
+  ## Why every parameter is `pass`
+
+  zac's param_type taxonomy (static | dynamic | tuple | abi_encoded) has no
+  array type, so "every element of `users` equals the avatar" cannot be
+  expressed here, even though Roles v2 itself supports array element
+  conditions — the same class of DSL gap the lido template documents for
+  ether allowances. The unscoped `users` below is that limitation made
+  explicit, not an oversight.
+
+  It is also not load-bearing, for two independent reasons in the deployed
+  Distributor (verified against the mainnet implementation):
+
+    1. Destination — through `claim` the recipients are forced to zero, so
+       the distributor pays each users[i]'s rewards to users[i] itself, or
+       to a claimRecipient users[i] has PREVIOUSLY set for that token,
+       which only users[i] can do. The caller controls nothing about the
+       destination. The Safe sets no claimRecipient, and this policy
+       cannot set one (below), so the Safe's rewards can only land on the
+       Safe.
+    2. Authorisation — `_claim` reverts `NotWhitelisted()` when the caller
+       is neither users[i] nor an operator users[i] approved (nor a Merkl
+       main operator / governor). In practice the Safe can only claim for
+       ITSELF; a claim naming a stranger reverts at the protocol unless
+       that stranger explicitly approved the Safe — and even then the
+       payout still routes per (1).
+
+  Merkl `amounts` are CUMULATIVE totals by tree design: the distributor
+  transfers `amount - alreadyClaimed`, so a replayed claim is a no-op
+  rather than a double-pay.
+
+  ## Deliberate omissions — the actual attack surface
+
+    claimWithRecipient(users, tokens, amounts, proofs, recipients, datas)
+      — the caller-chosen `recipients` IS the redirection vector: granted,
+        it would pay the Safe's rewards to an arbitrary address.
+    setClaimRecipient(recipient, token)
+      — persistently reroutes every FUTURE claim of the Safe for `token`.
+    toggleOperator(user, operator)
+      — authorises an external operator to claim on the Safe's behalf,
+        including through claimWithRecipient, outside this policy's gate.
+
+  Everything else on the distributor (updateTree, dispute/revoke, the
+  setters, recoverERC20, the upgrade path) is Merkl-governance-gated and
+  also not granted. Security therefore rests on target + selector pinning
+  plus these omissions, and on nothing else.
+-#}
+roles:
+  - address: "{{ aliases.merkl.distributor }}"
+    functions:
+      - signature: "function claim(address[] users, address[] tokens, uint256[] amounts, bytes32[][] proofs)"
+        execution_options: "none"
+        params:
+          - name: users
+            param_type: "dynamic"
+            operator: "pass"
+          - name: tokens
+            param_type: "dynamic"
+            operator: "pass"
+          - name: amounts
+            param_type: "dynamic"
+            operator: "pass"
+          - name: proofs
+            param_type: "dynamic"
+            operator: "pass"
