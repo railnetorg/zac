@@ -20,14 +20,23 @@ type MorphoMarket = {
 };
 
 const morphoMarkets = (): Record<string, MorphoMarket> =>
-  (parseDocument(readFileSync(MORPHO_BLUE, 'utf8')).toJSON() as { markets: Record<string, MorphoMarket> })
-    .markets;
+  (
+    parseDocument(readFileSync(MORPHO_BLUE, 'utf8')).toJSON() as {
+      markets: Record<string, MorphoMarket>;
+    }
+  ).markets;
 
 /** Morpho's market id: keccak256 over the MarketParams tuple, which is all-static. */
 const marketId = (m: MorphoMarket): string =>
   keccak256(
     encodeAbiParameters(
-      [{ type: 'address' }, { type: 'address' }, { type: 'address' }, { type: 'address' }, { type: 'uint256' }],
+      [
+        { type: 'address' },
+        { type: 'address' },
+        { type: 'address' },
+        { type: 'address' },
+        { type: 'uint256' },
+      ],
       [
         m.loan_token as `0x${string}`,
         m.collateral_token as `0x${string}`,
@@ -74,7 +83,9 @@ describe('curated aliases', () => {
   // market. Pinning the derived id is the only check that catches that, so any
   // market whose id is documented in the registry gets asserted here.
   it('T9-7: weth_wsteth_965 derives the documented Morpho market id', () => {
-    expect(marketId(morphoMarkets().weth_wsteth_965)).toBe(
+    const market = morphoMarkets().weth_wsteth_965;
+    expect(market, 'weth_wsteth_965 missing from morpho_blue.yaml').toBeDefined();
+    expect(marketId(market!)).toBe(
       '0xb8fc70e82bc5bb53e773626fcc6a23f7eefa036918d7ef216ecfb1950a94a85e',
     );
   });
