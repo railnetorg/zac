@@ -262,19 +262,19 @@ contract LidoExitRoleMainnetTest is ZacForkTest {
         amounts[0] = ROUND;
 
         vm.prank(ALICE);
-        IRoles(modAddr).execTransactionWithRole(
-            WSTETH, 0, abi.encodeCall(IERC20.approve, (QUEUE, ROUND)), CALL, ROLE_KEY, true
-        );
+        IRoles(modAddr)
+            .execTransactionWithRole(WSTETH, 0, abi.encodeCall(IERC20.approve, (QUEUE, ROUND)), CALL, ROLE_KEY, true);
 
         vm.prank(ALICE);
-        IRoles(modAddr).execTransactionWithRole(
-            QUEUE,
-            0,
-            abi.encodeCall(IWithdrawalQueue.requestWithdrawalsWstETH, (amounts, safeAddr)),
-            CALL,
-            ROLE_KEY,
-            true
-        );
+        IRoles(modAddr)
+            .execTransactionWithRole(
+                QUEUE,
+                0,
+                abi.encodeCall(IWithdrawalQueue.requestWithdrawalsWstETH, (amounts, safeAddr)),
+                CALL,
+                ROLE_KEY,
+                true
+            );
 
         uint256 requestId = IWithdrawalQueue(QUEUE).getLastRequestId();
         assertEq(IWithdrawalQueue(QUEUE).ownerOf(requestId), safeAddr, "claim NFT not minted to the Safe");
@@ -298,18 +298,18 @@ contract LidoExitRoleMainnetTest is ZacForkTest {
 
         uint256 ethBefore = safeAddr.balance;
         vm.prank(ALICE);
-        IRoles(modAddr).execTransactionWithRole(
-            QUEUE, 0, abi.encodeCall(IWithdrawalQueue.claimWithdrawals, (ids, hints)), CALL, ROLE_KEY, true
-        );
+        IRoles(modAddr)
+            .execTransactionWithRole(
+                QUEUE, 0, abi.encodeCall(IWithdrawalQueue.claimWithdrawals, (ids, hints)), CALL, ROLE_KEY, true
+            );
         uint256 claimed = safeAddr.balance - ethBefore;
         assertGt(claimed, 0, "claim did not deliver ETH to the Safe");
 
         // The claim pays native ETH, which nothing downstream of this Safe takes; `deposit`
         // is what closes the loop back to the WETH the strategy is denominated in.
         vm.prank(ALICE);
-        IRoles(modAddr).execTransactionWithRole(
-            WETH, claimed, abi.encodeCall(IWETHDeposit.deposit, ()), CALL, ROLE_KEY, true
-        );
+        IRoles(modAddr)
+            .execTransactionWithRole(WETH, claimed, abi.encodeCall(IWETHDeposit.deposit, ()), CALL, ROLE_KEY, true);
         assertEq(IERC20(WETH).balanceOf(safeAddr), claimed, "ETH was not wrapped back to WETH");
     }
 
@@ -319,18 +319,14 @@ contract LidoExitRoleMainnetTest is ZacForkTest {
     ///        wrapper's bound.
     function test_TX2_ExitApprovalHasItsOwnCeiling() public {
         vm.prank(ALICE);
-        IRoles(modAddr).execTransactionWithRole(
-            WSTETH, 0, abi.encodeCall(IERC20.approve, (QUEUE, MAX_EXIT_APPROVAL - 1)), CALL, ROLE_KEY, true
-        );
+        IRoles(modAddr)
+            .execTransactionWithRole(
+                WSTETH, 0, abi.encodeCall(IERC20.approve, (QUEUE, MAX_EXIT_APPROVAL - 1)), CALL, ROLE_KEY, true
+            );
         assertEq(IERC20(WSTETH).allowance(safeAddr, QUEUE), MAX_EXIT_APPROVAL - 1, "allowance did not update");
 
         expectPolicyReject(
-            modAddr,
-            ALICE,
-            WSTETH,
-            abi.encodeCall(IERC20.approve, (QUEUE, MAX_EXIT_APPROVAL + 1)),
-            CALL,
-            ROLE_KEY
+            modAddr, ALICE, WSTETH, abi.encodeCall(IERC20.approve, (QUEUE, MAX_EXIT_APPROVAL + 1)), CALL, ROLE_KEY
         );
     }
 
