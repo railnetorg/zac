@@ -15,5 +15,9 @@ configs:
     members:
       - "__MEMBER__"
     params:
+      # Mint-only: this fixture covers the leg that existed before the exit leg,
+      # so the withdrawal queue must stay unscoped. Required, not defaulted.
+      exit: false
+
       # 100 ether — low enough that the over-cap deny case is reachable.
       max_approval: "100000000000000000000"

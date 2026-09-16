@@ -35,7 +35,7 @@ describe('lido/lido.tmpl', () => {
     },
   });
 
-  const rolesOf = (params: Record<string, unknown> = {}): RenderedRole[] => {
+  const rolesOf = (params: Record<string, unknown> = { exit: false }): RenderedRole[] => {
     const doc = parseDocument(env.render('lido/lido.tmpl', params));
     expect(doc.errors).toEqual([]);
     return (doc.toJS() as { roles: RenderedRole[] }).roles;
@@ -47,11 +47,14 @@ describe('lido/lido.tmpl', () => {
     return role.functions;
   };
 
-  it('T11-1: renders with no params at all', () => {
-    // The mint path is fixed by the protocol, so the template must not require any
-    // `params:` block — a deployment has nothing to choose there. `exit` defaults
-    // to false precisely so this stays true.
-    expect(() => env.render('lido/lido.tmpl', {})).not.toThrow();
+  it('T11-1: `exit` is required — an omitted gate is a render error', () => {
+    // Every other param is optional: the mint path is fixed by the protocol, so a
+    // deployment has nothing to choose there. `exit` is the exception, and is
+    // required rather than defaulted so that a config which never mentions it
+    // fails loudly instead of silently recording no decision about the exit leg.
+    expect(() => env.render('lido/lido.tmpl', {})).toThrow(/exit/);
+    expect(() => env.render('lido/lido.tmpl', { exit: false })).not.toThrow();
+    expect(() => env.render('lido/lido.tmpl', { exit: true })).not.toThrow();
   });
 
   it('T11-2: scopes the four calls on the right targets', () => {
@@ -92,35 +95,36 @@ describe('lido/lido.tmpl', () => {
   });
 
   it('T11-5: the approve spender is pinned to the wrapper', () => {
-    const out = env.render('lido/lido.tmpl', {});
+    const out = env.render('lido/lido.tmpl', { exit: false });
     expect(out).toContain(`value: "${WSTETH}"`);
     expect(out).not.toContain('oneOf');
   });
 
   it('T11-6: max_approval defaults to uint256.max and is overridable', () => {
-    expect(env.render('lido/lido.tmpl', {})).toContain(`value: "${UINT256_MAX}"`);
-    expect(env.render('lido/lido.tmpl', { max_approval: '100000000000000000000' })).toContain(
-      'value: "100000000000000000000"',
-    );
+    expect(env.render('lido/lido.tmpl', { exit: false })).toContain(`value: "${UINT256_MAX}"`);
+    expect(
+      env.render('lido/lido.tmpl', { exit: false, max_approval: '100000000000000000000' }),
+    ).toContain('value: "100000000000000000000"');
   });
 
   it('T11-7: the reverse direction is not scoped unless exit is on', () => {
     // Exits go through a swap venue unless a config opts into Lido's own queue.
     // If `unwrap` or a withdrawal-queue call appears in a DEFAULT render, it is a
     // scope change and wants a decision.
-    const out = env.render('lido/lido.tmpl', {});
+    const out = env.render('lido/lido.tmpl', { exit: false });
     expect(out).not.toContain('unwrap');
     expect(out).not.toContain('requestWithdrawals');
     expect(out).not.toContain('claimWithdrawals');
     expect(out).not.toContain(QUEUE);
   });
 
-  it('T11-8: the exit decision is emitted as a comment, defaulting to false', () => {
-    // The comment is legible when rendering the template directly, and only
-    // there: `runGenerate` re-emits via `toJSON()` + `serializeRoleStates`,
-    // neither of which carries comments through to the generated artifact. It
-    // does not catch a misspelled param name either — see T11-16.
-    expect(env.render('lido/lido.tmpl', {})).toContain('# exit: false');
+  it('T11-8: the resolved exit decision is emitted as a comment', () => {
+    // Legible when rendering the template directly, and only there: `runGenerate`
+    // re-emits via `toJSON()` + `serializeRoleStates`, neither of which carries
+    // comments into the generated artifact. So this records the decision for
+    // someone reading the template output, and is not what enforces it — the
+    // param being required is (T11-1, T11-16).
+    expect(env.render('lido/lido.tmpl', { exit: false })).toContain('# exit: false');
     expect(env.render('lido/lido.tmpl', { exit: true })).toContain('# exit: true');
   });
 
@@ -205,7 +209,7 @@ describe('lido/lido.tmpl', () => {
       searchPaths: [TEMPLATES_DIR],
       aliases: { ZERO, tokens: { WETH, stETH: STETH, wstETH: WSTETH } },
     });
-    expect(() => noLido.render('lido/lido.tmpl', {})).not.toThrow();
+    expect(() => noLido.render('lido/lido.tmpl', { exit: false })).not.toThrow();
     expect(() => noLido.render('lido/lido.tmpl', { exit: false })).not.toThrow();
     // ...and asking for the leg without the namespace fails loudly rather than
     // emitting a policy with an empty target address.
@@ -220,20 +224,17 @@ describe('lido/lido.tmpl', () => {
     }
   });
 
-  it('T11-16: a misspelled exit key is silently fail-closed, not an error', () => {
-    // The cost of defaulting the gate instead of requiring it. `default(false)`
-    // substitutes before anything can object, so `throwOnUndefined` never sees an
-    // undefined lookup and `bool` is handed a real boolean. Every typo below
-    // renders the mint-only policy with no signal to the author.
+  it('T11-16: a misspelled exit key is a render error, not a silent mint-only policy', () => {
+    // The reason the gate is required rather than `| default(false)`. With a
+    // default, each of these substitutes cleanly and renders the mint-only policy
+    // with no signal to the author — fail-closed, but a decision nobody made.
+    // Without one, `bool(undefined)` throws and names the param.
     //
-    // This is fail-closed, so it is not a soundness hole — but it is the reason
-    // `borrow` is required on aave_v3/morpho_blue, where `bool(undefined)` throws
-    // because no default runs first. Pinned so the gap stays visible: if the
-    // template ever drops the default, this test should be deleted, not updated.
+    // `throwOnUndefined` is not what catches this: it fires on emitting an
+    // undefined value, and `bool` throws first. Re-adding a default would make
+    // every case below pass silently, so this test guards the choice.
     for (const key of ['exti', 'Exit', 'exit_leg', 'EXIT']) {
-      const out = env.render('lido/lido.tmpl', { [key]: true });
-      expect(out, key).toContain('# exit: false');
-      expect(out, key).not.toContain(QUEUE);
+      expect(() => env.render('lido/lido.tmpl', { [key]: true }), key).toThrow(/exit/);
     }
   });
 });

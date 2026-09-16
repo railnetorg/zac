@@ -13,14 +13,13 @@
   Lido's rate, in exchange for a multi-day wait.
 
   Required template params:
-    (none)
-
-  Optional params:
-    exit         — bool, default false. `false` scopes the mint leg only, which
-                   is what this template has always done. `true` additionally
+    exit         — bool, no default. `false` scopes the mint leg only, which is
+                   what this template has always done. `true` additionally
                    scopes the wstETH approve to the queue,
                    `requestWithdrawalsWstETH`, `claimWithdrawals` and
-                   `WETH.deposit`.
+                   `WETH.deposit`. Required rather than defaulted; see below.
+
+  Optional params:
     max_approval — exclusive upper bound (in wei) for the stETH `approve`
                    amount, emitted as `less_than max_approval`. Defaults to
                    uint256.max, which only rules out the literal
@@ -57,32 +56,35 @@
                                    both pass
     WETH.deposit()                 execution_options: "send"
 
-  ── Why `exit` defaults to false rather than being required ──────────────────
+  ── Why `exit` is required rather than defaulted ─────────────────────────────
 
-  The Morpho and Aave templates make their `borrow` gate REQUIRED, and this one
-  deliberately does not. That is a different tradeoff, not a different
-  situation. `morpho_blue.tmpl` already existed when #44 added its borrow
-  surface, and the required gate landed in the same change (ddc00f1) precisely
-  because existing configs pointed at it — the position this template is in now.
-  Morpho chose to refuse to render until an author answers, accepting that every
-  existing config breaks until it is edited. Here `false` reproduces, call for
-  call, the policy this template emitted before the leg existed, so no existing
-  config changes on its next apply and none has to be touched.
+  Same rule as the `borrow` gate on `aave_v3.tmpl` and `morpho_blue.tmpl`, and
+  for the same reason. `morpho_blue.tmpl` already existed when #44 added its
+  borrow surface; the required gate landed in the same change (ddc00f1)
+  precisely because existing configs pointed at it. This template is in that
+  position now, so it answers the question the same way.
 
-  What that costs, and it is worth knowing before copying the pattern: a
-  defaulted gate records no decision. `exit | default(false)` substitutes a
-  value before anything can object, so a misspelled key — `exti`, `Exit`,
-  `exit_leg` — silently renders the mint-only policy. `throwOnUndefined` cannot
-  catch it: it fires on emitting an undefined value, and the default means there
-  never is one. The `borrow` templates get that protection only because
-  `bool(undefined)` throws when no default supplies a value first. T11-16 pins
-  this behaviour so it stays a known gap rather than a surprise.
+  A default would have been safe — `false` reproduces, call for call, the policy
+  this template emitted before the leg existed — but safe is not the same as
+  decided. `exit | default(false)` substitutes a value before anything can
+  object, so a misspelled key (`exti`, `Exit`, `exit_leg`) renders the mint-only
+  policy with no signal to the author, and a config that never mentions `exit`
+  records no choice about it. Requiring the param is what converts both cases
+  into a render error: `bool(undefined)` throws when no default runs first.
+  T11-16 pins the typo case, T11-1 the omitted one.
 
-  The `# exit:` line below is not the safety net it may look like either. It is
-  visible when rendering the template directly, and nowhere downstream:
-  `runGenerate` parses the rendered YAML with `toJSON()` and re-emits it through
-  `serializeRoleStates`, so no comment survives into the generated artifact.
-  The same is true of `# borrow:` in `aave_v3.tmpl` and `morpho_blue.tmpl`.
+  Note that `throwOnUndefined` is NOT what delivers this, despite covering the
+  same ground elsewhere — it fires on emitting an undefined value, and `bool`
+  throws before any emit happens. The `# exit:` line below is not a safety net
+  either: it is visible when rendering the template directly and nowhere
+  downstream, because `runGenerate` parses the rendered YAML with `toJSON()` and
+  re-emits through `serializeRoleStates`, neither of which carries comments into
+  the generated artifact. The same is true of `# borrow:` in the two templates
+  above. The param being required is the only thing that forces the decision.
+
+  The cost is real and is accepted: every existing config pointing at this
+  template fails to render until someone adds `exit: false` (or `true`). That is
+  a one-line edit, caught loudly at generate time rather than silently at apply.
 
   ── Things worth knowing before enabling the exit leg ────────────────────────
 
@@ -171,7 +173,7 @@
     the type and nunjucks picks truthiness, and together they fail open: `false` is
     the boolean, but `"false"` is a non-empty string, which is truthy, so a bare
     `{% if exit %}` would open the gate on the value an author wrote to close it. -#}
-{%- set exit = exit | default(false) | bool("exit") -%}
+{%- set exit = exit | bool("exit") -%}
 # exit: {{ exit }}
 roles:
   - address: "{{ aliases.tokens.WETH }}"
