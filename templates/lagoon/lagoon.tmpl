@@ -14,6 +14,16 @@
             `asset()`), e.g. "USDC". Resolved via aliases.tokens[<asset>]
             with NO existence guard ⇒ render-time error if missing. The role
             is granted approve(spender = vault, amount = *) on this token ONLY.
+    safe_is_valuation_manager — bool. Whether the Safe is the vault's
+            `valuationManager`. `true` additionally grants
+            updateNewTotalAssets (propose a NAV). `false` leaves it out:
+            the vault only accepts that call from its valuationManager, so
+            on a vault whose valuationManager is another address the grant
+            could never be exercised through the Roles modifier. Required
+            rather than defaulted, and asserted as a YAML boolean, so each
+            config states the vault's setup instead of inheriting a grant
+            that is either inert or, if the vault is later reconfigured,
+            unreviewed authority to propose the NAV the same role settles.
 
   Resolved from aliases (NOT passed as a raw address):
     aliases.tokens[asset] — the underlying ERC-20 the vault pulls on deposit.
@@ -24,13 +34,15 @@
       `pass`. This lets the Safe authorize the vault to pull its underlying
       on deposit, and authorize nothing else — the spender is hard-scoped to
       the vault, and approve on any other token is not granted.
-    - One vault role on `vault`, with six allowed functions, all
-      execution_options: "none". Every parameter is declared `pass`
-      explicitly (zac's validator requires every signature param to be
-      covered); the all-pass optimization in `toSdkTargets` then
-      collapses this to `allowFunction` on-chain.
-    - Six functions covered (see Lagoon docs §Smart-Contract Reference):
+    - One vault role on `vault`, with five allowed functions (six with
+      `safe_is_valuation_manager: true`), all execution_options: "none".
+      Every parameter is declared `pass` explicitly (zac's validator
+      requires every signature param to be covered); the all-pass
+      optimization in `toSdkTargets` then collapses this to `allowFunction`
+      on-chain.
+    - Functions covered (see Lagoon docs §Smart-Contract Reference):
       • updateNewTotalAssets(uint256)     — propose a new NAV value
+                                            (only with safe_is_valuation_manager)
       • settleDeposit(uint256)            — confirm NAV + settle pending deposits
       • settleRedeem(uint256)             — confirm NAV + settle pending redemptions
       • expireTotalAssets()               — force the current NAV value to expire
@@ -47,22 +59,27 @@
   vault's safe confirms it by calling settleDeposit(x) / settleRedeem(x)
   with the SAME value — the vault reverts on a mismatch or when no
   proposal is pending. updateNewTotalAssets only executes through the
-  Roles modifier when the Safe itself is the vault's valuationManager;
-  for vaults with an external valuationManager the permission is inert.
+  Roles modifier when the Safe itself is the vault's valuationManager,
+  which is what `safe_is_valuation_manager` declares.
 -#}
 {%- from "_macros/common.tmpl" import approve -%}
+{#- Assert the flag is a real boolean before gating on it: a quoted "false" is a
+    non-empty string, which nunjucks treats as truthy. -#}
+{%- set safe_is_valuation_manager = safe_is_valuation_manager | bool("safe_is_valuation_manager") -%}
+# safe_is_valuation_manager: {{ safe_is_valuation_manager }}
 roles:
   {{ approve(aliases.tokens[asset], vault) | indent(2) }}
 
   - address: "{{ vault }}"
     functions:
+{%- if safe_is_valuation_manager %}
       - signature: "function updateNewTotalAssets(uint256 _newTotalAssets)"
         execution_options: "none"
         params:
           - name: _newTotalAssets
             param_type: "static"
             operator: "pass"
-
+{% endif %}
       - signature: "function settleDeposit(uint256 _newTotalAssets)"
         execution_options: "none"
         params:
