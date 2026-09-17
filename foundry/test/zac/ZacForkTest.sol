@@ -69,7 +69,7 @@ abstract contract ZacForkTest is Test {
             safeProxyFactory: 0x4e1DCf7AD4e460CfD30791CCC4F9c8a4f820ec67,
             safeSingleton: 0x41675C099F32341bf84BFc5382aF534df5C7461a,
             moduleProxyFactory: 0x000000000000aDdB49795b0f9bA5BC298cDda236,
-            rolesMastercopy: 0x9646fDAD06d3e24444381f44362a3B0eB343D337
+            rolesMastercopy: 0xF2964CE6161ce0e75964Fe7927cE114cb0B283D5
         });
     }
 
