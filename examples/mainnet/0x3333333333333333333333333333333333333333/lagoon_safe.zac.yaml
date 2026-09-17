@@ -18,3 +18,7 @@ configs:
       # on THIS token only. Pass the token alias KEY (resolved via
       # aliases.tokens[<key>]) — replace with the vault's actual underlying.
       asset: "USDC"
+      # Whether the Safe is the vault's valuationManager. `true` also grants
+      # updateNewTotalAssets (propose a NAV); on a vault whose valuationManager
+      # is another address that grant could never be exercised.
+      safe_is_valuation_manager: false
