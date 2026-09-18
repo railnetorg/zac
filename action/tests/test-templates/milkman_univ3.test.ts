@@ -181,4 +181,52 @@ describe('milkman/milkman_univ3.tmpl', () => {
       }),
     ).toThrow();
   });
+
+  it('TMU-13: a QUOTED max_slippage_bps fails fast (nunjucks + would concat "200" → "2001", a 10× looser cap)', () => {
+    expect(() =>
+      render({
+        swaps: [{ path: ['PENDLE', 'WETH', 'wstETH'], fees: [30, 1], max_slippage_bps: '200' }],
+      }),
+    ).toThrow();
+  });
+
+  it('TMU-14: a MISSING max_slippage_bps fails fast (would otherwise render NaN and only break at apply time)', () => {
+    expect(() =>
+      render({
+        swaps: [{ path: ['PENDLE', 'WETH', 'wstETH'], fees: [30, 1] }],
+      }),
+    ).toThrow();
+  });
+
+  it('TMU-15: a fee in raw Uniswap units (3000) fails fast — fees must be UniV3 tiers in BIPS', () => {
+    expect(() =>
+      render({
+        swaps: [{ path: ['PENDLE', 'WETH', 'wstETH'], fees: [3000, 100], max_slippage_bps: 200 }],
+      }),
+    ).toThrow();
+  });
+
+  it('TMU-16: a QUOTED fee ("30") fails fast — tier membership is checked with strict equality', () => {
+    expect(() =>
+      render({
+        swaps: [{ path: ['PENDLE', 'WETH', 'wstETH'], fees: ['30', 1], max_slippage_bps: 200 }],
+      }),
+    ).toThrow();
+  });
+
+  it('TMU-17: fee 100 (the bips/raw-unit collision the guard cannot disambiguate) still renders — it IS the 1% tier in bips', () => {
+    const out = render({
+      swaps: [{ path: ['PENDLE', 'WETH', 'wstETH'], fees: [30, 100], max_slippage_bps: 200 }],
+    });
+    expect(out).toBe(out); // rendered without throwing; the pin is what matters
+    expect(out).toContain(
+      abiEncode(
+        [
+          [PENDLE, WETH, wstETH],
+          [30, 100],
+        ],
+        ['address[]', 'uint24[]'],
+      ),
+    );
+  });
 });

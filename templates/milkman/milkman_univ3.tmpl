@@ -13,9 +13,18 @@
 
   UNITS — poolFees are in BIPS, not Uniswap fee units: a 0.3% pool is 30 (not
   3000), 0.05% is 5, 0.01% is 1. The calculator multiplies by 100 into
-  Uniswap's hundredths-of-a-bip internally. A wrong unit points at a
-  nonexistent pool, the quoter reverts, and orders never settle — fail-closed
-  but broken (funds sit in Milkman escrow until cancelled through the Safe).
+  Uniswap's hundredths-of-a-bip internally. The template rejects at render any
+  fee outside {1, 5, 30, 100} — the factory's enabled tiers in bips — so most
+  unit mistakes (3000, 500, 10000, 0) fail fast instead of pointing at a
+  nonexistent pool the quoter would revert on (fail-closed but broken: funds
+  sit in Milkman escrow until cancelled through the Safe). The one value
+  validation CANNOT disambiguate is 100: as bips it is the 1% tier, as a raw
+  Uniswap unit it would mean the 0.01% tier, and both pools often exist —
+  writing 100 while thinking in raw units silently prices against the 1% pool,
+  typically far thinner than intended, which undercuts the depth the
+  manipulation-cost argument below depends on. If you mean the 0.01% tier,
+  write 1. (Should Uniswap governance ever enable a new fee tier, the allowed
+  set in the guard below needs the matching bips value added.)
 
   Pinning innerData is load-bearing, exactly as in milkman.tmpl: the slippage
   cap is a bound relative to whatever the route quotes. If innerData were left
@@ -47,7 +56,7 @@
                                            # fromToken, last is the toToken
                 fees: [<int>, ...]         # pool fee per hop, in BIPS (see
                                            # UNITS above); length = path − 1
-                max_slippage_bps: <int>    # e.g. 200 ≡ ≤ 2%
+                max_slippage_bps: <int>    # UNQUOTED integer; e.g. 200 ≡ ≤ 2%
             One `or` branch per swap, with the cap and route bound to the exact
             (from, to) pair.
 
@@ -94,6 +103,21 @@
   {%- if (swap.fees | length) + 1 != (swap.path | length) -%}
     {{ milkman_univ3_error_fees_length_must_be_path_length_minus_one }}
   {%- endif -%}
+  {#- Must be an UNQUOTED integer: nunjucks `+` concatenates strings, so a
+      quoted "200" would render the less_than ceiling as "2001" (a 10× more
+      permissive cap), and a missing value would render NaN. -#}
+  {%- if swap.max_slippage_bps is not number -%}
+    {{ milkman_univ3_error_max_slippage_bps_must_be_an_unquoted_integer }}
+  {%- endif -%}
+  {#- Fees must be UNQUOTED members of the enabled UniV3 tiers in BIPS (see
+      UNITS in the header). This turns raw-Uniswap-unit mistakes (3000, 500,
+      10000) into render errors; it cannot disambiguate 100 (1% tier in bips,
+      0.01% tier in raw units) — that one is on the author. -#}
+  {%- for fee in swap.fees -%}
+    {%- if fee not in [1, 5, 30, 100] -%}
+      {{ milkman_univ3_error_fee_must_be_a_univ3_tier_in_bips_1_5_30_or_100 }}
+    {%- endif -%}
+  {%- endfor -%}
 {%- endfor -%}
 {#- Deduplicate the from-token keys (path[0] of each swap) for the approves. -#}
 {%- set from_keys = [] -%}

@@ -21,7 +21,7 @@
     to_tokens   — list of destination tokens, each with its own slippage cap and
                   the exact Chainlink feed path used to price the swap:
                     - token: <TOKEN key>
-                      max_slippage_bps: <int>      # e.g. 500 ≡ ≤ 5%
+                      max_slippage_bps: <int>      # UNQUOTED integer; e.g. 500 ≡ ≤ 5%
                       feeds: [<feed addr>, ...]    # the price path, in order
                       reverses: [<bool>, ...]      # one per feed; same length
                   feeds/reverses must equal exactly what the swap submits for this
@@ -67,6 +67,15 @@
     order clone (address unknown at policy-creation time), so it cannot be
     pre-authorised; cancellations are executed directly through the Safe UI.
 -#}
+{#- max_slippage_bps must be an UNQUOTED integer: nunjucks `+` concatenates
+    strings, so a quoted "200" would render the less_than ceiling as "2001"
+    (a 10× more permissive cap), and a missing value would render NaN.
+    Emitting an undefined variable throws under throwOnUndefined. -#}
+{%- for to in to_tokens -%}
+  {%- if to.max_slippage_bps is not number -%}
+    {{ milkman_error_max_slippage_bps_must_be_an_unquoted_integer }}
+  {%- endif -%}
+{%- endfor -%}
 roles:
 {%- for token in from_tokens %}
   - address: "{{ aliases.tokens[token] }}"

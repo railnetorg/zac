@@ -25,7 +25,9 @@ configs:
       swaps:
         # fees are in BIPS, not Uniswap fee units (the calculator multiplies by
         # 100): 30 = the 0.3% PENDLE/WETH pool, 1 = the 0.01% wstETH/WETH pool.
-        # A wrong unit points at a nonexistent pool and orders never settle.
+        # The template rejects fees outside {1, 5, 30, 100} at render. The one
+        # ambiguous value is 100: 1% tier in bips, 0.01% tier in raw Uniswap
+        # units — if you mean the 0.01% tier, write 1 (see the template header).
         - path: [PENDLE, WETH, wstETH]
           fees: [30, 1]
           max_slippage_bps: 200 # ≤ 2%
