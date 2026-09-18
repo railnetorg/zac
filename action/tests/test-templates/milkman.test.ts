@@ -174,4 +174,29 @@ describe('milkman/milkman.tmpl', () => {
       }),
     ).toThrow();
   });
+
+  it('TMK-11: a QUOTED max_slippage_bps fails fast (nunjucks + would concat "500" → "5001", a 10× looser cap)', () => {
+    expect(() =>
+      render({
+        from_tokens: ['USDC'],
+        to_tokens: [
+          {
+            token: 'PYUSD',
+            max_slippage_bps: '500',
+            feeds: [USDC_USD, PYUSD_USD],
+            reverses: [false, true],
+          },
+        ],
+      }),
+    ).toThrow();
+  });
+
+  it('TMK-12: a MISSING max_slippage_bps fails fast (would otherwise render NaN and only break at apply time)', () => {
+    expect(() =>
+      render({
+        from_tokens: ['USDC'],
+        to_tokens: [{ token: 'PYUSD', feeds: [USDC_USD, PYUSD_USD], reverses: [false, true] }],
+      }),
+    ).toThrow();
+  });
 });
