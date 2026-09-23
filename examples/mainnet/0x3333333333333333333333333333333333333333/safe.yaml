@@ -27,7 +27,8 @@
 #
 # All-`~` (this file) is the documented opt-out: every plan run touches
 # zero Safe-level state regardless of what's on-chain. Promote a `~` to a
-# concrete address (or `{{ aliases.* }}`) to start managing that field.
+# concrete address, or to an `aliases` template expression, to start
+# managing that field.
 #
 # When `modules` is a list, the Roles modifier MUST be explicitly included
 # — cross-validated against every sibling *.zac.yaml file's
@@ -40,7 +41,7 @@ fallback: ~
 modules: ~
 # nested_signers is OPTIONAL — omit it (as below, via this comment) or set
 # `~` to opt out. Example with a literal address and an alias:
-#   nested_signers:
+{% raw %}#   nested_signers:
 #     - "0x1111111111111111111111111111111111111111"
-#     - "{{ aliases.signers.treasury_safe }}"
+#     - "{{ aliases.signers.treasury_safe }}"{% endraw %}
 nested_signers: ~
