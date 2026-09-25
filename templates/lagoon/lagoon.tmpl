@@ -49,10 +49,22 @@
       • claimSharesOnBehalf(address[])    — push minted shares to depositors post-settlement
       • claimAssetsOnBehalf(address[])    — push redeemed assets to redeemers post-settlement
 
-    `updateTotalAssetsLifespan(uint128)` is NOT granted. A vault in scope here is
-    async-only, and activating that mode zeroes the lifespan and shuts the setter:
-    the call reverts `AsyncOnly()` for the life of the vault, from any caller.
-    Granting it would be authority that can never be exercised.
+    `updateTotalAssetsLifespan(uint128)` is NOT granted, on any vault.
+
+    On an async-only vault the omission costs nothing: `activateAsyncOnly()`
+    shuts the setter, and the call reverts `AsyncOnly()` (0x9c960ece) when the
+    vault's safe makes it. Guard order matters if you probe this — `onlySafe`
+    is checked first, so any other caller gets `OnlySafe(safe)` (0xfde82f1f)
+    and never reaches the async check.
+
+    On a vault where async-only has not been activated the setter is live and
+    succeeds from the safe, so the omission withholds authority that exists.
+    That is intended: `totalAssetsLifespan` governs how long a settled NAV
+    stays valid, and the role that settles the NAV should not also set how
+    long it is trusted. The role can only ever shorten that window, via
+    `expireTotalAssets()`. And the permission is withheld from the ROLE, not
+    from the safe — the vault gates the setter on `onlySafe`, so the safe
+    keeps it through a direct owner transaction.
 
   Settlement on the vault (v0.6.0) is a two-step flow: the vault's
   valuationManager proposes a NAV via updateNewTotalAssets(x), then the
