@@ -37,23 +37,29 @@ describe('milkman/milkman.tmpl', () => {
     tokens: { USDC, PYUSD, RLUSD },
   });
 
-  const params = {
-    from_tokens: ['USDC'],
-    to_tokens: [
-      {
-        token: 'PYUSD',
-        max_slippage_bps: 500,
-        feeds: [USDC_USD, PYUSD_USD],
-        reverses: [false, true],
-      },
-      {
-        token: 'RLUSD',
-        max_slippage_bps: 700,
-        feeds: [USDC_USD, RLUSD_USD],
-        reverses: [false, true],
-      },
-    ],
+  const buyPyusd = {
+    from: 'USDC',
+    to: 'PYUSD',
+    max_slippage_bps: 500,
+    feeds: [USDC_USD, PYUSD_USD],
+    reverses: [false, true],
   };
+  const buyRlusd = {
+    from: 'USDC',
+    to: 'RLUSD',
+    max_slippage_bps: 700,
+    feeds: [USDC_USD, RLUSD_USD],
+    reverses: [false, true],
+  };
+  const sellPyusd = {
+    from: 'PYUSD',
+    to: 'USDC',
+    max_slippage_bps: 300,
+    feeds: [PYUSD_USD, USDC_USD],
+    reverses: [false, true],
+  };
+
+  const params = { pairs: [buyPyusd, buyRlusd] };
 
   const render = (p: object = params): string => env.render('milkman/milkman.tmpl', p);
 
@@ -84,10 +90,10 @@ describe('milkman/milkman.tmpl', () => {
     expect(out).not.toContain(`value: "${UINT256_MAX}"`);
   });
 
-  it('TMK-4: requestSwap is an `or` of one `matches` branch per (from, to) pair', () => {
+  it('TMK-4: requestSwap is an `or` of one `matches` branch per pair', () => {
     const out = render();
     expect(out).toContain('operator: "or"');
-    // from_tokens (1) × to_tokens (2) = 2 branches.
+    // 2 pairs = 2 branches.
     expect((out.match(/operator: "matches"/g) ?? []).length).toBe(2);
   });
 
@@ -166,37 +172,87 @@ describe('milkman/milkman.tmpl', () => {
     expect(out).not.toContain('cancelSwap');
   });
 
-  it('TMK-10: a to_token missing its feeds/reverses fails fast (throwOnUndefined)', () => {
+  it('TMK-10: a pair missing its feeds/reverses fails fast (throwOnUndefined)', () => {
     expect(() =>
-      render({
-        from_tokens: ['USDC'],
-        to_tokens: [{ token: 'PYUSD', max_slippage_bps: 500 }],
-      }),
+      render({ pairs: [{ from: 'USDC', to: 'PYUSD', max_slippage_bps: 500 }] }),
     ).toThrow();
   });
 
   it('TMK-11: a QUOTED max_slippage_bps fails fast (nunjucks + would concat "500" → "5001", a 10× looser cap)', () => {
-    expect(() =>
-      render({
-        from_tokens: ['USDC'],
-        to_tokens: [
-          {
-            token: 'PYUSD',
-            max_slippage_bps: '500',
-            feeds: [USDC_USD, PYUSD_USD],
-            reverses: [false, true],
-          },
-        ],
-      }),
-    ).toThrow();
+    expect(() => render({ pairs: [{ ...buyPyusd, max_slippage_bps: '500' }] })).toThrow();
   });
 
   it('TMK-12: a MISSING max_slippage_bps fails fast (would otherwise render NaN and only break at apply time)', () => {
     expect(() =>
       render({
-        from_tokens: ['USDC'],
-        to_tokens: [{ token: 'PYUSD', feeds: [USDC_USD, PYUSD_USD], reverses: [false, true] }],
+        pairs: [
+          { from: 'USDC', to: 'PYUSD', feeds: [USDC_USD, PYUSD_USD], reverses: [false, true] },
+        ],
       }),
     ).toThrow();
+  });
+
+  it('TMK-13: pairs in both directions — one approve per distinct from token, one branch per pair', () => {
+    const out = render({ pairs: [buyPyusd, buyRlusd, sellPyusd] });
+    const doc = parseDocument(out).toJSON() as {
+      roles: Array<{
+        address: string;
+        functions: Array<{ signature: string; branches?: unknown[] }>;
+      }>;
+    };
+    const approveTargets = doc.roles
+      .filter((r) => r.functions[0]!.signature.startsWith('function approve'))
+      .map((r) => r.address);
+    expect(approveTargets).toEqual([USDC, PYUSD]); // USDC once, in order of first use
+    const milkmanTarget = doc.roles.find((r) => r.address.toLowerCase() === MILKMAN.toLowerCase());
+    expect(milkmanTarget!.functions[0]!.branches).toHaveLength(3);
+  });
+
+  it('TMK-14: a sell pair pins its own feed path and cap, distinct from the buy pair on the same tokens', () => {
+    const out = render({ pairs: [buyPyusd, sellPyusd] });
+    const doc = parseDocument(out).toJSON() as {
+      roles: Array<{
+        address: string;
+        functions: Array<{ branches?: Array<{ params: Array<Record<string, unknown>> }> }>;
+      }>;
+    };
+    const milkmanTarget = doc.roles.find((r) => r.address.toLowerCase() === MILKMAN.toLowerCase());
+    const sell = milkmanTarget!.functions[0]!.branches![1]!;
+    const param = (name: string) => sell.params.find((p) => p['name'] === name)!;
+    expect(param('fromToken')['value']).toBe(PYUSD);
+    expect(param('toToken')['value']).toBe(USDC);
+    const children = (param('priceCheckerData') as { children: Array<Record<string, unknown>> })
+      .children;
+    expect(children.find((c) => c['name'] === 'slippageBps')!['value']).toBe('301');
+    expect(children.find((c) => c['name'] === 'innerData')!['value']).toBe(
+      abiEncode(
+        [
+          [PYUSD_USD, USDC_USD],
+          [false, true],
+        ],
+        ['address[]', 'bool[]'],
+      ),
+    );
+  });
+
+  it('TMK-15: a duplicated (from, to) pair fails fast', () => {
+    expect(() => render({ pairs: [buyPyusd, { ...buyPyusd, max_slippage_bps: 100 }] })).toThrow();
+  });
+
+  it('TMK-16: a pair with from == to fails fast', () => {
+    expect(() => render({ pairs: [{ ...buyPyusd, to: 'USDC' }] })).toThrow();
+  });
+
+  it('TMK-17: feeds and reverses of different lengths fail fast', () => {
+    expect(() => render({ pairs: [{ ...buyPyusd, reverses: [false] }] })).toThrow();
+  });
+
+  it('TMK-18: empty feeds fail fast', () => {
+    expect(() => render({ pairs: [{ ...buyPyusd, feeds: [], reverses: [] }] })).toThrow();
+  });
+
+  it('TMK-19: a missing or empty pairs list fails fast', () => {
+    expect(() => render({})).toThrow();
+    expect(() => render({ pairs: [] })).toThrow();
   });
 });

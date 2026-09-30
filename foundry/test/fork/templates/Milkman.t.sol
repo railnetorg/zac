@@ -16,10 +16,12 @@ interface IERC20 {
 ///         renders + applies the `milkman.zac.yaml` fixture (test/fork/templates/test_config/)
 ///         `MAINNET_RPC_URL` must be set.
 ///
-///         The fixture configures two pairs with distinct caps:
+///         The fixture configures three pairs with distinct caps:
 ///           USDC → PYUSD, slippage ≤ 500 bps
 ///           USDC → RLUSD, slippage ≤ 700 bps
-///         so the function root is an `or` of two branches. Each branch pins
+///           PYUSD → USDC, slippage ≤ 300 bps
+///         so the function root is an `or` of three branches, and USDC and PYUSD
+///         each get an approve. Each branch pins
 ///         (fromToken, toToken, to=avatar, priceChecker) and bounds the swap's
 ///         priceCheckerData, which the Chainlink DynamicSlippageChecker ABI-encodes
 ///         as (uint256 slippageBps, bytes innerData): slippageBps is capped per pair,
@@ -39,10 +41,10 @@ contract MilkmanRoleMainnetTest is ZacForkTest {
     address constant MILKMAN = 0x060373D064d0168931dE2AB8DDA7410923d06E88;
     address constant PRICE_CHECKER = 0xe80a1C615F75AFF7Ed8F08c9F21f9d00982D666c;
 
-    // Allowed tokens (fixture pairs: USDC→PYUSD ≤5%, USDC→RLUSD ≤7%).
-    address constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48; // fromToken ✓
-    address constant PYUSD = 0x6c3ea9036406852006290770BEdFcAbA0e23A0e8; // toToken   ✓ (cap 500)
-    address constant RLUSD = 0x8292Bb45bf1Ee4d140127049757C2E0fF06317eD; // toToken   ✓ (cap 700)
+    // Allowed tokens (fixture pairs: USDC→PYUSD ≤5%, USDC→RLUSD ≤7%, PYUSD→USDC ≤3%).
+    address constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48; // fromToken ✓, toToken ✓ (cap 300)
+    address constant PYUSD = 0x6c3ea9036406852006290770BEdFcAbA0e23A0e8; // toToken ✓ (cap 500), fromToken ✓
+    address constant RLUSD = 0x8292Bb45bf1Ee4d140127049757C2E0fF06317eD; // toToken ✓ (cap 700)
 
     // Blocked tokens (no branch covers them).
     address constant USDT = 0xdAC17F958D2ee523a2206206994597C13D831ec7; // fromToken ✗
@@ -198,10 +200,11 @@ contract MilkmanRoleMainnetTest is ZacForkTest {
 
     // ==================== scope boundaries: only the two listed functions ====================
 
-    /// TF-19 — deny: approve is scoped on USDC only. Approving a non-listed token
-    ///         (PYUSD) to Milkman hits no permission and is rejected.
+    /// TF-19 — deny: approve is scoped on the `from` tokens only (USDC, PYUSD).
+    ///         Approving a token that is only ever a destination (RLUSD) to Milkman
+    ///         hits no permission and is rejected.
     function test_TF19_ApproveUnlistedTokenRejected() public {
-        _expectReject(PYUSD, _approveCd(MILKMAN, AMOUNT));
+        _expectReject(RLUSD, _approveCd(MILKMAN, AMOUNT));
     }
 
     /// TF-20 — deny: only requestSwap is scoped on Milkman. cancelSwap (a different
@@ -219,6 +222,38 @@ contract MilkmanRoleMainnetTest is ZacForkTest {
             _pcd(200, _innerPyusd())
         );
         _expectReject(MILKMAN, cancelCd);
+    }
+
+    // ==================== sell direction: PYUSD → USDC on its own feed path ====================
+
+    /// TF-21 — allow: approve PYUSD to Milkman; PYUSD is a `from` token of the sell pair.
+    function test_TF21_ApprovePyusdForSellAllowed() public {
+        vm.prank(ALICE);
+        IRoles(modAddr).execTransactionWithRole(PYUSD, 0, _approveCd(MILKMAN, AMOUNT), CALL, ROLE_KEY, true);
+        assertEq(IERC20(PYUSD).allowance(safeAddr, MILKMAN), AMOUNT, "allowance not set");
+    }
+
+    /// TF-22 — allow: PYUSD → USDC at 300 bps, at the sell cap, on the sell feed path
+    ///         (PYUSD/USD → USDC/USD).
+    function test_TF22_SellPyusdAtCapAllowed() public {
+        _swapAllowed(PYUSD, USDC, _pcd(300, _innerSellPyusd()));
+    }
+
+    /// TF-23 — deny: PYUSD → USDC on the BUY pair's feed path (USDC/USD → PYUSD/USD).
+    ///         Each pair carries its own path; the reversed path is a different oracle.
+    function test_TF23_SellPyusdOnBuyPathRejected() public {
+        _expectReject(MILKMAN, _swap(PYUSD, USDC, safeAddr, PRICE_CHECKER, _pcd(200, _innerPyusd())));
+    }
+
+    /// TF-24 — deny: PYUSD → USDC at 301 bps exceeds the sell cap, even though the
+    ///         buy pair on the same tokens allows up to 500 bps.
+    function test_TF24_SellPyusdOverCapRejected() public {
+        _expectReject(MILKMAN, _swap(PYUSD, USDC, safeAddr, PRICE_CHECKER, _pcd(301, _innerSellPyusd())));
+    }
+
+    /// TF-25 — deny: RLUSD → USDC has no pair; only the buy direction is listed for RLUSD.
+    function test_TF25_SellRlusdRejected() public {
+        _expectReject(MILKMAN, _swap(RLUSD, USDC, safeAddr, PRICE_CHECKER, _pcd(200, _inner(RLUSD_USD, USDC_USD))));
     }
 
     // ==================== Helpers ====================
@@ -247,7 +282,7 @@ contract MilkmanRoleMainnetTest is ZacForkTest {
     }
 
     /// @dev The innerData the policy pins: abi.encode(address[] feeds, bool[] reverses)
-    ///      for the USDC/USD → dest/USD path (reverses [false, true]).
+    ///      for the {from}/USD → {to}/USD path (reverses [false, true]).
     function _inner(address fromFeed, address toFeed) internal pure returns (bytes memory) {
         address[] memory feeds = new address[](2);
         feeds[0] = fromFeed;
@@ -264,6 +299,10 @@ contract MilkmanRoleMainnetTest is ZacForkTest {
 
     function _innerRlusd() internal pure returns (bytes memory) {
         return _inner(USDC_USD, RLUSD_USD);
+    }
+
+    function _innerSellPyusd() internal pure returns (bytes memory) {
+        return _inner(PYUSD_USD, USDC_USD);
     }
 
     function _approveCd(address spender, uint256 amount) internal pure returns (bytes memory) {
