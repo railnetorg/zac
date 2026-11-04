@@ -580,9 +580,14 @@ export async function fetchRolesModState(opts: FetchRolesModStateOpts): Promise<
     opts.log,
   );
   if (!hasCode(codeNow)) {
-    fail(
-      `no contract code at Roles modifier ${address} (block ${latest}) — wrong address or wrong network?`,
+    // The subgraph answered `null` for a modifier it did not know, and the
+    // SDK diffed against an empty state. Keep that contract: a modifier this
+    // RPC has no code for (not deployed yet, or deployed on a fork the RPC
+    // cannot see, as in the Foundry fork tests) plans as never configured.
+    opts.log?.(
+      `WARN: no contract code at Roles modifier ${address} on this RPC (block ${latest}); planning against an empty state — wrong address or wrong network otherwise\n`,
     );
+    return reduceRolesModState(address, []);
   }
   const from = await findCreationBlock(client, address, latest, opts.log, retry);
   const logs = (await collectLogs(client, address, from, latest, opts.log, retry)).sort(logOrder);

@@ -4,6 +4,7 @@ import {
   CLEARANCE,
   EXECUTION_OPTIONS,
   collectLogs,
+  fetchRolesModState,
   findCreationBlock,
   isTransientRpcError,
   reduceRolesModState,
@@ -323,6 +324,37 @@ function fakeClient(opts: {
     },
   };
 }
+
+describe('fetchRolesModState', () => {
+  it('plans against an empty state, with a warning, when the RPC has no code for the modifier', async () => {
+    // Foundry fork tests deploy the modifier inside forge's EVM; the upstream RPC
+    // never sees it. The subgraph used to answer null there — same outcome.
+    const c = fakeClient({ latest: 1_000n, creation: 5_000n });
+    const notes: string[] = [];
+    const state = await fetchRolesModState({
+      rpcUrl: 'http://rpc.test',
+      address: MOD,
+      abi: [],
+      client: c,
+      log: (l) => notes.push(l),
+    });
+    expect(state).toEqual(reduceRolesModState(MOD, []));
+    expect(notes.join('')).toMatch(/no contract code/);
+    expect(c.calls.getLogs).toEqual([]);
+  });
+
+  it('rebuilds from the log when the modifier exists', async () => {
+    const c = fakeClient({ latest: 1_000n, creation: 100n, logsAt: [] });
+    const state = await fetchRolesModState({
+      rpcUrl: 'http://rpc.test',
+      address: MOD,
+      abi: [],
+      client: c,
+    });
+    expect(state.roles).toEqual([]);
+    expect(c.calls.getLogs).toEqual([[100n, 1_000n]]);
+  });
+});
 
 describe('findCreationBlock', () => {
   it('binary-searches the first block with code', async () => {
