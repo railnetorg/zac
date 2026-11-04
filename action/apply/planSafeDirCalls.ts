@@ -2,6 +2,8 @@ import { ZacError } from '../errors';
 import type { Generated } from './parseGenerated';
 import { toSdkTargets } from './toSdkTargets';
 import type { Call } from './planRoleCalls';
+import { resolveRpcUrl } from './rpc';
+import { makePlanApply, type SdkDiffFns } from './sdkPlan';
 
 /** Shape returned by `zodiac-roles-sdk`'s `planApply`. */
 type SdkPlannedCall = { to: `0x${string}`; data: `0x${string}` };
@@ -19,9 +21,9 @@ export interface SdkRole {
  * Inject for testability — test passes a stub matching this signature.
  * Mirrors `zodiac-roles-sdk`'s `planApply` (note: not `planApplyRole`).
  * The desired state is the FULL set of roles the modifier should end up
- * with; the SDK fetches current state from the Zodiac subgraph (when
- * `current` is omitted) and natively emits revoke calls for any role not
- * present in `desired.roles`.
+ * with; the default implementation (`makePlanApply`) rebuilds the current
+ * state from the modifier's event log over RPC and the SDK's diff natively
+ * emits revoke calls for any role not present in `desired.roles`.
  */
 export type PlanApplyFn = (
   desired: { roles: SdkRole[] },
@@ -51,8 +53,15 @@ export interface PlanSafeDirCallsOpts {
    */
   generateds: Generated[];
   /**
-   * Injected SDK function for testability. Default: zodiac-roles-sdk's
-   * `planApply` (lazily imported so unit tests can avoid the network).
+   * JSON-RPC endpoint the default `planApply` reads the modifier's event
+   * log from. Resolved per chainId (`<NETWORK>_RPC_URL`, then `RPC_URL`)
+   * when omitted. Unused when `planApply` is injected.
+   */
+  rpcUrl?: string;
+  /**
+   * Injected SDK function for testability. Default: `makePlanApply`, the
+   * log-backed stand-in for zodiac-roles-sdk's `planApply` (lazily imported
+   * so unit tests can avoid the network).
    */
   planApply?: PlanApplyFn;
   /** Inject `encodeKey` for testability (default: SDK's encodeKey). */
@@ -77,7 +86,8 @@ export async function planSafeDirCalls(opts: PlanSafeDirCallsOpts): Promise<Call
       message: 'planSafeDirCalls requires at least one parsed config',
     });
   }
-  const sdk = await loadSdk(opts);
+  const chainId = opts.generateds[0]!.deployment.chain_id;
+  const sdk = await loadSdk(opts, chainId);
 
   // Aggregate roles across every source. The role-key uniqueness across
   // safe-dir sources is enforced upstream (no two sources should declare
@@ -124,7 +134,7 @@ export async function planSafeDirCalls(opts: PlanSafeDirCallsOpts): Promise<Call
     const reason = err instanceof Error ? err.message : String(err);
     throw new ZacError({
       phase: 'apply',
-      message: `planApply failed for chainId=${meta.chainId} modifier=${meta.address}: ${reason} (the SDK fetches current state from the Zodiac subgraph when no \`current\` is supplied; check connectivity + that the modifier is indexed)`,
+      message: `planApply failed for chainId=${meta.chainId} modifier=${meta.address}: ${reason} (the modifier's current state is rebuilt from its event log over the chain's RPC endpoint; check <NETWORK>_RPC_URL / --rpc-url and that it serves eth_getLogs over the modifier's whole history)`,
     });
   }
 
@@ -135,7 +145,10 @@ export async function planSafeDirCalls(opts: PlanSafeDirCallsOpts): Promise<Call
   return out;
 }
 
-async function loadSdk(opts: PlanSafeDirCallsOpts): Promise<{
+async function loadSdk(
+  opts: PlanSafeDirCallsOpts,
+  chainId: number,
+): Promise<{
   planApply: PlanApplyFn;
   encodeKey: (key: string) => `0x${string}`;
   builders: SdkBuilders | null;
@@ -147,14 +160,23 @@ async function loadSdk(opts: PlanSafeDirCallsOpts): Promise<{
       builders: opts.sdkBuilders ?? null,
     };
   }
-  const mod = (await import('zodiac-roles-sdk')) as unknown as {
-    planApply: PlanApplyFn;
+  const mod = (await import('zodiac-roles-sdk')) as unknown as SdkDiffFns & {
     encodeKey: (key: string) => `0x${string}`;
     c: SdkBuilders['c'];
     processPermissions: SdkBuilders['processPermissions'];
   };
+  let planApply = opts.planApply;
+  if (planApply === undefined) {
+    const resolveArgs: Parameters<typeof resolveRpcUrl>[0] = { chainId };
+    if (opts.rpcUrl !== undefined) resolveArgs.overrideUrl = opts.rpcUrl;
+    planApply = makePlanApply({
+      rpcUrl: resolveRpcUrl(resolveArgs),
+      sdk: mod,
+      log: (line) => process.stderr.write(line),
+    });
+  }
   return {
-    planApply: opts.planApply ?? mod.planApply,
+    planApply,
     encodeKey: opts.encodeKey ?? mod.encodeKey,
     builders: opts.sdkBuilders ?? { c: mod.c, processPermissions: mod.processPermissions },
   };

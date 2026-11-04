@@ -133,6 +133,9 @@ vi.mock('zodiac-roles-sdk', async () => {
     planApplyRole: async (): Promise<Array<{ to: `0x${string}`; data: `0x${string}` }>> => [],
     planApply: async (): Promise<Array<{ to: `0x${string}`; data: `0x${string}` }>> =>
       mockedPlanApplyResult,
+    callsPlannedForApply: (): unknown[] => mockedPlanApplyResult,
+    callsPlannedForApplyRole: (): unknown[] => [],
+    encodeCalls: (calls: unknown[]): unknown[] => calls,
     c: {
       eq: () => null,
       gt: () => null,
@@ -146,6 +149,20 @@ vi.mock('zodiac-roles-sdk', async () => {
     processPermissions: () => ({ targets: [] }),
   };
 });
+
+// The log-backed planner reads the modifier's current state over RPC; stub
+// it with an empty modifier so the SDK diff above is all that runs.
+vi.mock('../../apply/rolesModState', () => ({
+  fetchRolesModState: async ({ address }: { address: `0x${string}` }) => ({
+    address,
+    owner: address,
+    avatar: address,
+    target: address,
+    roles: [],
+    allowances: [],
+    multiSendAddresses: [],
+  }),
+}));
 
 // Configurable Safe stub.
 vi.mock('@safe-global/protocol-kit', () => ({
