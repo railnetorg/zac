@@ -49,11 +49,12 @@ export interface RunPlanForSafeDirOpts {
  * the SDK natively emits revoke calls for any role on the modifier not in
  * the aggregated set (the "revoke unmentioned" default).
  *
- * RPC usage is gated on `safe.yaml`: role calls are planned offline, so a
- * role-only safe-dir needs neither an RPC nor a deployed Safe. A Safe is
- * initialized (and an RPC resolved) ONLY when a `safe.yaml` is present,
- * because Safe-config planning diffs against live guard/fallback/module
- * state. The Safe tx itself is built later, at submit time.
+ * Role calls need the chain's RPC endpoint: the modifier's current state is
+ * rebuilt from its event log (`fetchRolesModState`) and diffed against the
+ * aggregated desired roles. No deployed Safe is needed for that part. A Safe
+ * is initialized ONLY when a `safe.yaml` is present, because Safe-config
+ * planning diffs against live guard/fallback/module state. The Safe tx
+ * itself is built later, at submit time.
  *
  * Returns `null` when there is nothing to propose — both the role planner
  * and the Safe-config planner produced 0 calls. "In sync" is a SUCCESS
@@ -74,6 +75,7 @@ export async function runPlanForSafeDir(opts: RunPlanForSafeDirOpts): Promise<Pl
   let roleCalls: Awaited<ReturnType<typeof planSafeDirCalls>> = [];
   if (opts.safeDir.modifierAddress !== undefined) {
     const planArgs: Parameters<typeof planSafeDirCalls>[0] = { generateds };
+    if (opts.rpcUrl !== undefined) planArgs.rpcUrl = opts.rpcUrl;
     if (opts.planApply !== undefined) planArgs.planApply = opts.planApply;
     if (opts.encodeKey !== undefined) planArgs.encodeKey = opts.encodeKey;
     if (opts.sdkBuilders !== undefined) planArgs.sdkBuilders = opts.sdkBuilders;
