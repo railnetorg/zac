@@ -1,0 +1,21 @@
+# Policy fixture for CctpRoleMainnetTest. A full deployment config; the
+# ZacForkTest harness substitutes the runtime placeholders before applying:
+#   __MODIFIER__  → the freshly deployed Roles Modifier
+#   __SAFE__      → the freshly deployed Safe
+#   __MEMBER__    → the role member the test authorises
+#   __TEMPLATES__ → the absolute templates/ directory
+roles_modifier_address: "__MODIFIER__"
+safe_address: "__SAFE__"
+chain_id: 1
+name: ZAC cctp policy fork test
+description: In-process policy fork test for cctp.tmpl (Ethereum → Base USDC bridge).
+configs:
+  - template: "__TEMPLATES__/cctp/cctp.tmpl"
+    key: STRATEGY_MANAGER
+    members:
+      - "__MEMBER__"
+    params:
+      # Base = CCTP domain 6. The destination Safe is pinned as mintRecipient;
+      # the test asserts only this recipient / domain / USDC / threshold pass.
+      destination_domain: 6
+      destination_safe: "0x4B6F1D37D2561C71355E5b63dBFfAaf372D30Da3"
