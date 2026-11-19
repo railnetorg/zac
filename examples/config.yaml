@@ -15,6 +15,7 @@ aliases:
     pendle: ../aliases/mainnet/pendle.yaml
     ondo_gm: ../aliases/mainnet/ondo_gm.yaml
     ondo_ousg: ../aliases/mainnet/ondo_ousg.yaml
+    ondo_usdy: ../aliases/mainnet/ondo_usdy.yaml
     lagoon: ../aliases/mainnet/lagoon.yaml
     lido: ../aliases/mainnet/lido.yaml
     helper: ../aliases/mainnet/helper.yaml
