@@ -1,41 +1,74 @@
 {#-
-  Ondo Global Markets — mintWithAttestation / redeemWithAttestation.
+  Ondo Global Markets — mintWithAttestation / redeemWithAttestation on
+  Ondo's GMTokenManager.
 
-  The GM Router is canonical-per-chain, resolved from aliases.ondo_gm.router
-  inside the template (NOT a param). GM token addresses live in
-  aliases.tokens (the standard token registry). Payment
-  assets use the standard token registry.
+  The GMTokenManager is canonical-per-chain, resolved from
+  aliases.ondo_gm.router inside the template (NOT a param). GM token
+  addresses and payment assets live in aliases.tokens (the standard
+  token registry).
 
   Required template params:
     gm_tokens      — list of GM token alias keys (e.g.
                      ["HYGon", "TLTon", "SHYon", "IEFon"]). Each entry
                      resolved via aliases.tokens[<key>] with no
                      existence guard ⇒ render-time error if missing.
-    payment_assets — list of token alias keys used as paymentAsset
-                     (e.g. ["USDC"]). Each resolved via
-                     aliases.tokens[<key>], same loud-fail behaviour.
+    payment_assets — list of token alias keys allowed as depositToken
+                     (mint) and receiveToken (redeem) (e.g. ["USDC"]).
+                     Each resolved via aliases.tokens[<key>], same
+                     loud-fail behaviour.
 
   Resolved from aliases (NOT params):
-    aliases.ondo_gm.router        — GM Router contract
-    aliases.tokens[<key>] — each gm_tokens entry
-    aliases.tokens[<key>]         — each payment_assets entry
+    aliases.ondo_gm.router — GMTokenManager contract
+    aliases.tokens[<key>]  — each gm_tokens entry
+    aliases.tokens[<key>]  — each payment_assets entry
+
+  Quote (IGMTokenManager.Quote, 9 fields in ABI order):
+    0 chainId        — must equal block.chainid
+    1 attestationId  — single-use: the GMTokenManager records it in
+                       executedAttestationIds, a replay reverts
+    2 userId         — must equal the Ondo ID that OndoIDRegistry holds
+                       for msg.sender (the Safe); the quote is bound to
+                       that Ondo ID, not to an address
+    3 asset          — GM token bought or sold; must be registered on
+                       the GMTokenManager
+    4 price          — USD per GM token, 18 decimals; checked against
+                       Ondo's sanity-check oracle
+    5 quantity       — GM tokens minted (mint) or pulled and burned
+                       (redeem)
+    6 expiration     — unix seconds; reverts once block.timestamp >
+                       expiration
+    7 side           — QuoteSide (uint8): BUY (0) for mint, SELL (1) for
+                       redeem, enforced per entry point
+    8 additionalData — opaque bytes32
+  Ondo signs the Quote off-chain (EIP-712, domain "OndoGMTokenManager"
+  version "1"); the GMTokenManager recovers the signer on-chain and
+  requires it to hold ATTESTATION_SIGNER_ROLE. Both entry points also
+  revert outside Ondo's issuance hours (IssuanceHours.checkIsValidHours).
+
+  Trailing arguments:
+    mint   — depositToken, depositTokenAmount. With USDon as depositToken
+             the GMTokenManager pulls exactly quantity * price / 1e18 and
+             ignores depositTokenAmount. With any other token it pulls
+             exactly depositTokenAmount, swaps it to USDon through the
+             USDonManager and refunds the USDon surplus to the caller.
+    redeem — receiveToken, minimumReceiveAmount. minimumReceiveAmount is
+             the USDonManager swap floor, used only when receiveToken is
+             not USDon.
 
   Scoping:
-    - Attestation order tuple (9 fields): only `recipient` (index 3) is
-      pinned. The tuple is wrapped in an `or` of per-recipient `matches`
-      so the role can mint into any enumerated GM token but no others.
-      When gm_tokens has EXACTLY 1 entry, the `or` wrapper is dropped
-      and a bare `matches` is emitted — `or` with <2 conditions is
-      degenerate and rejected at apply time
-      (action/apply/toSdkTargets.ts:67).
-    - paymentAsset is pinned to `oneOf(payment_assets)` (`equal_to` is
-      semantically equivalent for length 1; we keep oneOf for uniformity).
-    - signature is left as `dynamic` `pass` (Ondo verifies it server-side).
-
-  NOTE — Order tuple field NAMES below are best-effort guesses; the GM
-  router exposes the struct positionally. Only `recipient` matters for
-  scoping; renaming the other fields does not affect codegen as long as
-  the order and types match the on-chain ABI.
+    - quote: only `asset` (index 3) is pinned; the other fields are
+      fixed by Ondo's signature. The tuple is wrapped in an `or` of
+      per-asset `matches` so the role can mint and redeem any enumerated
+      GM token but no others. When gm_tokens has EXACTLY 1 entry, the
+      `or` wrapper is dropped and a bare `matches` is emitted — `or` with
+      <2 conditions is degenerate and rejected at apply time
+      (action/apply/toSdkTargets.ts, "'or' requires ≥ 2 conditions").
+    - signature is left as `dynamic` `pass`; the GMTokenManager verifies
+      it on-chain.
+    - depositToken / receiveToken are pinned to `oneOf(payment_assets)`
+      (`equal_to` is semantically equivalent for length 1; we keep oneOf
+      for uniformity).
+    - depositTokenAmount / minimumReceiveAmount are left `pass`.
 -#}
 {%- from "_macros/common.tmpl" import approve -%}
 {%- set router = aliases.ondo_gm.router -%}
@@ -49,10 +82,10 @@ roles:
 
   - address: "{{ router }}"
     functions:
-      - signature: "function mintWithAttestation((uint256 amount, uint256 deadline, bytes32 hashedNonce, address recipient, uint256 amountIn, uint256 expectedAmountOut, uint256 maxAmountOut, uint8 v, bytes32 r) order, bytes signature, address paymentAsset, uint256 minPaymentReceived)"
+      - signature: "function mintWithAttestation((uint256 chainId, uint256 attestationId, bytes32 userId, address asset, uint256 price, uint256 quantity, uint256 expiration, uint8 side, bytes32 additionalData) quote, bytes signature, address depositToken, uint256 depositTokenAmount)"
         execution_options: "none"
         params:
-          - name: order
+          - name: quote
             param_type: "tuple"
 {%- if gm_tokens | length == 1 %}
             operator: "matches"
@@ -90,7 +123,7 @@ roles:
           - name: signature
             param_type: "dynamic"
             operator: "pass"
-          - name: paymentAsset
+          - name: depositToken
             param_type: "static"
             operator: "oneOf"
             values:
@@ -98,14 +131,14 @@ roles:
               - "{{ aliases.tokens[asset] }}"
               {%- endfor %}
             value_type: "address"
-          - name: minPaymentReceived
+          - name: depositTokenAmount
             param_type: "static"
             operator: "pass"
 
-      - signature: "function redeemWithAttestation((uint256 amount, uint256 deadline, bytes32 hashedNonce, address recipient, uint256 amountIn, uint256 expectedAmountOut, uint256 maxAmountOut, uint8 v, bytes32 r) order, bytes signature, address paymentAsset, uint256 minPaymentReceived)"
+      - signature: "function redeemWithAttestation((uint256 chainId, uint256 attestationId, bytes32 userId, address asset, uint256 price, uint256 quantity, uint256 expiration, uint8 side, bytes32 additionalData) quote, bytes signature, address receiveToken, uint256 minimumReceiveAmount)"
         execution_options: "none"
         params:
-          - name: order
+          - name: quote
             param_type: "tuple"
 {%- if gm_tokens | length == 1 %}
             operator: "matches"
@@ -143,7 +176,7 @@ roles:
           - name: signature
             param_type: "dynamic"
             operator: "pass"
-          - name: paymentAsset
+          - name: receiveToken
             param_type: "static"
             operator: "oneOf"
             values:
@@ -151,6 +184,6 @@ roles:
               - "{{ aliases.tokens[asset] }}"
               {%- endfor %}
             value_type: "address"
-          - name: minPaymentReceived
+          - name: minimumReceiveAmount
             param_type: "static"
             operator: "pass"
