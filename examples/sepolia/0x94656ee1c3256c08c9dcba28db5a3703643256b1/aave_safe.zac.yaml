@@ -11,4 +11,6 @@ configs:
     params:
       deposit_assets:
         - "DAI"
-      emode_category: 0
+      # Lending only: supply / withdraw. `true` would also scope borrow / repay /
+      # setUserEMode and require `emode_category`.
+      borrow: false

@@ -2,8 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseDocument } from 'yaml';
-import nunjucks from 'nunjucks';
-import { keccak } from '../../render/keccakFilter';
+import { makeConfigEnv } from '../../render/configEnv';
 
 const __dirname = resolve(fileURLToPath(import.meta.url), '..');
 const REPO_ROOT = resolve(__dirname, '../../..');
@@ -12,21 +11,23 @@ const VAULT = '0x30A3699E0dCEa6BDc8bb2C13e74a2324E0b20116';
 const ASSET = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'; // USDC
 
 describe('lagoon/lagoon.tmpl', () => {
-  const env = new nunjucks.Environment(
-    new nunjucks.FileSystemLoader([resolve(REPO_ROOT, 'templates')]),
-    { throwOnUndefined: true },
-  );
-  env.addFilter('keccak', keccak);
-  // `asset` is a token alias KEY resolved via aliases.tokens[<key>].
-  env.addGlobal('aliases', { tokens: { USDC: ASSET } });
+  // The production environment builder, so the `bool` filter the template relies
+  // on is the one the CLI registers. `asset` is a token alias KEY resolved via
+  // aliases.tokens[<key>].
+  const env = makeConfigEnv({
+    searchPaths: [resolve(REPO_ROOT, 'templates')],
+    aliases: { tokens: { USDC: ASSET } },
+  });
 
-  const params = { vault: VAULT, asset: 'USDC' };
+  const params = { vault: VAULT, asset: 'USDC', safe_is_valuation_manager: true };
+  const signatures = (out: string) =>
+    [...out.matchAll(/signature: "function (\w+)\(/g)].map((m) => m[1]);
 
   it('TL-1: renders without error', () => {
     expect(() => env.render('lagoon/lagoon.tmpl', params)).not.toThrow();
   });
 
-  it('TL-2: rendered output parses + has approve + the 7 NAV functions', () => {
+  it('TL-2: safe_is_valuation_manager=true renders approve + the 6 vault functions', () => {
     const out = env.render('lagoon/lagoon.tmpl', params);
     const doc = parseDocument(out);
     expect(doc.errors).toEqual([]);
@@ -41,6 +42,32 @@ describe('lagoon/lagoon.tmpl', () => {
     // the setter, so the call reverts `AsyncOnly()` from any caller for the life of
     // the vault. Asserted absent so it cannot come back as unexercisable authority.
     expect(out).not.toContain('updateTotalAssetsLifespan');
+  });
+
+  it('TL-2b: safe_is_valuation_manager=false leaves out updateNewTotalAssets only', () => {
+    const out = env.render('lagoon/lagoon.tmpl', { ...params, safe_is_valuation_manager: false });
+    expect(parseDocument(out).errors).toEqual([]);
+    expect(signatures(out)).toEqual([
+      'approve',
+      'settleDeposit',
+      'settleRedeem',
+      'expireTotalAssets',
+      'claimSharesOnBehalf',
+      'claimAssetsOnBehalf',
+    ]);
+    expect(out).toContain('# safe_is_valuation_manager: false');
+  });
+
+  it('TL-2c: omitting safe_is_valuation_manager throws rather than defaulting', () => {
+    expect(() => env.render('lagoon/lagoon.tmpl', { vault: VAULT, asset: 'USDC' })).toThrow();
+  });
+
+  it('TL-2d: a quoted safe_is_valuation_manager is rejected', () => {
+    for (const v of ['false', 'true', '0', 'no']) {
+      expect(() =>
+        env.render('lagoon/lagoon.tmpl', { ...params, safe_is_valuation_manager: v }),
+      ).toThrow(/must be a YAML boolean/);
+    }
   });
 
   it('TL-3: approve targets the asset with spender pinned to the vault', () => {

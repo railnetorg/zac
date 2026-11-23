@@ -750,6 +750,7 @@ export function buildProgram(): Command {
         }
         const { ok } = await runBatch(generated, 'plan', async (genPath) => {
           const planOpts: Parameters<typeof runPlan>[0] = { generatedPath: genPath };
+          if (options.rpcUrl !== undefined) planOpts.rpcUrl = options.rpcUrl;
           const plan = await runPlan(planOpts);
           if (plan === null) {
             // In sync: skip write, skip diff. Do NOT touch any existing
@@ -1029,6 +1030,7 @@ export function buildProgram(): Command {
         const generated = resolveGeneratedInputs(inputPath, inputIsFile, absInput);
         const { ok } = await runBatch(generated, 'apply', async (genPath) => {
           const planOpts: Parameters<typeof runPlan>[0] = { generatedPath: genPath };
+          if (options.rpcUrl !== undefined) planOpts.rpcUrl = options.rpcUrl;
           const plan = await runPlan(planOpts);
           if (plan === null) {
             // In sync: nothing to submit. No Safe tx proposed.

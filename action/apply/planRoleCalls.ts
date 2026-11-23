@@ -1,6 +1,8 @@
 import { ZacError } from '../errors';
 import type { Generated } from './parseGenerated';
 import { toSdkTargets } from './toSdkTargets';
+import { resolveRpcUrl } from './rpc';
+import { makePlanApplyRole, type SdkDiffFns } from './sdkPlan';
 
 /**
  * Single planned call returned by `planApplyRole`. Mirrors the SDK shape
@@ -37,8 +39,15 @@ interface SdkBuilders {
 export interface PlanRoleCallsOpts {
   generated: Generated;
   /**
-   * Injected SDK function for testability. Default: zodiac-roles-sdk's
-   * `planApplyRole` (lazily imported so unit tests can avoid the network).
+   * JSON-RPC endpoint the default `planApplyRole` reads the modifier's
+   * event log from. Resolved per chainId (`<NETWORK>_RPC_URL`, then
+   * `RPC_URL`) when omitted. Unused when `planApplyRole` is injected.
+   */
+  rpcUrl?: string;
+  /**
+   * Injected SDK function for testability. Default: `makePlanApplyRole`,
+   * the log-backed stand-in for zodiac-roles-sdk's `planApplyRole` (lazily
+   * imported so unit tests can avoid the network).
    */
   planApplyRole?: PlanApplyRoleFn;
   /** Inject `encodeKey` for testability (default: SDK's encodeKey). */
@@ -48,7 +57,7 @@ export interface PlanRoleCallsOpts {
 }
 
 export async function planRoleCalls(opts: PlanRoleCallsOpts): Promise<Call[]> {
-  const sdk = await loadSdk(opts);
+  const sdk = await loadSdk(opts, opts.generated.deployment.chain_id);
 
   const allCalls: Call[] = [];
   for (const [keyStr, role] of Object.entries(opts.generated.roles)) {
@@ -71,7 +80,7 @@ export async function planRoleCalls(opts: PlanRoleCallsOpts): Promise<Call[]> {
       const reason = err instanceof Error ? err.message : String(err);
       throw new ZacError({
         phase: 'apply',
-        message: `planApplyRole failed for chainId=${meta.chainId} modifier=${meta.address} roleKey=${keyStr}: ${reason} (the SDK fetches current state from the Zodiac subgraph; check connectivity + that the modifier is indexed)`,
+        message: `planApplyRole failed for chainId=${meta.chainId} modifier=${meta.address} roleKey=${keyStr}: ${reason} (the modifier's current state is rebuilt from its event log over the chain's RPC endpoint; check <NETWORK>_RPC_URL / --rpc-url and that it serves eth_getLogs over the modifier's whole history)`,
       });
     }
     for (const c of result) {
@@ -81,7 +90,10 @@ export async function planRoleCalls(opts: PlanRoleCallsOpts): Promise<Call[]> {
   return allCalls;
 }
 
-async function loadSdk(opts: PlanRoleCallsOpts): Promise<{
+async function loadSdk(
+  opts: PlanRoleCallsOpts,
+  chainId: number,
+): Promise<{
   planApplyRole: PlanApplyRoleFn;
   encodeKey: (key: string) => `0x${string}`;
   builders: SdkBuilders | null;
@@ -93,14 +105,23 @@ async function loadSdk(opts: PlanRoleCallsOpts): Promise<{
       builders: opts.sdkBuilders ?? null,
     };
   }
-  const mod = (await import('zodiac-roles-sdk')) as unknown as {
-    planApplyRole: PlanApplyRoleFn;
+  const mod = (await import('zodiac-roles-sdk')) as unknown as SdkDiffFns & {
     encodeKey: (key: string) => `0x${string}`;
     c: SdkBuilders['c'];
     processPermissions: SdkBuilders['processPermissions'];
   };
+  let planApplyRole = opts.planApplyRole;
+  if (planApplyRole === undefined) {
+    const resolveArgs: Parameters<typeof resolveRpcUrl>[0] = { chainId };
+    if (opts.rpcUrl !== undefined) resolveArgs.overrideUrl = opts.rpcUrl;
+    planApplyRole = makePlanApplyRole({
+      rpcUrl: resolveRpcUrl(resolveArgs),
+      sdk: mod,
+      log: (line) => process.stderr.write(line),
+    });
+  }
   return {
-    planApplyRole: opts.planApplyRole ?? mod.planApplyRole,
+    planApplyRole,
     encodeKey: opts.encodeKey ?? mod.encodeKey,
     builders: opts.sdkBuilders ?? { c: mod.c, processPermissions: mod.processPermissions },
   };

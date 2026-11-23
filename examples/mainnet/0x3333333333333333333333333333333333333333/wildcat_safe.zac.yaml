@@ -1,0 +1,14 @@
+roles_modifier_address: "{{ aliases.modifiers.my_modifier }}"
+safe_address: "{{ aliases.safes.my_safe }}"
+chain_id: 1
+name: My Safe Wildcat Lender
+description: Deposit / queue-withdrawal / claim on the listed Wildcat V2 markets (lender side)
+configs:
+  - template: "../../../templates/wildcat/wildcat.tmpl"
+    key: WILDCAT
+    members:
+      - "{{ aliases.signers.alice }}"
+      - "{{ aliases.signers.bob }}"
+    params:
+      markets:
+        - "wintermute_weth"

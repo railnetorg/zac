@@ -28,11 +28,25 @@
       within a role key.
     - One ERC-4626 role per vault, with receiver/owner pinned to the
       avatar so shares and assets can never be routed off the Safe.
+    - Duplicate keys in `vaults` are collapsed, so a repeat is a no-op
+      rather than a `generate` failure naming a function.
 -#}
 {%- from "_macros/common.tmpl" import approve -%}
+{#- Pass 0: collapse duplicate vault keys. A repeated key emits the vault's role
+    block twice, and the emit-phase merger rejects a duplicate (address,
+    signature) pair within a role key — so the repeat fails `generate` with a
+    message naming a FUNCTION rather than the key the author actually repeated.
+    It would also push the same address into `spenders` twice, producing a
+    `oneOf` with a repeated value. Collapsing here makes a repeat a no-op. -#}
+{%- set unique_vaults = [] -%}
+{%- for key in vaults -%}
+  {%- if key not in unique_vaults -%}
+    {%- set _ = unique_vaults.push(key) -%}
+  {%- endif -%}
+{%- endfor -%}
 {#- Pass 1: build the unique list of underlying token alias keys -#}
 {%- set assets = [] -%}
-{%- for key in vaults -%}
+{%- for key in unique_vaults -%}
   {%- set vault = aliases.metamorpho[key] -%}
   {%- if vault.asset not in assets -%}
     {%- set _ = assets.push(vault.asset) -%}
@@ -42,7 +56,7 @@ roles:
 {%- for asset in assets %}
   {#- Pass 2: gather every vault address whose underlying == asset -#}
   {%- set spenders = [] -%}
-  {%- for k in vaults -%}
+  {%- for k in unique_vaults -%}
     {%- set v = aliases.metamorpho[k] -%}
     {%- if v.asset == asset -%}
       {%- set _ = spenders.push(v.address) -%}
@@ -50,7 +64,7 @@ roles:
   {%- endfor %}
   {{ approve(aliases.tokens[asset], spenders) | indent(2) }}
 {%- endfor %}
-{%- for key in vaults %}
+{%- for key in unique_vaults %}
 {%- set vault = aliases.metamorpho[key] %}
 
   - address: "{{ vault.address }}"

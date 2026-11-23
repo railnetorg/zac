@@ -7,6 +7,11 @@ import {IFlashLoanHelper} from "src/interfaces/IFlashLoanHelper.sol";
 import {ISafe} from "@safe/interfaces/ISafe.sol";
 import {Enum} from "@safe/interfaces/Enum.sol";
 import {IPool} from "@aave-v3-origin/interfaces/IPool.sol";
+import {IPoolAddressesProvider} from "@aave-v3-origin/interfaces/IPoolAddressesProvider.sol";
+import {IPoolConfigurator} from "@aave-v3-origin/interfaces/IPoolConfigurator.sol";
+import {IACLManager} from "@aave-v3-origin/interfaces/IACLManager.sol";
+import {DataTypes} from "@aave-v3-origin/protocol/libraries/types/DataTypes.sol";
+import {ReserveConfiguration} from "@aave-v3-origin/protocol/libraries/configuration/ReserveConfiguration.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeDeployer} from "./SafeDeployer.sol";
 import {AAVE_V3_POOL, MORPHO, USDC} from "./chainConfigs/MainnetAddresses.sol";
@@ -21,6 +26,8 @@ import {AAVE_V3_POOL, MORPHO, USDC} from "./chainConfigs/MainnetAddresses.sol";
 ///         contract as the sole owner so it can sign txns via the pre-validated-signature
 ///         path (v=1).
 contract FlashLoanHelperForkTest is Test, SafeDeployer {
+    using ReserveConfiguration for DataTypes.ReserveConfigurationMap;
+
     bytes32 constant FALLBACK_HANDLER_SLOT = 0x6c9a6c4a39284e37ed1cf53d337577d14212a4870fb976a4366c693b939918d5;
 
     // USDC has 6 decimals.
@@ -28,6 +35,9 @@ contract FlashLoanHelperForkTest is Test, SafeDeployer {
     uint256 constant INITIAL_SUPPLY = 1_000e6;
     uint256 constant FLASH_AMOUNT = 1_000e6;
     uint256 constant MIN_HF = 1.1e18;
+
+    // LTV set below the liquidation threshold (bps) when Aave holds no pending LTV to restore.
+    uint256 constant FALLBACK_LTV_MARGIN = 300;
 
     FlashLoanHelper helper;
     ISafe safe;
@@ -37,14 +47,16 @@ contract FlashLoanHelperForkTest is Test, SafeDeployer {
         // Fork tests are opt-in via env, and missing env should error, not silently skip.
         vm.createSelectFork(vm.envString("MAINNET_RPC_URL"));
 
+        // The loop borrows USDC against USDC: it needs a non-zero collateral LTV on Aave.
+        _ensureCollateralLtv(USDC);
+
         // Deploy a fresh Safe with this test contract as the sole owner (threshold = 1).
         safe = createSafe();
 
         helper = new FlashLoanHelper();
 
         // Fund the Safe with USDC and pre-supply some on Aave so the Boost loop has collateral
-        // to borrow against (same-asset USDC LTV is ~75% on mainnet — supply some up-front so
-        // total collateral after Boost can cover the flash repayment).
+        // to borrow against: total collateral after Boost must cover the flash repayment.
         deal(USDC, address(safe), INITIAL_USDC);
         _execAsSafe(USDC, abi.encodeCall(IERC20.approve, (AAVE_V3_POOL, INITIAL_SUPPLY)), Enum.Operation.Call);
         _execAsSafe(
@@ -84,6 +96,8 @@ contract FlashLoanHelperForkTest is Test, SafeDeployer {
     function test_boost_aaveFlash_usdcSameAsset() public {
         uint256 walletPre = IERC20(USDC).balanceOf(address(safe));
         (uint256 collateralPre, uint256 debtPre,,,,) = IPool(AAVE_V3_POOL).getUserAccountData(address(safe));
+        IERC20 variableDebt = IERC20(IPool(AAVE_V3_POOL).getReserveVariableDebtToken(USDC));
+        uint256 variableDebtPre = variableDebt.balanceOf(address(safe));
 
         _runLoop(_aaveBoostParams());
 
@@ -93,10 +107,13 @@ contract FlashLoanHelperForkTest is Test, SafeDeployer {
         // (Invariant 5) HF above floor, even with the premium in the debt
         assertGe(hfPost, MIN_HF, "HF below per-vehicle floor");
 
-        // Position grew; debt grew by more than collateral because the premium adds to debt
+        // Position grew on both sides
         assertGt(collateralPost, collateralPre, "collateral did not grow");
         assertGt(debtPost, debtPre, "debt did not appear");
-        assertGt(debtPost - debtPre, FLASH_AMOUNT, "debt did not include premium");
+
+        // Debt grew by more than the flash amount because the premium adds to debt. Measured on the
+        // variable debt token, in USDC units: `getUserAccountData` reports the Aave base currency.
+        assertGt(variableDebt.balanceOf(address(safe)) - variableDebtPre, FLASH_AMOUNT, "debt did not include premium");
 
         // (Invariant 6) Wallet balance unchanged — premium is absorbed into the borrow leg
         assertEq(IERC20(USDC).balanceOf(address(safe)), walletPre, "dust residual");
@@ -202,6 +219,43 @@ contract FlashLoanHelperForkTest is Test, SafeDeployer {
             // After a Repay, HF only goes up; floor here just verifies it's at least healthy.
             minHealthFactor: MIN_HF
         });
+    }
+
+    // ==================== Aave fork environment ====================
+
+    /// @dev Make `asset` usable as collateral on the forked Aave pool. This suite tests the Helper's
+    ///      loop mechanics, not Aave's risk parameters, so a reserve at LTV 0 is restored here, the
+    ///      same way `deal` stands in for real balances. The test contract becomes RISK_ADMIN through
+    ///      the ACL admin of the pool's addresses provider, then unfreezes the reserve if it is frozen
+    ///      and restores Aave's pending LTV. Without a pending LTV, it sets the LTV
+    ///      `FALLBACK_LTV_MARGIN` below the liquidation threshold. No-op when the LTV is non-zero.
+    function _ensureCollateralLtv(address asset) internal {
+        IPool pool = IPool(AAVE_V3_POOL);
+        if (pool.getConfiguration(asset).getLtv() != 0) return;
+
+        IPoolAddressesProvider provider = pool.ADDRESSES_PROVIDER();
+        IPoolConfigurator configurator = IPoolConfigurator(provider.getPoolConfigurator());
+        // Resolved before `vm.prank`: an external call left in the pranked statement would consume
+        // the prank instead of `addRiskAdmin`.
+        IACLManager acl = IACLManager(provider.getACLManager());
+        address aclAdmin = provider.getACLAdmin();
+        vm.prank(aclAdmin);
+        acl.addRiskAdmin(address(this));
+
+        if (pool.getConfiguration(asset).getFrozen()) configurator.setReserveFreeze(asset, false);
+
+        if (configurator.getPendingLtv(asset) != 0) {
+            configurator.setReserveLtvzero(asset, false);
+        } else {
+            DataTypes.ReserveConfigurationMap memory config = pool.getConfiguration(asset);
+            uint256 liquidationThreshold = config.getLiquidationThreshold();
+            assertGt(liquidationThreshold, FALLBACK_LTV_MARGIN, "asset is not collateral on Aave");
+            configurator.configureReserveAsCollateral(
+                asset, liquidationThreshold - FALLBACK_LTV_MARGIN, liquidationThreshold, config.getLiquidationBonus()
+            );
+        }
+
+        assertGt(pool.getConfiguration(asset).getLtv(), 0, "Aave collateral LTV still 0");
     }
 
     // ==================== Common assertions / drivers ====================

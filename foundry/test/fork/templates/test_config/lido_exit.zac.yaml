@@ -1,0 +1,27 @@
+# Policy fixture for LidoExitRoleMainnetTest — the same template as
+# lido.zac.yaml but with the withdrawal-queue exit leg switched on, so the two
+# suites together pin both sides of the `exit` gate: lido.zac.yaml proves the
+# default still emits exactly the mint leg, this one proves what `exit: true`
+# adds. The ZacForkTest harness substitutes the runtime placeholders:
+#   __MODIFIER__  → the freshly deployed Roles Modifier
+#   __SAFE__      → the freshly deployed Safe
+#   __MEMBER__    → the role member the test authorises
+#   __TEMPLATES__ → the absolute templates/ directory
+roles_modifier_address: "__MODIFIER__"
+safe_address: "__SAFE__"
+chain_id: 1
+name: ZAC lido exit-leg policy fork test
+description: In-process policy fork test for lido.tmpl with exit=true.
+configs:
+  - template: "__TEMPLATES__/lido/lido.tmpl"
+    key: LIDO
+    members:
+      - "__MEMBER__"
+    params:
+      # Scopes wstETH.approve(queue), requestWithdrawalsWstETH, claimWithdrawals
+      # and WETH.deposit on top of the mint leg.
+      exit: true
+      max_approval: "100000000000000000000"
+      # Distinct from max_approval on purpose: the suite asserts the exit ceiling
+      # is its own bound on its own token, not a reuse of the wrapper's.
+      max_exit_approval: "50000000000000000000"

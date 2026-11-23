@@ -83,7 +83,7 @@ async function captureStdout(fn: () => Promise<void>): Promise<string> {
 }
 
 // Mock the SDK so `runPlan` returns a deterministic single-call plan
-// without hitting the Zodiac subgraph.
+// without touching the chain.
 vi.mock('zodiac-roles-sdk', async () => {
   // Pull the REAL `rolesAbi` so viem decoding in printPlanDiff still works.
   const real = await vi.importActual<{
@@ -102,6 +102,10 @@ vi.mock('zodiac-roles-sdk', async () => {
     planApplyRole: async (): Promise<Array<{ to: `0x${string}`; data: `0x${string}` }>> => [
       STUB_PLAN_CALL,
     ],
+    // The log-backed planner diffs with these and encodes with `encodeCalls`.
+    callsPlannedForApply: (): unknown[] => [STUB_PLAN_CALL],
+    callsPlannedForApplyRole: (): unknown[] => [STUB_PLAN_CALL],
+    encodeCalls: (calls: unknown[]): unknown[] => calls,
     // Stub the c-builder + processPermissions surface for toSdkTargets.
     c: {
       eq: () => null,
@@ -116,6 +120,20 @@ vi.mock('zodiac-roles-sdk', async () => {
     processPermissions: () => ({ targets: [] }),
   };
 });
+
+// The log-backed planner reads the modifier's current state over RPC; stub
+// it with an empty modifier so the SDK diff above is all that runs.
+vi.mock('../../apply/rolesModState', () => ({
+  fetchRolesModState: async ({ address }: { address: `0x${string}` }) => ({
+    address,
+    owner: address,
+    avatar: address,
+    target: address,
+    roles: [],
+    allowances: [],
+    multiSendAddresses: [],
+  }),
+}));
 
 // Mock the Safe SDK so buildSafeTransaction doesn't hit a real RPC.
 vi.mock('@safe-global/protocol-kit', () => ({

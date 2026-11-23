@@ -2,3 +2,8 @@
 # milkman.tmpl policy pins as priceChecker. Mainnet deployments.
 milkman: "0x060373D064d0168931dE2AB8DDA7410923d06E88"
 price_checker: "0xe80a1C615F75AFF7Ed8F08c9F21f9d00982D666c"
+# UniV3 variant (milkman_univ3.tmpl): the same DynamicSlippageChecker wrapper,
+# but around the UniV3ExpectedOutCalculator (0xEb80C478f72ac353736be8954eE1aD1B167551F9),
+# which prices a swap by quoting a pinned Uniswap V3 pool route. For tokens
+# with no usable Chainlink feed on mainnet (e.g. PENDLE). Sourcify exact_match.
+univ3_price_checker: "0x2F965935f93718bB66d53a37a97080785657f0AC"

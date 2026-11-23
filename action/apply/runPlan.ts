@@ -19,6 +19,8 @@ interface SdkBuilders {
 
 export interface RunPlanOpts {
   generatedPath: string;
+  /** CLI `--rpc-url` override; otherwise resolved per-chain (`resolveRpcUrl`). */
+  rpcUrl?: string;
   planApplyRole?: PlanApplyRoleFn;
   encodeKey?: (key: string) => `0x${string}`;
   sdkBuilders?: SdkBuilders;
@@ -26,15 +28,13 @@ export interface RunPlanOpts {
 
 /**
  * Compute the role-state-update `calls` for a generated ZAC config — pure
- * calldata, no Safe transaction. No JSON-RPC endpoint and no deployed Safe
- * are needed, but this is NOT offline: `planApplyRole` diffs the desired
- * state against the role's current state, which it reads from the
- * gnosis-guild Roles indexer (a Subsquid GraphQL endpoint) whenever no
- * `current` is supplied — and nothing here supplies one. It also fetches the
- * modifier's config from that same indexer and, for a modifier the indexer
- * knows, the owner's Zodiac license over plain HTTP. So `plan` requires
- * network access, and it inherits the indexer's eventual consistency: a role
- * whose last update is not yet indexed diffs against stale state.
+ * calldata, no Safe transaction. No deployed Safe is needed, but this is
+ * NOT offline: `planApplyRole` diffs the desired state against the role's
+ * current state, which the default implementation rebuilds from the
+ * modifier's event log over the chain's JSON-RPC endpoint (`rpcUrl`, else
+ * `<NETWORK>_RPC_URL` / `RPC_URL`). Gnosis Guild retired the public Roles
+ * subgraph the SDK used to read; the log replay is exact as of the RPC's
+ * latest block, with no indexing lag.
  * The Safe tx (nonce, hash) is built later, at submit time.
  *
  * Returns `null` when `planApplyRole` produces 0 calls — i.e. the on-chain
@@ -46,6 +46,7 @@ export async function runPlan(opts: RunPlanOpts): Promise<Plan | null> {
   const generated = parseGenerated(opts.generatedPath);
 
   const planArgs: Parameters<typeof planRoleCalls>[0] = { generated };
+  if (opts.rpcUrl !== undefined) planArgs.rpcUrl = opts.rpcUrl;
   if (opts.planApplyRole !== undefined) planArgs.planApplyRole = opts.planApplyRole;
   if (opts.encodeKey !== undefined) planArgs.encodeKey = opts.encodeKey;
   if (opts.sdkBuilders !== undefined) planArgs.sdkBuilders = opts.sdkBuilders;

@@ -17,4 +17,5 @@ configs:
     params:
       deposit_assets:
         - "USDC"
+      borrow: true
       emode_category: 0

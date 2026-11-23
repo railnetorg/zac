@@ -1,0 +1,6 @@
+# Wildcat V2 markets, keyed by borrower + underlying. `address` is the
+# WildcatMarket contract (itself the position token); `asset` is the token
+# alias key of its underlying, resolved from tokens.yaml.
+wintermute_weth:
+  address: "0xBAd1b632E90Ce02af868f07c572adB067eB98353"
+  asset:   "WETH"

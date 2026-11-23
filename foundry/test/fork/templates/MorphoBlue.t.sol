@@ -73,7 +73,7 @@ contract MorphoBlueRoleMainnetTest is ZacForkTest {
     uint256 constant BORROW = 1_000e6;
 
     /// @dev Matches `encodeKey('MORPHO_BLUE')` — right-padded ASCII bytes32.
-    bytes32 constant ROLE_KEY = bytes32("MORPHO_BLUE");
+    bytes32 constant ROLE_KEY = 0x4d4f5250484f5f424c5545000000000000000000000000000000000000000000;
 
     /// @dev keccak256("fallback_manager.handler.address") — Safe v1.4's handler slot.
     bytes32 constant FALLBACK_HANDLER_SLOT = 0x6c9a6c4a39284e37ed1cf53d337577d14212a4870fb976a4366c693b939918d5;
