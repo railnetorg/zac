@@ -1,0 +1,14 @@
+roles_modifier_address: "{{ aliases.modifiers.my_modifier }}"
+safe_address: "{{ aliases.safes.my_safe }}"
+chain_id: 1
+name: My Safe Ondo USDY Manager
+description: Subscribe / redeem USDY via the Ondo USDY Instant Manager
+configs:
+  - template: "../../../templates/ondo_usdy/ondo_usdy.tmpl"
+    key: ONDO_USDY
+    members:
+      - "{{ aliases.signers.alice }}"
+      - "{{ aliases.signers.bob }}"
+    params:
+      payment_assets:
+        - "USDC"
