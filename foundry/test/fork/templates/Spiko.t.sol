@@ -276,6 +276,33 @@ contract SpikoRoleMainnetTest is SpikoForkBase {
         );
     }
 
+    /// Attaching ETH to the swap is rejected (`execution_options: none`).
+    function test_sendValue_swap_rejected() public {
+        expectPolicyRejectWithValue(
+            modAddr,
+            ALICE,
+            MULTI_ATM,
+            1,
+            abi.encodeCall(IMultiATM.swapExactInputSingle, (USTBL, USDC, FUND_AMOUNT, safeAddr, 0)),
+            CALL,
+            ROLE_KEY
+        );
+    }
+
+    /// Attaching ETH to the USTBL approve is rejected (`execution_options: none`).
+    function test_sendValue_approve_rejected() public {
+        expectPolicyRejectWithValue(
+            modAddr, ALICE, USTBL, 1, abi.encodeCall(IERC20.approve, (MULTI_ATM, FUND_AMOUNT)), CALL, ROLE_KEY
+        );
+    }
+
+    /// Delegatecall into USTBL is rejected (`execution_options: none`).
+    function test_delegatecall_approve_rejected() public {
+        expectPolicyReject(
+            modAddr, ALICE, USTBL, abi.encodeCall(IERC20.approve, (MULTI_ATM, FUND_AMOUNT)), DELEGATECALL, ROLE_KEY
+        );
+    }
+
     /// Delegatecall into the ATM is rejected too.
     function test_delegatecall_swap_rejected() public {
         expectPolicyReject(
@@ -295,7 +322,7 @@ contract SpikoRoleMainnetTest is SpikoForkBase {
 ///         address, and SAFO redemption through a request on Spiko's Redemption contract.
 ///         Happy path: the request opens in the Safe's name, and a request left unexecuted
 ///         returns the SAFO to the Safe. Then rejections: wrong receiver, fiat or other
-///         output, the no-data overload, other selectors and targets, delegatecall.
+///         output, the no-data overload, other selectors and targets, ETH value, delegatecall.
 contract SpikoRedemptionRequestRoleMainnetTest is SpikoForkBase {
     uint8 constant PENDING = 1;
     uint8 constant CANCELED = 3;
@@ -372,6 +399,11 @@ contract SpikoRedemptionRequestRoleMainnetTest is SpikoForkBase {
     /// The same request on another fund (USTBL) is rejected.
     function test_nonAllowedTarget_otherFund_rejected() public {
         _reject(USTBL, _redemptionCall(REDEMPTION, USDC));
+    }
+
+    /// Attaching ETH to the request is rejected (`execution_options: none`).
+    function test_sendValue_redemptionRequest_rejected() public {
+        expectPolicyRejectWithValue(modAddr, ALICE, SAFO, 1, _redemptionCall(REDEMPTION, USDC), CALL, ROLE_KEY);
     }
 
     /// Delegatecall into the fund token is rejected (`execution_options: none`).
