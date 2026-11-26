@@ -252,6 +252,60 @@ describe('runValidate integration', () => {
     expect(() => validateRenderedTemplate(t)).toThrow(ZacError);
   });
 
+  // A child's ABI type fixes where every later child sits in the payload.
+  const childTypeError = /cannot hold ABI type/;
+
+  it('AE-8: a child declaring a multi-word type throws, it would move the next child', () => {
+    expect(() =>
+      validateRenderedTemplate(transferAndCall({ operator: 'pass', value_type: 'uint256[2]' })),
+    ).toThrow(childTypeError);
+  });
+
+  it('AE-9: a static child declaring a dynamic type throws', () => {
+    expect(() =>
+      validateRenderedTemplate(transferAndCall({ operator: 'pass', value_type: 'bytes' })),
+    ).toThrow(childTypeError);
+  });
+
+  it('AE-10: a value_type that is not an ABI type throws at validate, not at plan', () => {
+    expect(() =>
+      validateRenderedTemplate(transferAndCall({ operator: 'pass', value_type: 'garbage' })),
+    ).toThrow(childTypeError);
+  });
+
+  it('AE-11: a dynamic child declaring a static type throws', () => {
+    const t = {
+      templatePath: 'fake/milkman.tmpl',
+      roles: [
+        {
+          address: VALID_ADDR,
+          functions: [
+            {
+              signature: swapSig,
+              params: [
+                { name: 'fromToken', operator: 'pass' },
+                { name: 'toToken', operator: 'pass' },
+                {
+                  ...abiEncodedParam('501'),
+                  children: [
+                    abiEncodedParam('501').children[0],
+                    {
+                      name: 'innerData',
+                      param_type: 'dynamic',
+                      operator: 'pass',
+                      value_type: 'address',
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    expect(() => validateRenderedTemplate(t)).toThrow(childTypeError);
+  });
+
   it('OR-1: function-root or of two valid branches passes', () => {
     const branch = (to: string) => ({
       operator: 'matches',
