@@ -472,6 +472,43 @@ describe('toSdkTargets', () => {
     expect(abiEnc0.scoping[0]).toEqual({ kind: 'lt', value: '501' });
   });
 
+  it('TC-17: a static `pass` child decodes at its declared value_type', () => {
+    const r = recordingC();
+    const gen = makeGenerated({
+      address: '0xfund',
+      functions: [
+        {
+          signature: 'function transferAndCall(address to, uint256 value, bytes data)',
+          params: [
+            { name: 'to', operator: 'equal_to', value: '0xredemption', value_type: 'address' },
+            { name: 'value', operator: 'pass' },
+            {
+              name: 'data',
+              param_type: 'abi_encoded',
+              children: [
+                {
+                  name: 'output',
+                  param_type: 'static',
+                  operator: 'equal_to',
+                  value: '0xusdc',
+                  value_type: 'address',
+                },
+                { name: 'salt', param_type: 'static', operator: 'pass', value_type: 'bytes32' },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    toSdkTargets(gen, 'ROLE', r);
+    const perms = r.getProcessPermissionsArg() as Array<{ condition: { scoping: unknown[] } }>;
+    expect(perms[0]!.condition.scoping[2]).toEqual({
+      kind: 'abiEncodedMatches',
+      scoping: [{ kind: 'eq', value: '0xusdc' }, { kind: 'pass' }],
+      abiTypes: ['address', 'bytes32'],
+    });
+  });
+
   it('TC-13: `abi_encoded` with no children throws ZacError(phase=apply)', () => {
     const r = recordingC();
     const gen = makeGenerated({

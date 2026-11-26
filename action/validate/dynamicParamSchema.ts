@@ -236,6 +236,13 @@ function abiTypeOfChild(ch: AbiEncodedChild): string {
   });
 }
 
+/** `obj` minus its `value_type` key; every other key is kept for the strict checks. */
+function withoutValueType(obj: Record<string, unknown>): Record<string, unknown> {
+  const { value_type: _vt, ...rest } = obj;
+  void _vt;
+  return rest;
+}
+
 /**
  * Validate a `param_type: abi_encoded` param. The param must sit on a dynamic
  * `bytes` input (the opaque encoded payload). Each ordered child declares its
@@ -279,13 +286,20 @@ function validateAbiEncodedParam(
     // `abi_encoded` branch above, so on any other child it is a key that
     // states a nested layout ZAC will not decode, and the strict schema is
     // what says so.
-    const { name: _n, param_type: _pt, display_decode: _dd, ...opObj } = child;
+    //
+    // On a child, `value_type` types the decoded slot (`abiTypeOfChild`). An
+    // operator that pins a value declares `value_type` in its own schema, so
+    // there it stays. `pass` pins nothing: its `value_type` is only the slot
+    // type, needed to decode the static slots around it, and comes off before
+    // the operator checks, which forbid it on `pass`.
+    const { name: _n, param_type: _pt, display_decode: _dd, ...childOp } = child;
     void _n;
     void _pt;
     void _dd;
+    const opObj = child.operator === 'pass' ? withoutValueType(childOp) : childOp;
     parseOperatorObject(opObj, childWhere);
     checkParamSanity(
-      child as { operator: string; value?: unknown; value_type?: string },
+      opObj as { operator: string; value?: unknown; value_type?: string },
       child.name ?? '',
     );
     validateOperatorAgainstAbi(child as OperatorObj, abiType, child.name ?? '');
