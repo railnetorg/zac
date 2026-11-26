@@ -1,0 +1,16 @@
+# Spiko: the two redemption entrypoints and the fund tokens they serve.
+# Fund tokens stay in the Spiko namespace: they are Spiko-specific, no other
+# protocol template references them.
+
+# MultiATM: oracle-priced swaps between a fund token and a stablecoin, settled
+# in the same transaction. Serves the pairs Spiko registered (USTBL/USDC; no SAFO pair).
+multi_atm: "0xBD6AD96f51E8d732811587468d0E2F9EFa55f605"
+
+# Redemption: ERC-1363 receiver. A fund token `transferAndCall`ed here opens a
+# redemption request, which Spiko executes and pays off-chain. Serves the
+# outputs Spiko registered per fund (`outputsFor`: SAFO → USDC or fiat, USTBL → fiat).
+redemption: "0xDA5599f04e9b437C8394b0c2BC68B502A66ebFe8"
+
+funds:
+  USTBL: "0xe4880249745eAc5F1eD9d8F7DF844792D560e750"  # Spiko US T-Bills Money Market Fund, 5 decimals
+  SAFO:  "0xcBaDe7D9BdEe88411CB6cbCbB29952b742036992"  # Spiko Amundi Overnight Swap Fund, 5 decimals
