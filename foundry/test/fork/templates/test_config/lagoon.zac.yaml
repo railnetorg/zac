@@ -1,0 +1,24 @@
+# Policy fixture for LagoonRoleMainnetTest. A full deployment config; the
+# ZacForkTest harness substitutes the runtime placeholders before applying:
+#   __MODIFIER__  → the freshly deployed Roles Modifier
+#   __SAFE__      → the freshly deployed Safe
+#   __MEMBER__    → the role member the test authorises
+#   __TEMPLATES__ → the absolute templates/ directory
+roles_modifier_address: "__MODIFIER__"
+safe_address: "__SAFE__"
+chain_id: 1
+name: ZAC lagoon policy fork test
+description: In-process policy fork test for lagoon.tmpl, approve and the settlement surface.
+configs:
+  - template: "__TEMPLATES__/lagoon/lagoon.tmpl"
+    key: LAGOON
+    members:
+      - "__MEMBER__"
+    params:
+      # "CoinShares USDC IG Diversified Income", a live v0.6.0 Lagoon vault.
+      # The template takes the resolved address rather than an alias key —
+      # Lagoon vaults are per-deployment and the registry ships no globals.
+      vault: "0x30A3699E0DCea6bDC8bB2C13e74a2324e0B20116"
+      # Token alias KEY, resolved via aliases.tokens[<key>] inside the
+      # template. Matches the vault's own `asset()`.
+      asset: "USDC"
