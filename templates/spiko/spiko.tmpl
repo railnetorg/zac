@@ -1,31 +1,90 @@
 {#-
-  Spiko: push the payment stablecoin to a Spiko deposit address.
+  Spiko: subscribe to a Spiko fund with a stablecoin, and redeem the fund
+  token back into that stablecoin.
 
-  Spiko assigns each account a deposit address. Stablecoins sent there are
-  invested in the fund at the next NAV. Redemptions are requested through
-  Spiko's API and paid back as stablecoins from the same address. Neither leg
-  needs a contract call from the Safe: sending is a plain ERC-20 `transfer`,
-  receiving needs no permission.
+  Subscription. Spiko assigns each account a deposit address. Stablecoins
+  sent there are invested in the fund at the next NAV, and Spiko mints the
+  fund token to the account's wallet in a later transaction. The Safe only
+  needs a plain ERC-20 `transfer`.
 
-  The role gets exactly one thing: `transfer` on the payment asset, recipient
-  limited to the listed deposit addresses. No approve, no other token, no ETH,
-  no delegatecall.
+  Redemption starts on-chain from the Safe, which sends the fund token to
+  one of Spiko's two redemption contracts. `redeem_via` picks the route
+  Spiko serves for `fund`:
+
+    multi_atm           Spiko's MultiATM swaps the fund token into the
+                        payment asset in the same transaction, at Spiko's
+                        oracle price. The Safe approves the ATM, then calls
+                        `swapExactInputSingle`. A swap is bounded by the
+                        ATM's payment-asset balance. Only pairs Spiko
+                        registered on the ATM work (mainnet: USTBL/USDC; no
+                        SAFO pair).
+
+    redemption_request  The Safe `transferAndCall`s the fund token to
+                        Spiko's Redemption contract with
+                        `abi.encode(output, salt)`, which opens a request in
+                        the Safe's name. Spiko executes it (burns the fund
+                        tokens) and pays the output in a later transaction,
+                        off this contract. A request not executed within 14
+                        days can be cancelled by anyone, which returns the
+                        fund tokens to the Safe. Only outputs Spiko registered
+                        for the fund work (`outputsFor`; mainnet: SAFO →
+                        USDC; USTBL → fiat only).
+
+  A route Spiko does not serve for the fund reverts on-chain (`UnknownPair`
+  on the ATM, "Input/Output pair is not authorized" on Redemption): the grant
+  is inert, not wider. Spiko also gates both routes: the Safe must be
+  whitelisted on the fund token, and on the ATM for multi_atm.
+
+  The ATM pays whatever `recipient` the caller names, so `recipient` is
+  pinned to the Safe. Redemption records the caller (the Safe) as the
+  request's owner, and `output` is pinned to the payment asset: the zero
+  address requests fiat, paid outside the chain.
+
+  The role gets exactly:
+    payment asset  transfer(to in subscription_addresses, value: any)
+    multi_atm
+      fund         approve(spender == MultiATM, amount: any)
+      MultiATM     swapExactInputSingle(input == fund, output == payment asset,
+                   inputAmount: any, recipient == Safe, minOutputAmount: any)
+    redemption_request
+      fund         transferAndCall(to == Redemption, value: any,
+                   data == abi.encode(output == payment asset, salt: any))
+  No other selector on the fund token, so the fund token can only leave the
+  Safe toward Spiko. No multi-hop or exact-output swap, no ETH, no
+  delegatecall.
 
   Params
     payment_asset          Token alias key, e.g. "USDC". Resolved via
                            aliases.tokens[<key>]; unknown key fails at render.
+                           The asset subscribed with and redeemed into.
     subscription_addresses Deposit addresses Spiko assigned to this account,
                            usually one. Each entry is a place the payment asset
                            can leave the Safe with no further approval, so list
                            only addresses Spiko actually assigned. Literals or
                            deployment-local aliases, not curated ones.
+    fund                   Spiko fund alias key, e.g. "USTBL". Resolved via
+                           aliases.spiko.funds[<key>]; unknown key fails at
+                           render.
+    redeem_via             "multi_atm" or "redemption_request". Required: a
+                           subscription without a redemption route leaves the
+                           role no way out of the position. Anything else fails
+                           at render.
+
+  Resolved from aliases (not params)
+    aliases.spiko.multi_atm   MultiATM
+    aliases.spiko.redemption  Redemption
 
   Output
-    payment asset: transfer(to in subscription_addresses, value: any),
-    execution_options "none".
+    All functions execution_options "none".
 -#}
+{%- from "_macros/common.tmpl" import approve -%}
+{%- if redeem_via is not defined or (redeem_via != "multi_atm" and redeem_via != "redemption_request") -%}
+  {{ spiko_error_redeem_via_must_be_multi_atm_or_redemption_request }}
+{%- endif -%}
+{%- set fund_address = aliases.spiko.funds[fund] -%}
+{%- set payment_address = aliases.tokens[payment_asset] -%}
 roles:
-  - address: "{{ aliases.tokens[payment_asset] }}"
+  - address: "{{ payment_address }}"
     functions:
       - signature: "function transfer(address to, uint256 value)"
         execution_options: "none"
@@ -41,3 +100,59 @@ roles:
           - name: value
             param_type: "static"
             operator: "pass"
+{%- if redeem_via == "multi_atm" %}
+
+  {{ approve(fund_address, aliases.spiko.multi_atm) | indent(2) }}
+
+  - address: "{{ aliases.spiko.multi_atm }}"
+    functions:
+      - signature: "function swapExactInputSingle(address input, address output, uint256 inputAmount, address recipient, uint256 minOutputAmount)"
+        execution_options: "none"
+        params:
+          - name: input
+            param_type: "static"
+            operator: "equal_to"
+            value: "{{ fund_address }}"
+            value_type: "address"
+          - name: output
+            param_type: "static"
+            operator: "equal_to"
+            value: "{{ payment_address }}"
+            value_type: "address"
+          - name: inputAmount
+            param_type: "static"
+            operator: "pass"
+          - name: recipient
+            param_type: "static"
+            operator: "equal_to_avatar"
+          - name: minOutputAmount
+            param_type: "static"
+            operator: "pass"
+{%- else %}
+
+  - address: "{{ fund_address }}"
+    functions:
+      - signature: "function transferAndCall(address to, uint256 value, bytes data)"
+        execution_options: "none"
+        params:
+          - name: to
+            param_type: "static"
+            operator: "equal_to"
+            value: "{{ aliases.spiko.redemption }}"
+            value_type: "address"
+          - name: value
+            param_type: "static"
+            operator: "pass"
+          - name: data
+            param_type: "abi_encoded"
+            children:
+              - name: output
+                param_type: "static"
+                operator: "equal_to"
+                value: "{{ payment_address }}"
+                value_type: "address"
+              - name: salt
+                param_type: "static"
+                operator: "pass"
+                value_type: "bytes32"
+{%- endif %}

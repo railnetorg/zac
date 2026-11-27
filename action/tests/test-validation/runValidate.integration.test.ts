@@ -189,6 +189,123 @@ describe('runValidate integration', () => {
     expect(() => validateRenderedTemplate(t)).toThrow(ZacError);
   });
 
+  // A static slot left free inside an encoded payload: `pass` with `value_type`.
+  const transferAndCall = (salt: Record<string, unknown>) => ({
+    templatePath: 'fake/spiko.tmpl',
+    roles: [
+      {
+        address: VALID_ADDR,
+        functions: [
+          {
+            signature: 'function transferAndCall(address to, uint256 value, bytes data)',
+            params: [
+              { name: 'to', operator: 'equal_to', value: VALID_ADDR, value_type: 'address' },
+              { name: 'value', operator: 'pass' },
+              {
+                name: 'data',
+                param_type: 'abi_encoded',
+                children: [
+                  {
+                    name: 'output',
+                    param_type: 'static',
+                    operator: 'equal_to',
+                    value: VALID_ADDR,
+                    value_type: 'address',
+                  },
+                  { name: 'salt', param_type: 'static', ...salt },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+
+  it('AE-4: a pass child takes value_type, the type of the slot it leaves free', () => {
+    expect(() =>
+      validateRenderedTemplate(transferAndCall({ operator: 'pass', value_type: 'bytes32' })),
+    ).not.toThrow();
+  });
+
+  it('AE-5: a static pass child without value_type throws, its slot has no type', () => {
+    expect(() => validateRenderedTemplate(transferAndCall({ operator: 'pass' }))).toThrow(
+      /needs a value_type/,
+    );
+  });
+
+  it('AE-6: a pass child still rejects a value, value_type is the only key it gains', () => {
+    expect(() =>
+      validateRenderedTemplate(
+        transferAndCall({ operator: 'pass', value_type: 'bytes32', value: '0x01' }),
+      ),
+    ).toThrow(ZacError);
+  });
+
+  it('AE-7: a top-level pass param still rejects value_type, its type comes from the signature', () => {
+    const t = transferAndCall({ operator: 'pass', value_type: 'bytes32' });
+    t.roles[0]!.functions[0]!.params[1] = {
+      name: 'value',
+      operator: 'pass',
+      value_type: 'uint256',
+    } as never;
+    expect(() => validateRenderedTemplate(t)).toThrow(ZacError);
+  });
+
+  // A child's ABI type fixes where every later child sits in the payload.
+  const childTypeError = /cannot hold ABI type/;
+
+  it('AE-8: a child declaring a multi-word type throws, it would move the next child', () => {
+    expect(() =>
+      validateRenderedTemplate(transferAndCall({ operator: 'pass', value_type: 'uint256[2]' })),
+    ).toThrow(childTypeError);
+  });
+
+  it('AE-9: a static child declaring a dynamic type throws', () => {
+    expect(() =>
+      validateRenderedTemplate(transferAndCall({ operator: 'pass', value_type: 'bytes' })),
+    ).toThrow(childTypeError);
+  });
+
+  it('AE-10: a value_type that is not an ABI type throws at validate, not at plan', () => {
+    expect(() =>
+      validateRenderedTemplate(transferAndCall({ operator: 'pass', value_type: 'garbage' })),
+    ).toThrow(childTypeError);
+  });
+
+  it('AE-11: a dynamic child declaring a static type throws', () => {
+    const t = {
+      templatePath: 'fake/milkman.tmpl',
+      roles: [
+        {
+          address: VALID_ADDR,
+          functions: [
+            {
+              signature: swapSig,
+              params: [
+                { name: 'fromToken', operator: 'pass' },
+                { name: 'toToken', operator: 'pass' },
+                {
+                  ...abiEncodedParam('501'),
+                  children: [
+                    abiEncodedParam('501').children[0],
+                    {
+                      name: 'innerData',
+                      param_type: 'dynamic',
+                      operator: 'pass',
+                      value_type: 'address',
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    expect(() => validateRenderedTemplate(t)).toThrow(childTypeError);
+  });
+
   it('OR-1: function-root or of two valid branches passes', () => {
     const branch = (to: string) => ({
       operator: 'matches',

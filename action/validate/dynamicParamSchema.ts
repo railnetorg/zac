@@ -236,6 +236,47 @@ function abiTypeOfChild(ch: AbiEncodedChild): string {
   });
 }
 
+/** `uintN`/`intN` sizes: 8 to 256 in steps of 8. */
+const INT_SIZES = Array.from({ length: 32 }, (_, i) => String((i + 1) * 8)).join('|');
+
+/** Elementary ABI types that fill exactly one 32-byte head word. */
+const ONE_WORD_STATIC = new RegExp(
+  `^(address|bool|u?int(${INT_SIZES})|bytes([1-9]|[12][0-9]|3[0-2]))$`,
+);
+
+/** Dynamic ABI types: one head word holding an offset to the tail. */
+const DYNAMIC_TYPES = new Set(['bytes', 'string']);
+
+/**
+ * Check that an `abi_encoded` child's ABI type is one ZAC decodes and agrees
+ * with its `param_type`. Each child's type fixes where every later child sits
+ * in the payload, so a multi-word type (fixed array, tuple) or a type of the
+ * wrong kind moves the word a sibling's condition reads, and a string that is
+ * not an ABI type would only fail at `plan`. A `static` child takes one head
+ * word; a `dynamic` child takes `bytes` or `string`.
+ */
+function checkChildAbiType(child: AbiEncodedChild, abiType: string, where: string): void {
+  const pt = child.param_type;
+  const ok =
+    pt === 'static'
+      ? ONE_WORD_STATIC.test(abiType)
+      : pt === 'dynamic'
+        ? DYNAMIC_TYPES.has(abiType)
+        : pt === undefined && (ONE_WORD_STATIC.test(abiType) || DYNAMIC_TYPES.has(abiType));
+  if (ok) return;
+  throw new ZacError({
+    phase: 'validate',
+    message: `${where}: param_type ${pt ?? '<none>'} cannot hold ABI type '${abiType}' — a static child takes one head word (address, bool, uintN, intN, bytesN), a dynamic child takes bytes or string`,
+  });
+}
+
+/** `obj` minus its `value_type` key; every other key is kept for the strict checks. */
+function withoutValueType(obj: Record<string, unknown>): Record<string, unknown> {
+  const { value_type: _vt, ...rest } = obj;
+  void _vt;
+  return rest;
+}
+
 /**
  * Validate a `param_type: abi_encoded` param. The param must sit on a dynamic
  * `bytes` input (the opaque encoded payload). Each ordered child declares its
@@ -272,6 +313,7 @@ function validateAbiEncodedParam(
       validateAbiEncodedParam({ ...child, name: child.name ?? '' }, { type: 'bytes' });
       continue;
     }
+    checkChildAbiType(child, abiType, childWhere);
     // Schema-shape check (required fields per operator) on the operator object,
     // mirroring runValidate's top-level loop — and, because the operator
     // schemas are strict, the check that closes this child's vocabulary.
@@ -279,13 +321,20 @@ function validateAbiEncodedParam(
     // `abi_encoded` branch above, so on any other child it is a key that
     // states a nested layout ZAC will not decode, and the strict schema is
     // what says so.
-    const { name: _n, param_type: _pt, display_decode: _dd, ...opObj } = child;
+    //
+    // On a child, `value_type` types the decoded slot (`abiTypeOfChild`). An
+    // operator that pins a value declares `value_type` in its own schema, so
+    // there it stays. `pass` pins nothing: its `value_type` is only the slot
+    // type, needed to decode the static slots around it, and comes off before
+    // the operator checks, which forbid it on `pass`.
+    const { name: _n, param_type: _pt, display_decode: _dd, ...childOp } = child;
     void _n;
     void _pt;
     void _dd;
+    const opObj = child.operator === 'pass' ? withoutValueType(childOp) : childOp;
     parseOperatorObject(opObj, childWhere);
     checkParamSanity(
-      child as { operator: string; value?: unknown; value_type?: string },
+      opObj as { operator: string; value?: unknown; value_type?: string },
       child.name ?? '',
     );
     validateOperatorAgainstAbi(child as OperatorObj, abiType, child.name ?? '');

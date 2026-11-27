@@ -8,7 +8,7 @@ roles_modifier_address: "__MODIFIER__"
 safe_address: "__SAFE__"
 chain_id: 1
 name: ZAC spiko policy fork test
-description: In-process policy fork test for spiko.tmpl (USDC to two deposit addresses).
+description: In-process policy fork test for spiko.tmpl (USDC to two deposit addresses, USTBL redeemed through the MultiATM).
 configs:
   - template: "__TEMPLATES__/spiko/spiko.tmpl"
     key: SPIKO
@@ -20,3 +20,5 @@ configs:
       subscription_addresses:
         - "0x2222222222222222222222222222222222222222"
         - "0x3333333333333333333333333333333333333333"
+      fund: "USTBL"
+      redeem_via: "multi_atm"

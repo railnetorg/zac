@@ -1,0 +1,23 @@
+roles_modifier_address: "{{ aliases.modifiers.my_modifier }}"
+safe_address: "{{ aliases.safes.my_safe }}"
+chain_id: 1
+name: My Safe Spiko SAFO Manager
+description: Subscribe to SAFO with USDC at next NAV, redeem it into USDC through a Spiko redemption request
+configs:
+  - template: "../../../templates/spiko/spiko.tmpl"
+    key: SPIKO_SAFO
+    members:
+      - "{{ aliases.signers.alice }}"
+    params:
+      # Token alias key. The role can `transfer` it to the addresses below, and
+      # redemptions pay it back to the Safe.
+      payment_asset: "USDC"
+      # Deposit address Spiko assigned to this account's SAFO subscriptions.
+      # Replace with the address Spiko gave you.
+      subscription_addresses:
+        - "0x6666666666666666666666666666666666666666"
+      # Spiko fund alias key (aliases.spiko.funds).
+      fund: "SAFO"
+      # SAFO has no MultiATM pair. Redemption registers USDC as a SAFO output:
+      # Spiko executes the request and pays USDC in a later transaction.
+      redeem_via: "redemption_request"
